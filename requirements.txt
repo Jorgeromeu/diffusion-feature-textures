@@ -1,3 +1,5 @@
 matplotlib
 imageio
 einops
+diffusers
+rerun-sdk
