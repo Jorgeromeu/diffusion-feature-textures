@@ -1,11 +1,11 @@
 import torch
 from safetensors.torch import *
 from huggingface_hub import hf_hub_download
+from PIL import Image
 from diffusers import (
     ControlNetModel,
-    UNet2DConditionModel,
-    StableDiffusionControlNetImg2ImgPipeline,
-    DDIMScheduler
+    StableDiffusionControlNetPipeline,
+    UniPCMultistepScheduler
 )
 
 DIFFUSION_MODEL_ID = "runwayml/stable-diffusion-v1-5"
@@ -25,49 +25,48 @@ def process_depth_map(depth):
     depth = depth / max_depth
     return depth
 
-def depth_pipe(device):
+def depth2img_pipe(device='cuda:0'):
+    
+    """
+    Construct a depth2img pipeline
+    """
 
-    # depth controlnet
     controlnet = ControlNetModel.from_pretrained(
-        "lllyasviel/control_v11f1p_sd15_depth",
-        torch_dtype=torch.float16,
-    )
-
-    pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
-        DIFFUSION_MODEL_ID,
-        controlnet=controlnet
+        "lllyasviel/sd-controlnet-depth", torch_dtype=torch.float16
     ).to(device)
 
-    return pipe
-
-def init_pipe(device):
-
-    """
-    Initialize a Depth2Img stable-diffusion ControlNet
-    """
-
-    # depth control net
-    controlnet = ControlNetModel.from_pretrained(
-            "lllyasviel/control_v11f1p_sd15_depth",
-            torch_dtype=torch.float16,
-        )
-
-    # SD UNet
-    unet = UNet2DConditionModel.from_config(DIFFUSION_MODEL_ID, subfolder="unet").to(device, torch.float16)
-    unet.load_state_dict(load_file(hf_hub_download(repo_id=repo, subfolder="unet", filename=ckpt)))
-
-    # construct pipeline 
-    pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
-        DIFFUSION_MODEL_ID,
-        unet=unet,
+    pipe = StableDiffusionControlNetPipeline.from_pretrained(
+        "runwayml/stable-diffusion-v1-5",
         controlnet=controlnet,
-        torch_dtype=torch.float16,
         safety_checker=None,
-    )
-    pipe.set_progress_bar_config(disable=True)
-    pipe = pipe.to(device)
-    pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
-    pipe.enable_model_cpu_offload()
-    # pipe.enable_xformers_memory_efficient_attention()
+        torch_dtype=torch.float16
+    ).to(device)
+    
+    pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
 
     return pipe
+
+def depth2img(
+    pipe: StableDiffusionControlNetPipeline,
+    prompt: str,
+    depth: Image,
+    guidance_scale=9,
+    num_inference_steps=20
+
+):
+    
+    print(depth)
+    
+    neg_prompt='lowres, low quality, monochrome, watermark',
+    pos_promppt_supplement = 'best quality, highly detailed, photorealistic, 3D Render with black background'
+    
+    output = pipe(
+        f'{prompt}, {pos_promppt_supplement}',
+        neg_prompt=neg_prompt,
+        image=depth, 
+        guidance_scale=guidance_scale,
+        eta=1,
+        num_inference_steps=num_inference_steps
+    )
+    
+    return output.images[0]
