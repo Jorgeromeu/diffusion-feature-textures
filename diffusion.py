@@ -12,18 +12,6 @@ DIFFUSION_MODEL_ID = "runwayml/stable-diffusion-v1-5"
 ckpt = "diffusion_pytorch_model.fp16.safetensors"
 repo = "runwayml/stable-diffusion-v1-5"
 
-def process_depth_map(depth):
-    """
-    Convert from zbuf to depth map
-    """
-
-    max_depth = depth.max()
-    indices = depth == -1
-    depth = max_depth - depth
-    depth[indices] = 0
-    max_depth = depth.max()
-    depth = depth / max_depth
-    return depth
 
 def depth2img_pipe(device='cuda:0'):
     
@@ -50,15 +38,13 @@ def depth2img(
     pipe: StableDiffusionControlNetPipeline,
     prompt: str,
     depth: Image,
-    guidance_scale=9,
-    num_inference_steps=20
+    guidance_scale=7,
+    num_inference_steps=30
 
 ):
     
-    print(depth)
-    
     neg_prompt='lowres, low quality, monochrome, watermark',
-    pos_promppt_supplement = 'best quality, highly detailed, photorealistic, 3D Render with black background'
+    pos_promppt_supplement = 'best quality, highly detailed, photorealistic, 3D Render, black background'
     
     output = pipe(
         f'{prompt}, {pos_promppt_supplement}',
