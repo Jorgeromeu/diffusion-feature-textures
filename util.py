@@ -45,7 +45,7 @@ def reproject_features(
     H, W = depth.shape
 
     # 2D grid with ndc coordinate at each pixel
-    xy_ndc = ndc_grid(H)
+    xy_ndc = ndc_grid(H).to(feature_map)
 
     # add depth channel
     xy_depth = torch.stack([xy_ndc[0, ...], xy_ndc[1, ...], depth], dim=-1)
@@ -80,15 +80,18 @@ def project_feature_map_to_vertices(
 
     # if no initial features provided, initialize to zeros
     if vertex_features is None:
-        vertex_features = torch.zeros(mesh.num_verts_per_mesh()[0], 3)
+        vertex_features = torch.zeros(mesh.num_verts_per_mesh()[0], 3).to(feature_map)
 
     world_coords, point_features = reproject_features(cam, depth, feature_map)
 
     # for each vertex, find the closest reprojected point
     # TODO replace with ball_query or KDTree
+    
+    verts = mesh.verts_list()[0] 
+    
     distances = torch.cdist(
-        world_coords,
-        mesh.verts_list()[0],
+        world_coords.to(verts),
+        verts,
         p=2
     )
     vertex_closest_point_distances, vertex_closest_point = torch.min(distances, dim=0)
