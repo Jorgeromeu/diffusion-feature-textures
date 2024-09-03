@@ -7,6 +7,8 @@ from pytorch3d.renderer import (
 from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 
+EXTENT_UV = [0, 1, 0, 1]
+
 def process_depth_map(depth):
     """
     Convert from zbuf to depth map

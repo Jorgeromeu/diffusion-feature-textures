@@ -3,6 +3,17 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
+def pixel_coords_uv(
+        res=100,
+):
+    pixel_w = (1 / res) / 2
+
+    xs = torch.linspace(0, 1, res)
+    ys = torch.linspace(1, 0, res)
+    x, y = torch.meshgrid(xs, ys, indexing='xy')
+
+    return torch.stack([x, y])
+
 def ndc_grid(
         resolution=100,
         corner_aligned=False

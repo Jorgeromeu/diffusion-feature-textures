@@ -3,3 +3,4 @@ imageio
 einops
 diffusers
 rerun-sdk
+codetiming
