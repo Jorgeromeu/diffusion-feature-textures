@@ -22,15 +22,14 @@ def pt3d_mesh(meshes: Meshes, batch_idx=0):
         vertex_normals=vertex_normals,
     )
 
-def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0):
+def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
     # TODO figure out how to get size from raster settings
-    sensor_size = 512
     fov = cameras[batch_idx].fov.item()
-    focal_length = int(sensor_size / (2 * np.tan(fov * np.pi / 360)))
+    focal_length = int(res / (2 * np.tan(fov * np.pi / 360)))
 
     return rr.Pinhole(
-        height=sensor_size,
-        width=sensor_size,
+        height=res,
+        width=res,
         focal_length=focal_length,
         camera_xyz=PT3D_ViewCoords
     )
