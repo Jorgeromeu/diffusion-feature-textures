@@ -1,3 +1,5 @@
+from einops import rearrange
+from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     RasterizationSettings, MeshRasterizer,
     AmbientLights, SoftPhongShader, MeshRenderer
@@ -45,3 +47,26 @@ def rasterize_mesh(renderer: MeshRenderer, meshes: Meshes) -> Fragments:
 
     return fragments, zbuf
 
+def rasterize(cameras, mesh, res=100):
+    renderer = init_renderer(cameras, resolution=res)
+    fragments, depth_map = rasterize_mesh(renderer, mesh)
+    return fragments, depth_map
+
+def rasterize_vertex_features(cameras, mesh, res, vertex_features):
+
+    # rasterize mesh from camera
+    fragments, _ = rasterize(cameras, mesh, res)
+
+    # F, V, D storing feature for each vertex in each face
+    face_vert_features = vertex_features[mesh.faces_list()[0]]
+
+    # interpolate with barycentric coords
+    pixel_features = interpolate_face_attributes(
+        fragments.pix_to_face,
+        fragments.bary_coords,
+        face_vert_features
+    )
+
+    pixel_features = rearrange(pixel_features, '1 h w 1 d -> h w d')
+
+    return pixel_features

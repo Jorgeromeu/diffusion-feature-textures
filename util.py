@@ -62,7 +62,7 @@ def project_feature_map_to_vertices(
         depth: Tensor,
         feature_map: Tensor,
         vertex_features: Tensor = None,
-        distance_epsilon=0.025
+        distance_epsilon=0.1
 ):
     # extract resolution from depth map
     F = feature_map.shape[0]
