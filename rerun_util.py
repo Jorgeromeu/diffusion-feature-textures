@@ -6,7 +6,7 @@ from pytorch3d.transforms import Transform3d
 
 PT3D_ViewCoords = rr.ViewCoordinates.LUF
 
-def pt3d_mesh(meshes: Meshes, batch_idx=0):
+def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     # extract verts and faces from idx-th mesh in batch
     verts = meshes.verts_list()[batch_idx].cpu()
     faces = meshes.faces_list()[batch_idx].cpu()
@@ -20,6 +20,7 @@ def pt3d_mesh(meshes: Meshes, batch_idx=0):
         vertex_positions=verts,
         triangle_indices=faces,
         vertex_normals=vertex_normals,
+        vertex_colors=vertex_colors
     )
 
 def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
