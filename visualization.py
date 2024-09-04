@@ -12,10 +12,10 @@ def reduce_feature_map(feature_map: Tensor):
     
     # fit PCA matrix 
     pca = faiss.PCAMatrix(D, 3)
-    pca.train(feature_flat.cpu())
+    pca.train(feature_flat)
     
     # apply PCA matrix
-    reduced_flat = pca.apply(feature_flat.cpu())
+    reduced_flat = pca.apply(feature_flat)
     
     # scale for visualization 
     scaler = MinMaxScaler()
