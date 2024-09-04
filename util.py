@@ -100,3 +100,6 @@ def project_feature_map_to_vertices(
     # for each vertex that has a projected point close to it, assign the nearest point feature
     vertex_features[close_vertex_indices] = point_features[vertex_closest_point[close_vertex_indices]]
     return vertex_features
+
+def fun():
+    return 'b'
