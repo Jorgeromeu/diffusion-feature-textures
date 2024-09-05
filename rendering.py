@@ -9,7 +9,8 @@ from pytorch3d.structures import Meshes
 
 EXTENT_UV = [0, 1, 0, 1]
 
-def process_depth_map(depth):
+
+def normalize_depth_map(depth):
     """
     Convert from zbuf to depth map
     """
@@ -22,9 +23,12 @@ def process_depth_map(depth):
     depth = depth / max_depth
     return depth
 
+
 def init_renderer(cameras, device='cuda:0', resolution=512):
-    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
-    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
+    raster_settings = RasterizationSettings(
+        image_size=resolution, faces_per_pixel=1)
+    rasterizer = MeshRasterizer(
+        cameras=cameras, raster_settings=raster_settings)
 
     lights = AmbientLights(device=device)
 
@@ -41,18 +45,21 @@ def init_renderer(cameras, device='cuda:0', resolution=512):
 
     return renderer
 
+
 def rasterize_mesh(renderer: MeshRenderer, meshes: Meshes) -> Fragments:
     fragments: Fragments = renderer.rasterizer(meshes)
 
-    # extract zbuf 
+    # extract zbuf
     zbuf = fragments.zbuf[0, :, :, 0]
 
     return fragments, zbuf
+
 
 def rasterize(cameras, mesh, res=100):
     renderer = init_renderer(cameras, resolution=res)
     fragments, depth_map = rasterize_mesh(renderer, mesh)
     return fragments, depth_map
+
 
 def rasterize_vertex_features(cameras, mesh, res, vertex_features):
 

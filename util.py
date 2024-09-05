@@ -3,6 +3,7 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
+
 def pixel_coords_uv(
         res=100,
 ):
@@ -13,6 +14,7 @@ def pixel_coords_uv(
     x, y = torch.meshgrid(xs, ys, indexing='xy')
 
     return torch.stack([x, y])
+
 
 def ndc_grid(
         resolution=100,
@@ -35,6 +37,7 @@ def ndc_grid(
     xy = torch.stack([x, y])
 
     return xy
+
 
 def reproject_features(
         cameras: CamerasBase,
@@ -67,6 +70,7 @@ def reproject_features(
 
     return world_coords, point_features
 
+
 def project_feature_map_to_vertices(
         mesh: Meshes,
         cam: CamerasBase,
@@ -80,26 +84,29 @@ def project_feature_map_to_vertices(
 
     # if no initial features provided, initialize to zeros
     if vertex_features is None:
-        vertex_features = torch.zeros(mesh.num_verts_per_mesh()[0], 3).to(feature_map)
+        vertex_features = torch.zeros(
+            mesh.num_verts_per_mesh()[0], 3).to(feature_map)
 
     world_coords, point_features = reproject_features(cam, depth, feature_map)
 
     # for each vertex, find the closest reprojected point
     # TODO replace with ball_query or KDTree
-    
-    verts = mesh.verts_list()[0] 
-    
+
+    verts = mesh.verts_list()[0]
+
     distances = torch.cdist(
         world_coords.to(verts),
         verts,
         p=2
     )
-    vertex_closest_point_distances, vertex_closest_point = torch.min(distances, dim=0)
+    vertex_closest_point_distances, vertex_closest_point = torch.min(
+        distances, dim=0)
     close_vertex_indices = vertex_closest_point_distances < distance_epsilon
 
     # for each vertex that has a projected point close to it, assign the nearest point feature
     vertex_features[close_vertex_indices] = point_features[vertex_closest_point[close_vertex_indices]]
     return vertex_features
+
 
 def fun():
     return 'b'

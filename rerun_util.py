@@ -6,6 +6,7 @@ from pytorch3d.transforms import Transform3d
 
 PT3D_ViewCoords = rr.ViewCoordinates.LUF
 
+
 def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     # extract verts and faces from idx-th mesh in batch
     verts = meshes.verts_list()[batch_idx].cpu()
@@ -23,6 +24,7 @@ def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
         vertex_colors=vertex_colors
     )
 
+
 def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
     # TODO figure out how to get size from raster settings
     fov = cameras[batch_idx].fov.item()
@@ -34,6 +36,7 @@ def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
         focal_length=focal_length,
         camera_xyz=PT3D_ViewCoords
     )
+
 
 def pt3d_transform(transforms: Transform3d, batch_idx=0):
     matrix = transforms.get_matrix()
