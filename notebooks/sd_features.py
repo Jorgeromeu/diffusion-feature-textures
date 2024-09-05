@@ -1,3 +1,9 @@
+"""
+Description:
+This Notebook demonstrates how to extract and visualize the intermediate
+activations of StableDiffusion
+"""
+
 # %% Imports
 from IPython import get_ipython
 
@@ -26,9 +32,10 @@ device = 'cuda:0'
 
 pipe = FeaturePipeline.from_pretrained(sd_repo).to(device)
 
+
 # %% Generate Image
 gen = torch.Generator(device=pipe.device)
-gen.manual_seed(0)
+gen.manual_seed(3)
 
 out = pipe(
     ['Deadpool'],
@@ -40,7 +47,7 @@ out = pipe(
 out.images[0]
 
 
-# %% Extract Feature
+# %% Extract and visualize
 def ordered_sample(lst, N):
     """
     Sample N elements from a list in order.

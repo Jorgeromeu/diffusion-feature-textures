@@ -34,7 +34,6 @@ def depth2img_pipe(device='cuda:0'):
 
     return pipe
 
-@torch.no_grad
 def depth2img(
     pipe: StableDiffusionControlNetPipeline,
     prompt: str,
