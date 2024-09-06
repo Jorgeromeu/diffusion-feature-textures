@@ -5,6 +5,7 @@ import re
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.structures import Meshes
 
+from util import ordered_sample
 
 class OBJAnimation:
 
@@ -19,14 +20,18 @@ class OBJAnimation:
         mesh = load_objs_as_meshes([path], device=device)
         return mesh
 
-    def framenums(self):
+    def framenums(self, sample_n=None):
         filenames = os.listdir(self.objs_dir)
         framenums = [int(name[-8:-4]) for name in filenames]
-        return sorted(framenums)
+
+        if sample_n is not None:
+            framenums = ordered_sample(framenums, sample_n)
+
+        framenums = sorted(framenums)
+        return framenums 
 
     def num_frames(self):
         return max(self.framenums())
-
 
 def load_frame_obj(objs_dir: Path, frame=0, device='cuda') -> Meshes:
 

@@ -7,6 +7,17 @@ from pytorch3d.transforms import Transform3d
 import torch.nn.functional as F
 from pytorch3d.renderer import RasterizationSettings, MeshRasterizer
 
+def ordered_sample(lst, N):
+    """
+    Sample N elements from a list in order.
+    """
+
+    step_size = len(lst) // (N - 1)
+    # Get the sample by slicing the list
+    sample = [lst[i * step_size] for i in range(N - 1)]
+    sample.append(lst[-1])  # Add the last element
+    return sample
+
 def pixel_coords_uv(
         res=100,
 ):
@@ -116,7 +127,7 @@ def feature_per_vertex(
         feature_map: Tensor,
 ):
     
-    d, _, _ = feature_map.shape
+    feature_dim, _, _ = feature_map.shape
     
     # rasterize mesh
     raster_settings = RasterizationSettings(
@@ -148,7 +159,7 @@ def feature_per_vertex(
     ).to(verts)
 
     # construct vertex features tensor
-    vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], 3).to(verts)
+    vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim).to(verts)
     vert_features[visible_vert_indices] = visible_point_features
 
     return vert_features

@@ -75,6 +75,6 @@ def rasterize_vertex_features(cameras, mesh, res, vertex_features):
         face_vert_features
     )
 
-    pixel_features = rearrange(pixel_features, '1 h w 1 d -> h w d')
+    pixel_features = rearrange(pixel_features, '1 h w 1 d -> d h w')
 
     return pixel_features
