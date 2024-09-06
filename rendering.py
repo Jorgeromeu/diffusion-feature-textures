@@ -9,7 +9,6 @@ from pytorch3d.structures import Meshes
 
 EXTENT_UV = [0, 1, 0, 1]
 
-
 def normalize_depth_map(depth):
     """
     Convert from zbuf to depth map

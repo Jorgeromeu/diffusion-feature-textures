@@ -1,8 +1,11 @@
+from einops import rearrange
 import torch
 from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
-
+from pytorch3d.transforms import Transform3d
+import torch.nn.functional as F
+from pytorch3d.renderer import RasterizationSettings, MeshRasterizer
 
 def pixel_coords_uv(
         res=100,
@@ -107,6 +110,62 @@ def project_feature_map_to_vertices(
     vertex_features[close_vertex_indices] = point_features[vertex_closest_point[close_vertex_indices]]
     return vertex_features
 
+def feature_per_vertex(
+        mesh: Meshes,
+        cam: CamerasBase,
+        feature_map: Tensor,
+):
+    
+    d, _, _ = feature_map.shape
+    
+    # rasterize mesh
+    raster_settings = RasterizationSettings(
+        image_size=512,
+        blur_radius=0.0,
+        faces_per_pixel=1,
+    )
+    rasterizer = MeshRasterizer(cameras=cam, raster_settings=raster_settings)
+    fragments = rasterizer(mesh)
 
-def fun():
-    return 'b'
+    # get visible faces
+    visible_faces = rearrange(fragments.pix_to_face[0], 'h w 1 -> (h w)').unique()
+
+    # visible verts, are the vertices of the visible faces
+    visible_vert_indices = mesh.faces_list()[0][visible_faces].flatten()
+    verts = mesh.verts_list()[0] 
+    visible_verts = verts[visible_vert_indices]
+
+    # TODO extract projected points from rasterization pass output
+    # project points to NDC
+    visible_points_ndc = cam.transform_points_ndc(visible_verts).cpu()
+
+    # extract features for each projected vertex
+    mode = 'nearest'
+    visible_point_features = sample_feature_map(
+        feature_map.cpu(),
+        visible_points_ndc[:, 0:2].cpu(),
+        mode
+    ).to(verts)
+
+    # construct vertex features tensor
+    vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], 3).to(verts)
+    vert_features[visible_vert_indices] = visible_point_features
+
+    return vert_features
+
+
+
+def sample_feature_map(
+        feature_map: Tensor,
+        coords: Tensor,
+        mode='nearest'
+):
+
+    batched_feature_map = rearrange(feature_map, 'c h w -> 1 c h w')
+    coords[:, 0] *= -1
+    coords[:, 1] *= -1
+    grid = rearrange(coords, 'n d -> 1 1 n d')
+    out = F.grid_sample(batched_feature_map, grid, align_corners=True, mode=mode)    
+    out_features = rearrange(out, '1 f 1 n -> n f') 
+    return out_features
+
