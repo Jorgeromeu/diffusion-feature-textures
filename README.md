@@ -25,9 +25,14 @@ conda install -c bottler nvidiacub
 conda install pytorch3d -c pytorch3d
 ```
 
+Install `faiss` 
+
+```bash
+conda install -c pytorch -c nvidia faiss-gpu=1.8.0
+```
+
 And install pip packages from `requirements.txt`
 
 ```bash
 pip install -r requirements.txt
 ```
-

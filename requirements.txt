@@ -1,7 +1,10 @@
 matplotlib
+numpy
 scipy
 imageio
 einops
 diffusers
 rerun-sdk
 codetiming
+scikit-learn
+transformers

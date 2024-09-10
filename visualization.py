@@ -1,8 +1,7 @@
 from einops import rearrange
-from sklearn.preprocessing import MinMaxScaler
 from torch import Tensor
 import faiss
-
+import numpy as np
 
 def reduce_feature_map(feature_map: Tensor):
 
@@ -18,12 +17,13 @@ def reduce_feature_map(feature_map: Tensor):
     # apply PCA matrix
     reduced_flat = pca.apply(feature_flat)
 
-    # scale for visualization
-    scaler = MinMaxScaler()
-    reduced_flat_scaled = scaler.fit_transform(reduced_flat)
+    for c in range(3):
+        minval = reduced_flat[:, c].min()
+        maxval = reduced_flat[:, c].max()
+        reduced_flat[:, c] = (reduced_flat[:, c] - minval) / (maxval - minval) 
 
     # reshape to square
-    reduced = rearrange(reduced_flat_scaled, '(h w) d -> d h w', h=H, w=W)
+    reduced = rearrange(reduced_flat, '(h w) d -> d h w', h=H, w=W)
     reduced = Tensor(reduced)
 
     return reduced

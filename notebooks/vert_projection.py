@@ -1,9 +1,4 @@
 # %% Imports
-from xml.sax.handler import all_features
-from IPython import get_ipython
-from einops import rearrange
-from tqdm import tqdm
-
 ipy = get_ipython()
 ipy.extension_manager.load_extension('autoreload')
 ipy.run_line_magic('autoreload', '2')
@@ -11,6 +6,9 @@ ipy.run_line_magic('autoreload', '2')
 import sys
 sys.path.append('../')
 
+from IPython import get_ipython
+from einops import einsum, rearrange
+from tqdm import tqdm
 import sd_feature_extraction
 from visualization import reduce_feature_map
 from sd_feature_extraction import SDFeatureExtractor
@@ -33,7 +31,7 @@ from file_util import OBJAnimation
 
 device = torch.device("cuda:0")
 
-animation_path = Path('../data/backflip')
+animation_path = Path('../data/dancing')
 animation = OBJAnimation(animation_path)
 mesh = animation.load_frame(1)
 
@@ -41,7 +39,6 @@ mesh = animation.load_frame(1)
 R, T = look_at_view_transform(dist=2, azim=0, elev=0)
 cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
-# %%
 res = 512
 fragments, depth_map = rasterize(cameras, mesh, res)
 depth_map_normalized = normalize_depth_map(depth_map).to(device)
@@ -50,36 +47,33 @@ depth_img
 
 # %%
 pipe = depth2img_pipe()
-feature_extractor = SDFeatureExtractor(pipe)
 
 # %%
-img_out = depth2img(pipe, 'Deadpool Dancing', depth_img)
+feature_extractor = SDFeatureExtractor(pipe)
+img_out = depth2img(pipe, 'Deadpool, blank background', depth_img)
 img_out
 
 # %%
 feature_map = feature_extractor.get_feature(level=2, timestep=-1)
 feature_map = torch.Tensor(feature_map)
 
-feature_map_pca = reduce_feature_map(feature_map)
-feature_map = feature_map_pca
+feature_map_rgb = reduce_feature_map(feature_map)
+# feature_map_rgb = to_tensor(img_out)
 
-plt.imshow(feature_map.permute(1,2,0).cpu().numpy())
+_, feature_res, _ = feature_map.shape
 
-# %%
-vert_features = feature_per_vertex(mesh, cameras, feature_map)
-face_vert_features = vert_features[mesh.faces_list()[0]]
+plt.imshow(feature_map_rgb.permute(1,2,0).cpu().numpy())
 
 # %%
-from rendering import rasterize_vertex_features
+vert_features = feature_per_vertex(mesh, cameras, feature_map_rgb)
 
-reposed = animation.load_frame(10)
-rendered_features = rasterize_vertex_features(cameras, reposed, res, vert_features)
 
 # %%
 frames = []
+feature_res = feature_map_rgb.shape[1]
 for frame_i in tqdm(animation.framenums(sample_n=None)):
     mesh = animation.load_frame(frame_i)
-    rendered_features = rasterize_vertex_features(cameras, mesh, res, vert_features)
+    rendered_features = rasterize_vertex_features(cameras, mesh, feature_res, vert_features)
     frames.append(rendered_features.cpu())
 
 import imageio

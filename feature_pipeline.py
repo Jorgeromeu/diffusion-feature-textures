@@ -1,9 +1,10 @@
 from typing import Dict, List, Set, Tuple
+import diffusers
 import torch
 from PIL import Image
 from diffusers import (
     DiffusionPipeline, AutoencoderKL, UNet2DConditionModel,
-    UniPCMultistepScheduler
+    UniPCMultistepScheduler, UNet2DModel
 )
 
 from transformers import CLIPTokenizer, CLIPTextModel
@@ -15,14 +16,7 @@ from tqdm import tqdm
 class FeaturePipelineOutput:
     images: list
 
-
 class FeaturePipeline(DiffusionPipeline):
-
-    # for each timestep and level store feature
-    sd_features: Dict[Tuple[int, int], torch.Tensor] = dict()
-    # keep track of timesteps and levels we save features at
-    feature_levels: Set[int] = set()
-    feature_timesteps: Set[int] = set()
 
     def __init__(
         self,
@@ -43,32 +37,6 @@ class FeaturePipeline(DiffusionPipeline):
             tokenizer=tokenizer,
             text_encoder=text_encoder
         )
-
-        # hooks that save the features of the up convs
-        self._setup_hooks()
-
-    def _save_feature_hook(self, level):
-
-        def hook(module, inp, out):
-            self.feature_timesteps.add(self.cur_timestep.item())
-            # save the feature
-            self.sd_features[(self.cur_timestep.item(), level)
-                             ] = out.cpu().numpy()
-
-        return hook
-
-    def _setup_hooks(self):
-        """
-        Set up UNet hooks to extract Up Conv features at each timestep
-        """
-
-        unet: UNet2DConditionModel = self.unet
-
-        # for each level register a hook that saves the output of the up conv
-        for level in range(len(unet.up_blocks)):
-            self.feature_levels.add(level)
-            unet.up_blocks[level].register_forward_hook(
-                self._save_feature_hook(level))
 
     def _init_latents(self, batch_size, res=512):
         latents = torch.randn(
@@ -104,15 +72,8 @@ class FeaturePipeline(DiffusionPipeline):
         feature_level=2
     ):
 
-        # eval config
-        self.feature_level = feature_level
-        self.feature_timestep = feature_timestep
-
-        self.sd_features = dict()
-
         if generator is None:
             self.generator = torch.Generator(device=self.device)
-            self.seed()
         else:
             self.generator = generator
 
@@ -151,6 +112,7 @@ class FeaturePipeline(DiffusionPipeline):
 
             # diffusion step
             with torch.no_grad():
+
                 noise_pred = self.unet(
                     latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 

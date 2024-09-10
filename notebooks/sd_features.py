@@ -18,34 +18,28 @@ from sklearn.preprocessing import MinMaxScaler
 import faiss
 import numpy as np
 from einops import rearrange
-from feature_pipeline import FeaturePipeline
 from PIL import Image
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from visualization import reduce_feature_map
+from diffusers import StableDiffusionPipeline
 
 # %% Load Pipeline
-sd_repo = "CompVis/stable-diffusion-v1-4"        
 device = 'cuda:0'
-
-pipe = FeaturePipeline.from_pretrained(sd_repo).to(device)
-
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    safety_checker=None
+).to(device)
 
 # %% Generate Image
-gen = torch.Generator(device=pipe.device)
-gen.manual_seed(3)
-
 out = pipe(
-    ['Deadpool'],
-    num_steps=25,
-    generator=gen,
-    feature_level=2,
-    feature_timestep=0
+    'Deadpool, realistic, full body',
+    num_inference_steps=50,
+    generator=torch.manual_seed(42)
 )
 out.images[0]
-
 
 # %% Extract and visualize
 def ordered_sample(lst, N):
