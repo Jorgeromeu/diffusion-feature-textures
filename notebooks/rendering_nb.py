@@ -60,6 +60,7 @@ render = renders.cpu()
 depth = fragments.zbuf.cpu()
 
 # %%
+import rerun as rr
 
 # VISUALIZATION:
 rr.init(spawn=True, application_id='meshvis')
