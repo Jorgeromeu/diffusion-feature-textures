@@ -5,7 +5,7 @@ import re
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.structures import Meshes
 
-from util import ordered_sample
+from text3d2video.util import ordered_sample
 
 class OBJAnimation:
 

@@ -25,7 +25,6 @@ fig, axs = plt.subplots(1, N, figsize=(N*scale, 1*scale))
 
 for i, t in enumerate(timesteps):
 
-
     frame = video.get_frame(t)
 
     axs[i].imshow(frame)

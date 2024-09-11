@@ -4,7 +4,9 @@ scipy
 imageio
 einops
 diffusers
+accelerate
+safetensors
+transformers
 rerun-sdk
 codetiming
 scikit-learn
-transformers

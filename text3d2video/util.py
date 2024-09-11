@@ -210,7 +210,7 @@ def multiview_cameras(
         dist=distance, azim=azimuth, elev=elevation, device=device, at=bbox_center
     )
 
-    cameras = FoVPerspectiveCameras(R=rotation, T=translation, device=device)
+    cameras = FoVPerspectiveCameras(R=rotation, T=translation, device=device, znear=0.1, zfar=100)
 
     return cameras
 

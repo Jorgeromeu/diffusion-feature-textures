@@ -29,10 +29,9 @@ class SDFeatureExtractor:
 
     def _save_feature_hook(self, level):
         def hook(module, inp, out):
-            out_np = out.cpu().numpy()[0]
+            out_np = out.cpu().numpy()
             self._saved_features[level].append(out_np)
         return hook
-
 
 class FeatureExtractor:
 

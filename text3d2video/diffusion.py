@@ -24,7 +24,7 @@ def depth2img_pipe(device='cuda:0'):
     ).to(device)
 
     pipe = StableDiffusionControlNetPipeline.from_pretrained(
-        "runwayml/stable-diffusion-v1-5",
+        "CompVis/stable-diffusion-v1-4",
         controlnet=controlnet,
         safety_checker=None,
         torch_dtype=torch.float16
@@ -36,8 +36,8 @@ def depth2img_pipe(device='cuda:0'):
 
 def depth2img(
     pipe: StableDiffusionControlNetPipeline,
-    prompt: str,
-    depth: Image,
+    prompts: list[str],
+    depths: list[Image],
     guidance_scale=7,
     num_inference_steps=30
 
@@ -45,14 +45,16 @@ def depth2img(
     
     neg_prompt='lowres, low quality, monochrome, watermark',
     pos_promppt_supplement = 'best quality, highly detailed, photorealistic, 3D Render, black background'
+
+    prompts_modified = [f'{prompt}, {pos_promppt_supplement}' for prompt in prompts]
     
     output = pipe(
-        f'{prompt}, {pos_promppt_supplement}',
+        prompts_modified,
         neg_prompt=neg_prompt,
-        image=depth, 
+        image=depths, 
         guidance_scale=guidance_scale,
         eta=1,
         num_inference_steps=num_inference_steps
     )
     
-    return output.images[0]
+    return output.images

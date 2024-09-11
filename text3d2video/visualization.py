@@ -3,6 +3,25 @@ from torch import Tensor
 import faiss
 import numpy as np
 
+def reduce_features(features: Tensor):
+    N, D = features.shape    
+    
+    # fit PCA matrix
+    pca = faiss.PCAMatrix(D, 3)
+    pca.train(features)
+
+    # apply PCA matrix
+    reduced = pca.apply(features)
+
+    for c in range(3):
+        minval = reduced[:, c].min()
+        maxval = reduced[:, c].max()
+        reduced[:, c] = (reduced[:, c] - minval) / (maxval - minval) 
+    
+    return reduced
+
+
+
 def reduce_feature_map(feature_map: Tensor):
 
     D, H, W = feature_map.shape

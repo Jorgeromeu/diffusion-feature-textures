@@ -40,7 +40,7 @@ def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
         height=res,
         width=res,
         focal_length=focal_length,
-        camera_xyz=PT3D_ViewCoords
+        camera_xyz=PT3D_ViewCoords,
     )
 
 
