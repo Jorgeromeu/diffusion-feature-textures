@@ -8,7 +8,7 @@ ipy.run_line_magic('autoreload', '2')
 import sys
 sys.path.append('../')
 
-from feature_pipeline import FeaturePipeline
+from text3d2video.feature_pipeline import FeaturePipeline
 from sd_feature_extraction import FeatureExtractor
 from sklearn.preprocessing import MinMaxScaler
 import faiss

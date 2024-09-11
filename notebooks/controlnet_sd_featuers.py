@@ -11,14 +11,14 @@ sys.path.append('../')
 
 import numpy as np
 from einops import rearrange
-from feature_pipeline import FeaturePipeline
+from text3d2video.feature_pipeline import FeaturePipeline
 import torch
 import matplotlib.pyplot as plt
 from visualization import reduce_feature_map
 from diffusion import depth2img_pipe, depth2img
-from file_util import OBJAnimation
+from text3d2video.file_util import OBJAnimation
 from pytorch3d.renderer import look_at_view_transform, FoVPerspectiveCameras
-from rendering import rasterize, normalize_depth_map
+from text3d2video.rendering import rasterize, normalize_depth_map
 from diffusers import UNet2DConditionModel
 from sd_feature_extraction import SDFeatureExtractor
 import torchvision.transforms.functional as TF

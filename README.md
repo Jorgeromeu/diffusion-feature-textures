@@ -1,6 +1,13 @@
-# Thesis
+# text3D2video
 
-Controllable 4D-guided video generation with image diffusion models, with 3D consistent diffusion features.
+Controllable 4D-guided video generation with T2I diffusion models using 3D consistent diffusion features.
+
+## Repository Structure
+
+- `data` contains some example meshes, animations, etc
+- `notebooks` contains some interactive notebooks
+- `scripts` contains the main entrypoints to our program
+- `text3d2video` contains reusable functions defined in our library
 
 ## Getting Started
 

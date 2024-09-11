@@ -17,9 +17,9 @@ from PIL import Image
 import torch
 from pytorch3d.renderer import FoVPerspectiveCameras, look_at_view_transform
 import torchvision.transforms as transforms
-from file_util import load_frame_obj
+from text3d2video.file_util import load_frame_obj
 from pathlib import Path
-from rendering import normalize_depth_map, rasterize
+from text3d2video.rendering import normalize_depth_map, rasterize
 from util import feature_per_vertex, sample_feature_map
 from diffusion import depth2img_pipe, depth2img
 
@@ -27,7 +27,7 @@ to_pil = transforms.ToPILImage()
 to_tensor = transforms.ToTensor()
 
 # %%
-from file_util import OBJAnimation
+from text3d2video.file_util import OBJAnimation
 
 device = torch.device("cuda:0")
 

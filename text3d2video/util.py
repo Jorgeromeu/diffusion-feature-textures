@@ -1,11 +1,12 @@
-from einops import rearrange
+from einops import rearrange, repeat
 import torch
+import math
 from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 from pytorch3d.transforms import Transform3d
 import torch.nn.functional as F
-from pytorch3d.renderer import RasterizationSettings, MeshRasterizer
+from pytorch3d.renderer import RasterizationSettings, MeshRasterizer, FoVPerspectiveCameras, look_at_view_transform
 
 def ordered_sample(lst, N):
     """
@@ -29,7 +30,6 @@ def pixel_coords_uv(
 
     return torch.stack([x, y])
 
-
 def ndc_grid(
         resolution=100,
         corner_aligned=False
@@ -51,7 +51,6 @@ def ndc_grid(
     xy = torch.stack([x, y])
 
     return xy
-
 
 def reproject_features(
         cameras: CamerasBase,
@@ -83,7 +82,6 @@ def reproject_features(
     )
 
     return world_coords, point_features
-
 
 def project_feature_map_to_vertices(
         mesh: Meshes,
@@ -125,6 +123,7 @@ def feature_per_vertex(
         mesh: Meshes,
         cam: CamerasBase,
         feature_map: Tensor,
+        batch_idx=0
 ):
     
     feature_dim, _, _ = feature_map.shape
@@ -135,7 +134,7 @@ def feature_per_vertex(
         blur_radius=0.0,
         faces_per_pixel=1,
     )
-    rasterizer = MeshRasterizer(cameras=cam, raster_settings=raster_settings)
+    rasterizer = MeshRasterizer(cameras=cam[batch_idx], raster_settings=raster_settings)
     fragments = rasterizer(mesh)
 
     # get visible faces
@@ -148,7 +147,7 @@ def feature_per_vertex(
 
     # TODO extract projected points from rasterization pass output
     # project points to NDC
-    visible_points_ndc = cam.transform_points_ndc(visible_verts).cpu()
+    visible_points_ndc = cam[batch_idx].transform_points_ndc(visible_verts).cpu()
 
     # extract features for each projected vertex
     mode = 'nearest'
@@ -164,8 +163,6 @@ def feature_per_vertex(
 
     return vert_features
 
-
-
 def sample_feature_map(
         feature_map: Tensor,
         coords: Tensor,
@@ -180,3 +177,47 @@ def sample_feature_map(
     out_features = rearrange(out, '1 f 1 n -> n f') 
     return out_features
 
+def multiview_cameras(
+        mesh: Meshes,
+        num_views: int,
+        add_angle_ele=0,
+        add_angle_azi=0,
+        scaling_factor=0.65,
+        device='cpu'
+) -> FoVPerspectiveCameras:
+    
+    """
+    Generate cameras that envelope a mesh
+    """
+
+    # get bbox around mesh 
+    bbox = mesh.get_bounding_boxes()
+    bbox_min = bbox.min(dim=-1).values[0]
+    bbox_max = bbox.max(dim=-1).values[0]
+    
+    bb_diff = bbox_max - bbox_min
+    bbox_center = (bbox_min + bbox_max) / 2.0
+    distance = torch.sqrt((bb_diff * bb_diff).sum())
+    distance *= scaling_factor
+
+    steps = int(math.sqrt(num_views))
+    end = 360 - 360/steps
+    elevation = torch.linspace(start = 0 , end = end , steps = steps).repeat(steps) + add_angle_ele
+    azimuth = torch.linspace(start = 0 , end = end , steps = steps)
+    azimuth = torch.repeat_interleave(azimuth, steps) + add_angle_azi
+    bbox_center = bbox_center.unsqueeze(0)
+    rotation, translation = look_at_view_transform(
+        dist=distance, azim=azimuth, elev=elevation, device=device, at=bbox_center
+    )
+
+    cameras = FoVPerspectiveCameras(R=rotation, T=translation, device=device)
+
+    return cameras
+
+def random_solid_color_img(res=100):
+    return repeat(
+        torch.randn(3),
+        'c -> c h w',
+        h=res,
+        w=res
+    )
