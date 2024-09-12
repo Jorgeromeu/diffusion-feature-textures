@@ -3,8 +3,29 @@ import rerun as rr
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 from pytorch3d.transforms import Transform3d
+import torch
 
 PT3D_ViewCoords = rr.ViewCoordinates.LUF
+
+class TimeSequence:
+
+    def __init__(self, name: str) -> None:
+        self.cur_step = 0
+        self.sequence_name = name
+        rr.set_time_sequence(name, 0)
+        
+    def step(self):
+        self.cur_step += 1
+        rr.set_time_sequence(self.sequence_name, self.cur_step)
+
+def feature_map(feature_map: np.array):
+
+    """
+    Log a high-dimensional feature map as a tensor
+    :param feature_map: D x H x W tensor
+    """
+    dim_names = ["feature", "height", "width"]
+    return rr.Tensor(feature_map, dim_names=dim_names)
 
 def pt3d_setup():
     rr.log('/', PT3D_ViewCoords, static=True)
@@ -42,7 +63,6 @@ def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
         focal_length=focal_length,
         camera_xyz=PT3D_ViewCoords,
     )
-
 
 def pt3d_transform(transforms: Transform3d, batch_idx=0):
     matrix = transforms.get_matrix()

@@ -22,7 +22,8 @@ from text3d2video.visualization import reduce_features
 
 device = torch.device("cuda:0")
 
-animation_path = Path('data/backflip')
+animation_name = 'dancing'
+animation_path = Path('data') / animation_name
 animation = OBJAnimation(animation_path)
 mesh = animation.load_frame(1)
 
@@ -31,12 +32,15 @@ R, T = look_at_view_transform(dist=2, azim=0, elev=0)
 cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
 vert_features = torch.load('outs/mixamo-human_vert_features.pt')
+
 vert_features = reduce_features(vert_features.cpu())
 vert_features = torch.Tensor(vert_features).to(device)
 
 # %%
 mesh = animation.load_frame(10)
 rendered_features = rasterize_vertex_features(cameras, mesh, 100, vert_features)
+
+plt.imshow(rendered_features.permute(1, 2, 0).cpu())
 
 # %%
 frames = []
@@ -46,8 +50,11 @@ for frame_i in tqdm(animation.framenums(sample_n=None)):
     rendered_features = rasterize_vertex_features(cameras, mesh, feature_res, vert_features)
     frames.append(rendered_features.cpu())
 
+# %%
 import imageio
-with imageio.get_writer(Path('outs/deadpool.gif'), mode='I', loop=0) as writer:
+out_path = Path('outs') / f'{animation_name}.gif'
+with imageio.get_writer(str(out_path), mode='I', loop=0) as writer:
     for frame in frames:
         frame_pil = TF.to_pil_image(frame)
+        frame_pil = frame_pil.resize((512, 512), Image.NEAREST)
         writer.append_data(frame_pil)

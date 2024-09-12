@@ -3,46 +3,73 @@ from torch import Tensor
 import faiss
 import numpy as np
 
-def reduce_features(features: Tensor):
-    N, D = features.shape    
-    
-    # fit PCA matrix
-    pca = faiss.PCAMatrix(D, 3)
-    pca.train(features)
+class FeaturePCA:
 
-    # apply PCA matrix
-    reduced = pca.apply(features)
+    """
+    Utility class to facilitate performing PCA on high-dimensional features
+    and visualizing them as RGB
+    """
 
-    for c in range(3):
-        minval = reduced[:, c].min()
-        maxval = reduced[:, c].max()
-        reduced[:, c] = (reduced[:, c] - minval) / (maxval - minval) 
-    
-    return reduced
+    def __init__(self, feature_dim: int):
+        self.pca = faiss.PCAMatrix(feature_dim, 3)
+        self.feature_dim = feature_dim
 
+    def fit(self, features: Tensor):
+        """
+        Fit PCA matrix to features
+        :param features: N x D tensor
+        """
+        self.pca.train(features)
 
+    def apply(self, features: Tensor):
+        """
+        Apply PCA matrix to features
+        :param features: N x D tensor
+        :return reduced: N x 3 tensor
+        """
+        return self.pca.apply(features)
 
-def reduce_feature_map(feature_map: Tensor):
+    def to_normalized_rgb(self, reduced):
 
-    D, H, W = feature_map.shape
+        """
+        Normalize reduced features for visualization
+        :param reduced: N x 3 tensor
+        :return normalized: N x 3 tensor
+        """
 
-    # reshape to flat
-    feature_flat = rearrange(feature_map, 'd h w -> (h w) d')
+        # normalize each channel 
+        for c in range(3):
+            minval = reduced[:, c].min()
+            maxval = reduced[:, c].max()
+            reduced[:, c] = (reduced[:, c] - minval) / (maxval - minval) 
 
-    # fit PCA matrix
-    pca = faiss.PCAMatrix(D, 3)
-    pca.train(feature_flat)
+        return reduced
 
-    # apply PCA matrix
-    reduced_flat = pca.apply(feature_flat)
+    def features_to_rgb(self, features: Tensor):
+        """
+        Convert features to RGB
+        :param features: N x D tensor
+        :return rgb: N x 3 tensor
+        """
+        reduced = self.apply(features)
+        return self.to_normalized_rgb(reduced)
 
-    for c in range(3):
-        minval = reduced_flat[:, c].min()
-        maxval = reduced_flat[:, c].max()
-        reduced_flat[:, c] = (reduced_flat[:, c] - minval) / (maxval - minval) 
+    def feature_map_to_rgb(self, feature_map: Tensor):
+        """
+        Convert feature map to RGB
+        :param feature_map: D x H x W tensor
+        :return rgb: H x W x 3 tensor
+        """
+        _, H, W = feature_map.shape
 
-    # reshape to square
-    reduced = rearrange(reduced_flat, '(h w) d -> d h w', h=H, w=W)
-    reduced = Tensor(reduced)
+        # reshape to flat
+        feature_flat = rearrange(feature_map, 'd h w -> (h w) d')
 
-    return reduced
+        # apply conversion
+        reduced_flat = self.features_to_rgb(feature_flat)
+
+        # reshape to square
+        reduced = rearrange(reduced_flat, '(h w) d -> d h w', h=H, w=W)
+        reduced = Tensor(reduced)
+
+        return reduced
