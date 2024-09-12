@@ -9,6 +9,7 @@ from pytorch3d.structures import Meshes
 
 EXTENT_UV = [0, 1, 0, 1]
 
+
 def normalize_depth_map(depth):
     """
     Convert from zbuf to depth map
@@ -22,14 +23,17 @@ def normalize_depth_map(depth):
     depth = depth / max_depth
     return depth
 
+
 def make_rasterizer(cameras, resolution=512):
     raster_settings = RasterizationSettings(
         image_size=resolution,
         faces_per_pixel=1
     )
-    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
+    rasterizer = MeshRasterizer(
+        cameras=cameras, raster_settings=raster_settings)
 
     return rasterizer
+
 
 def init_renderer(cameras, device='cuda:0', resolution=512):
     raster_settings = RasterizationSettings(

@@ -119,7 +119,7 @@ def project_feature_map_to_vertices(
     vertex_features[close_vertex_indices] = point_features[vertex_closest_point[close_vertex_indices]]
     return vertex_features
 
-def feature_per_vertex(
+def project_vertices_to_features(
         mesh: Meshes,
         cam: CamerasBase,
         feature_map: Tensor,
@@ -145,7 +145,7 @@ def feature_per_vertex(
     verts = mesh.verts_list()[0] 
     visible_verts = verts[visible_vert_indices]
 
-    # TODO extract projected points from rasterization pass output
+    # TODO extract projected points from rasterization pass output, no need to do it again
     # project points to NDC
     visible_points_ndc = cam[batch_idx].transform_points_ndc(visible_verts).cpu()
 

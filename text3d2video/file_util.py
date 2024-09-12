@@ -1,13 +1,15 @@
 from pathlib import Path
 import os
-import re
 
 from pytorch3d.io import load_objs_as_meshes
-from pytorch3d.structures import Meshes
-
 from text3d2video.util import ordered_sample
 
+
 class OBJAnimation:
+
+    """
+    Utility class for reading animations from a directory of .obj files
+    """
 
     objs_dir: Path
 
@@ -28,15 +30,7 @@ class OBJAnimation:
             framenums = ordered_sample(framenums, sample_n)
 
         framenums = sorted(framenums)
-        return framenums 
+        return framenums
 
     def num_frames(self):
         return max(self.framenums())
-
-def load_frame_obj(objs_dir: Path, frame=0, device='cuda') -> Meshes:
-
-    directory_name = objs_dir.stem
-    path = objs_dir / f'{directory_name}{frame:04}.obj'
-
-    mesh = load_objs_as_meshes([path], device=device)
-    return mesh

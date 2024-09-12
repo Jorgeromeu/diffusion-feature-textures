@@ -9,6 +9,10 @@ PT3D_ViewCoords = rr.ViewCoordinates.LUF
 
 class TimeSequence:
 
+    """
+    Utility class for time sequences in rerun
+    """
+
     def __init__(self, name: str) -> None:
         self.cur_step = 0
         self.sequence_name = name

@@ -3,7 +3,7 @@ from torch import Tensor
 import faiss
 import numpy as np
 
-class FeaturePCA:
+class RgbPcaUtil:
 
     """
     Utility class to facilitate performing PCA on high-dimensional features

@@ -13,8 +13,8 @@ import text3d2video.rerun_util as ru
 import torchvision.transforms.functional as TF
 import faiss
 from text3d2video.sd_feature_extraction import SDFeatureExtractor
-from text3d2video.util import feature_per_vertex, multiview_cameras, random_solid_color_img
-from text3d2video.visualization import FeaturePCA
+from text3d2video.util import project_vertices_to_features, multiview_cameras, random_solid_color_img
+from text3d2video.visualization import RgbPcaUtil
 from PIL import Image
 
 def compute_3d_diffusion_features(
@@ -108,7 +108,7 @@ def compute_3d_diffusion_features(
     for i in range(n_views):
         # project view features to vertices
         feature_map = feature_maps[i]
-        view_vertex_features = feature_per_vertex(
+        view_vertex_features = project_vertices_to_features(
             mesh,
             cameras,
             feature_map,
@@ -125,7 +125,7 @@ def compute_3d_diffusion_features(
     if log_pca_features:
 
         # fit PCA matrix
-        pca = FeaturePCA(feature_dim)
+        pca = RgbPcaUtil(feature_dim)
         pca.fit(vertex_features)
 
         # apply PCA matrix
