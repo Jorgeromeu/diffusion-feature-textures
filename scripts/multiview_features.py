@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 import time
 from einops import repeat
 import torch
@@ -8,6 +9,7 @@ from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.renderer import look_at_view_transform, RasterizationSettings, MeshRasterizer
 import rerun as rr
 import rerun.blueprint as rrb
+import wandb
 from text3d2video.diffusion import depth2img, depth2img_pipe
 from text3d2video.rendering import normalize_depth_map
 import text3d2video.rerun_util as ru
@@ -17,16 +19,16 @@ from PIL import Image
 from text3d2video.sd_feature_extraction import SDFeatureExtractor
 from text3d2video.util import project_vertices_to_features, multiview_cameras, random_solid_color_img
 from text3d2video.visualization import RgbPcaUtil
+from text3d2video.wandb_util import MVFeaturesArtifact
 
 
-def compute_3d_diffusion_features(
+def extract_multiview_features(
         pipe: StableDiffusionControlNetPipeline,
         mesh: Meshes,
         prompt: str = 'Deadpool',
         n_views=9,
         resolution=512,
         device='cpu',
-        log_pca_features=False
 ) -> torch.Tensor:
     """
     Compute Diffusion 3D Features for a given mesh, and represent them as vertex features.
@@ -97,72 +99,25 @@ def compute_3d_diffusion_features(
         feature_map = torch.Tensor(extracted_features[i])
         feature_maps.append(feature_map)
 
-    rr_seq.step()
-
-    # log feature maps
-    rr.log(f'feature_{i}', ru.feature_map(feature_map.cpu().numpy()))
-
-    # initialize empty D-dimensional vertex features
-    feature_dim = feature_maps[0].shape[0]
-    vertex_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim)
-    vertex_feature_count = torch.zeros(mesh.num_verts_per_mesh()[0])
-
-    for i in range(n_views):
-        # project view features to vertices
-        feature_map = feature_maps[i]
-        view_vertex_features = project_vertices_to_features(
-            mesh,
-            cameras,
-            feature_map,
-            batch_idx=i
-        ).cpu()
-
-        # indices of vertices with nonzero view features
-        nonzero_indices = torch.where(
-            torch.any(view_vertex_features != 0, dim=1))[0]
-
-        # update vertex features
-        vertex_features += view_vertex_features
-        vertex_feature_count[nonzero_indices] += 1
-
-    if log_pca_features:
-
-        # fit PCA matrix
-        pca = RgbPcaUtil(feature_dim)
-        pca.fit(vertex_features)
-
-        # apply PCA matrix
-        reduced_features = pca.features_to_rgb(vertex_features)
-
-        # log each view's dimensionality-reduced feature map
-        rr_seq.step()
-        for i in range(n_views):
-            feature_map = feature_maps[i]
-            feature_map_resolution = feature_map.shape[1]
-            fmap_rgb = pca.feature_map_to_rgb(feature_map)
-            fmap_rgb = TF.to_pil_image(fmap_rgb)
-
-            # log feature map (and camera because of new resolution)
-            ru.log_pt3d_FovCamrea(
-                f'cam_{i}', cameras, batch_idx=i, res=feature_map_resolution)
-            rr.log(f'cam_{i}', rr.Image(fmap_rgb))
-
-        # log reduced features on mesh
-        rr_seq.step()
-        rr.log('mesh', ru.pt3d_mesh(mesh, vertex_colors=reduced_features))
-
-    return vertex_features
+    return cameras, feature_maps, generted_ims
 
 
 if __name__ == "__main__":
 
-    mesh_name = 'mixamo-human'
+    animation_art = 'backflip:latest'
     prompt = 'Deadpool'
-    mesh = f'data/{mesh_name}.obj'
-    n_views = 9
+    n_views = 10
+    out_artifact_name = 'multiview_features'
+
+    wandb.init(project='diffusion-3d-features', job_type='multiview_features')
+
+    # download animation
+    animation_artifact = wandb.use_artifact(animation_art)
+    animation_dir = Path(animation_artifact.download())
+    mesh_path = animation_dir / 'static.obj'
 
     # init 3D logging
-    rr.init('diff3f')
+    rr.init('multiview_features')
     rr.serve()
     ru.pt3d_setup()
 
@@ -172,23 +127,25 @@ if __name__ == "__main__":
 
     # load mesh
     device = 'cuda:0'
-    mesh: Meshes = load_objs_as_meshes([mesh], device=device)
+    mesh: Meshes = load_objs_as_meshes([mesh_path], device=device)
 
     # load pipeline
     pipe = depth2img_pipe(device=device)
 
     # compute diffusion features
-    vert_features = compute_3d_diffusion_features(
+    cams, features, ims = extract_multiview_features(
         pipe,
         mesh,
         device=device,
         n_views=n_views,
-        prompt=prompt,
-        log_pca_features=True
+        prompt=prompt
     )
 
-    # save computed vert features
-    out_path = Path(f'outs/{mesh_name}_vert_features.pt')
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_artifact = MVFeaturesArtifact.create(
+        out_artifact_name,
+        cams,
+        features,
+        ims
+    )
 
-    torch.save(vert_features, str(out_path))
+    wandb.log_artifact(out_artifact)
