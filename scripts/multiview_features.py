@@ -92,7 +92,7 @@ def extract_multiview_features(
 
     # extract features
     # size = n_views
-    extracted_features = feature_extractor.get_feature(level=2, timestep=25)
+    extracted_features = feature_extractor.get_feature(level=1, timestep=25)
 
     feature_maps = []
     for i in range(n_views):

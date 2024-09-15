@@ -3,6 +3,7 @@ from torch import Tensor
 import faiss
 import numpy as np
 
+
 class RgbPcaUtil:
 
     """
@@ -29,19 +30,18 @@ class RgbPcaUtil:
         """
         return self.pca.apply(features)
 
-    def to_normalized_rgb(self, reduced):
-
+    def normalize_rgb(self, reduced):
         """
         Normalize reduced features for visualization
         :param reduced: N x 3 tensor
         :return normalized: N x 3 tensor
         """
 
-        # normalize each channel 
+        # normalize each channel
         for c in range(3):
             minval = reduced[:, c].min()
             maxval = reduced[:, c].max()
-            reduced[:, c] = (reduced[:, c] - minval) / (maxval - minval) 
+            reduced[:, c] = (reduced[:, c] - minval) / (maxval - minval)
 
         return reduced
 
@@ -52,7 +52,7 @@ class RgbPcaUtil:
         :return rgb: N x 3 tensor
         """
         reduced = self.apply(features)
-        return self.to_normalized_rgb(reduced)
+        return self.normalize_rgb(reduced)
 
     def feature_map_to_rgb(self, feature_map: Tensor):
         """
@@ -63,13 +63,13 @@ class RgbPcaUtil:
         _, H, W = feature_map.shape
 
         # reshape to flat
-        feature_flat = rearrange(feature_map, 'd h w -> (h w) d')
+        feature_flat = rearrange(feature_map, 'c h w -> (h w) c')
 
         # apply conversion
         reduced_flat = self.features_to_rgb(feature_flat)
 
         # reshape to square
-        reduced = rearrange(reduced_flat, '(h w) d -> d h w', h=H, w=W)
+        reduced = rearrange(reduced_flat, '(h w) c -> c h w', h=H, w=W)
         reduced = Tensor(reduced)
 
         return reduced

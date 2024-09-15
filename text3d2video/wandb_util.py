@@ -8,7 +8,10 @@ from tqdm import tqdm
 from wandb import CommError, Artifact
 from wandb.apis.public import Run, File
 from PIL import Image
+from pytorch3d.io import load_objs_as_meshes
 import shutil
+
+from text3d2video.file_util import OBJAnimation
 
 
 def first_logged_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
@@ -62,6 +65,13 @@ class MVFeaturesArtifact:
     def get_cameras(self):
         return torch.load(self.path / 'cameras.pt')
 
+    def get_ims(self):
+        ims = []
+        for i in range(len(self.get_cameras())):
+            view_dir = self.path / f'view_{i}'
+            ims.append(Image.open(view_dir / 'image.png'))
+        return ims
+
     def get_features(self):
         features = []
         for i in range(len(self.get_cameras())):
@@ -87,6 +97,12 @@ class AnimationArtifact:
 
     def get_mesh_path(self) -> Path:
         return self.path / 'static.obj'
+
+    def get_mesh(self, device='cuda:0'):
+        return load_objs_as_meshes([self.get_mesh_path()], device=device)
+
+    def get_animation(self) -> OBJAnimation:
+        return OBJAnimation(self.path / 'animation')
 
     def get_animation_path(self) -> Path:
         return self.path / 'animation.obj'

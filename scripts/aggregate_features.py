@@ -1,6 +1,6 @@
 from pathlib import Path
 import time
-from einops import repeat
+from einops import rearrange, repeat
 import torch
 from diffusers import StableDiffusionControlNetPipeline
 from pytorch3d.structures import Meshes
@@ -27,7 +27,23 @@ def aggregate_3d_features(
         cameras: FoVPerspectiveCameras,
         feature_maps: list[torch.Tensor],
         mesh: Meshes,
+        log_pca_features: bool = True
 ) -> torch.Tensor:
+
+    rr.log('mesh', ru.pt3d_mesh(mesh))
+
+    if log_pca_features:
+
+        # take first channel as preiminary visualization
+        rgb_feature_maps = [f[0:3] for f in feature_maps]
+
+        # log PCA feature maps
+        n_views = len(cameras)
+        for i in range(n_views):
+            feature_map = rgb_feature_maps[i]
+            res = feature_map.shape[1]
+            ru.log_pt3d_FovCamrea(f'cam_{i}', cameras, batch_idx=i, res=res)
+            rr.log(f'cam_{i}', rr.Image(TF.to_pil_image(feature_map)))
 
     # initialize empty D-dimensional vertex features
     feature_dim = feature_maps[0].shape[0]
@@ -53,6 +69,9 @@ def aggregate_3d_features(
         # update vertex features
         vertex_features += view_vertex_features
         vertex_feature_count[nonzero_indices] += 1
+
+        rr.log('mesh', ru.pt3d_mesh(
+            mesh, vertex_colors=vertex_features[:, 0:3]))
 
     return vertex_features
 
@@ -90,14 +109,10 @@ if __name__ == "__main__":
     device = 'cuda:0'
     mesh: Meshes = load_objs_as_meshes([mesh_path], device=device)
 
-    rr.log('mesh', ru.pt3d_mesh(mesh))
-
     vertex_features = aggregate_3d_features(cameras, features, mesh)
 
     pca = RgbPcaUtil(vertex_features.shape[1])
     pca.fit(vertex_features)
     vertex_features_rgb = pca.features_to_rgb(vertex_features)
-
-    rr.log('mesh', ru.pt3d_mesh(mesh, vertex_colors=vertex_features_rgb))
 
     print(vertex_features.shape)
