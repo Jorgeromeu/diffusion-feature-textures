@@ -23,11 +23,17 @@ from pytorch3d.renderer import FoVPerspectiveCameras
 from text3d2video.wandb_util import AnimationArtifact, MVFeaturesArtifact, first_used_artifact_of_type
 
 
+class AggregationType:
+    MEAN = 0
+    FIRST = 1
+
+
 def aggregate_3d_features(
         cameras: FoVPerspectiveCameras,
         feature_maps: list[torch.Tensor],
         mesh: Meshes,
-        log_pca_features: bool = True
+        log_pca_features: bool = True,
+        aggregation_type: int = AggregationType.MEAN
 ) -> torch.Tensor:
 
     rr_seq = ru.TimeSequence("steps")
@@ -49,53 +55,64 @@ def aggregate_3d_features(
     vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim)
     vert_feature_cnt = torch.zeros(mesh.num_verts_per_mesh()[0])
 
-    n_views = len(cameras)
-
-    for i in range(n_views):
+    # for each view
+    for view_i, _ in enumerate(cameras):
 
         rr_seq.step()
 
         # project view features to vertices
-        feature_map = feature_maps[i]
-        view_vertex_features = project_vertices_to_features(
+        feature_map = feature_maps[view_i]
+        view_vert_features = project_vertices_to_features(
             mesh,
             cameras,
             feature_map,
-            batch_idx=i
+            batch_idx=view_i
         ).cpu()
 
-        # indices of vertices with nonzero view features
-        nonzero_indices = torch.where(
-            torch.any(view_vertex_features != 0, dim=1))[0]
+        if aggregation_type == AggregationType.FIRST:
+            # update empty entries in vert_features
+            empty_vert_idxs = vert_feature_cnt == 0
+            vert_features[empty_vert_idxs] = view_vert_features[empty_vert_idxs]
+            aggr_vert_features = vert_features
 
-        # update vertex features
-        vert_features += view_vertex_features
-        vert_feature_cnt[nonzero_indices] += 1
+        # keep track of number of features per vertex
+        nonzero_view_idxs = torch.where(
+            torch.any(view_vert_features != 0, dim=1))[0]
+        vert_feature_cnt[nonzero_view_idxs] += 1
 
-        avg_vertex_features = vert_features / \
-            torch.clamp(vert_feature_cnt, min=1).unsqueeze(1)
+        if aggregation_type == AggregationType.MEAN:
+            # update vertex features
+
+            # get indices of vertices with nonzero features
+            vert_features += view_vert_features
+            aggr_vert_features = vert_features / \
+                torch.clamp(vert_feature_cnt, min=1).unsqueeze(1)
 
         if log_pca_features:
 
-            res = rgb_feature_maps[i].shape[-1]
-            ru.log_pt3d_FovCamrea(f'cam_{i}', cameras, batch_idx=i, res=res)
-            rr.log(f'cam_{i}', rr.Image(TF.to_pil_image(rgb_feature_maps[i])))
+            res = rgb_feature_maps[view_i].shape[-1]
+            ru.log_pt3d_FovCamrea(
+                f'cam_{view_i}', cameras, batch_idx=view_i, res=res)
+            rr.log(f'cam_{view_i}', rr.Image(
+                TF.to_pil_image(rgb_feature_maps[view_i])))
 
-            vert_features_rgb = pca.features_to_rgb(avg_vertex_features)
+            vert_features_rgb = pca.features_to_rgb(aggr_vert_features)
             rr.log('mesh', ru.pt3d_mesh(mesh, vertex_colors=vert_features_rgb))
 
     if log_pca_features:
         # recompute PCA on final features
         rr_seq.step()
-        rgb_vert_features = pca.fit(avg_vertex_features)
+        rgb_vert_features = pca.fit(aggr_vert_features)
         rr.log('mesh', ru.pt3d_mesh(mesh, vertex_colors=rgb_vert_features))
 
-    return avg_vertex_features
+    return aggr_vert_features
 
 
 if __name__ == "__main__":
 
     features_art = 'multiview_features:latest'
+    feature_identifier = {'level': '2', 'time': '20'}
+    aggregation_type = AggregationType.FIRST
 
     wandb.init(project="diffusion-3d-features",
                job_type='aggregate_3d_features')
@@ -113,7 +130,8 @@ if __name__ == "__main__":
     mv_features_artifact = wandb.use_artifact(features_art)
     mv_features_data = MVFeaturesArtifact(mv_features_artifact)
     cameras = mv_features_data.get_cameras()
-    features = mv_features_data.get_features()
+    features = [mv_features_data.get_feature(i, feature_identifier) for i in
+                mv_features_data.view_indices()]
 
     # get mesh
     mv_features_run = mv_features_artifact.logged_by()
@@ -126,7 +144,12 @@ if __name__ == "__main__":
     device = 'cuda:0'
     mesh: Meshes = load_objs_as_meshes([mesh_path], device=device)
 
-    vertex_features = aggregate_3d_features(cameras, features, mesh)
+    vertex_features = aggregate_3d_features(
+        cameras,
+        features,
+        mesh,
+        aggregation_type=aggregation_type
+    )
 
     pca = RgbPcaUtil(vertex_features.shape[1])
     pca.fit(vertex_features)

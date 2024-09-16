@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 from re import Pattern
 import tempfile
+from typing import Dict, List
 from pytorch3d.renderer import FoVPerspectiveCameras
 import torch
 from tqdm import tqdm
@@ -35,21 +36,27 @@ class MVFeaturesArtifact:
     def create(
         artifact_name: str,
         cameras: FoVPerspectiveCameras,
-        features: list[torch.Tensor],
-        images: list[Image.Image],
+        features: List[Dict[str, torch.Tensor]],
+        images: List[Image.Image],
     ) -> Artifact:
 
         # create temproary directory
         tempdir = tempfile.mkdtemp()
+        tempdir_path = Path(tempdir)
 
         # save cameras
-        tempdir_path = Path(tempdir)
         torch.save(cameras, tempdir_path / 'cameras.pt')
+
+        # for each view save data
         for i in range(len(cameras)):
             view_path = tempdir_path / f'view_{i}'
             view_path.mkdir(parents=True, exist_ok=True)
-            torch.save(features[i], view_path / 'features.pt')
+
+            # save generated image
             images[i].save(view_path / 'image.png')
+
+            for name, feature in features[i].items():
+                torch.save(feature, view_path / f'feature-{name}.pt')
 
         artifact = Artifact(artifact_name, type=MVFeaturesArtifact.type)
         artifact.add_dir(tempdir_path)
@@ -62,22 +69,27 @@ class MVFeaturesArtifact:
         self.artifact = artifact
         self.path = Path(artifact.download())
 
+    def view_indices(self) -> List[int]:
+        return range(len(self.get_cameras()))
+
     def get_cameras(self):
         return torch.load(self.path / 'cameras.pt')
 
     def get_ims(self):
         ims = []
-        for i in range(len(self.get_cameras())):
+        for i in self.view_indices():
             view_dir = self.path / f'view_{i}'
             ims.append(Image.open(view_dir / 'image.png'))
         return ims
 
-    def get_features(self):
-        features = []
-        for i in range(len(self.get_cameras())):
-            view_dir = self.path / f'view_{i}'
-            features.append(torch.load(view_dir / 'features.pt'))
-        return features
+    def get_feature(self, view_i: int, identifier: Dict[str, str]):
+        view_dir = self.path / f'view_{view_i}'
+
+        feature_name = 'feature-'
+        feature_keys = [f'{key}:{value}' for key, value in identifier.items()]
+        feature_name += ','.join(feature_keys) + '.pt'
+
+        return torch.Tensor(torch.load(view_dir / feature_name))
 
 
 class AnimationArtifact:
