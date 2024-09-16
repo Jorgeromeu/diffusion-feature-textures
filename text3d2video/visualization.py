@@ -7,20 +7,39 @@ import numpy as np
 class RgbPcaUtil:
 
     """
-    Utility class to facilitate performing PCA on high-dimensional features
-    and visualizing them as RGB
+    Utility class to facilitate performing PCA on high-dimensional features,
+    and normalizing/processing for RGB visualization.
     """
+
+    pca: faiss.PCAMatrix
+    feature_dim: int
+
+    # min and max values for each channel
+    channel_min: Tensor
+    channel_max: Tensor
 
     def __init__(self, feature_dim: int):
         self.pca = faiss.PCAMatrix(feature_dim, 3)
         self.feature_dim = feature_dim
 
-    def fit(self, features: Tensor):
+    def fit(self, features: Tensor, lower_percentile=1, upper_percentile=99):
         """
         Fit PCA matrix to features
         :param features: N x D tensor
         """
+
+        # fit pca matrix
         self.pca.train(features)
+
+        # compute min and max for each channel
+        reduced_features = self.apply(features)
+        self.channel_min = np.percentile(
+            reduced_features, lower_percentile, axis=0)
+        self.channel_max = np.percentile(
+            reduced_features, upper_percentile, axis=0)
+
+        normalized = self.normalize(reduced_features)
+        return normalized
 
     def apply(self, features: Tensor):
         """
@@ -28,35 +47,39 @@ class RgbPcaUtil:
         :param features: N x D tensor
         :return reduced: N x 3 tensor
         """
+
         return self.pca.apply(features)
 
-    def normalize_rgb(self, reduced):
+    def normalize(self, reduced):
         """
         Normalize reduced features for visualization
         :param reduced: N x 3 tensor
         :return normalized: N x 3 tensor
         """
 
-        # normalize each channel
+        # normalize each channel according to precomputed min/max
         for c in range(3):
-            minval = reduced[:, c].min()
-            maxval = reduced[:, c].max()
+            minval = self.channel_min[c]
+            maxval = self.channel_max[c]
             reduced[:, c] = (reduced[:, c] - minval) / (maxval - minval)
+
+        # clip remaining values
+        reduced = np.clip(reduced, 0, 1)
 
         return reduced
 
     def features_to_rgb(self, features: Tensor):
         """
-        Convert features to RGB
+        Convert features to normalized RGB
         :param features: N x D tensor
         :return rgb: N x 3 tensor
         """
         reduced = self.apply(features)
-        return self.normalize_rgb(reduced)
+        return self.normalize(reduced)
 
     def feature_map_to_rgb(self, feature_map: Tensor):
         """
-        Convert feature map to RGB
+        Convert feature map to normalized RGB
         :param feature_map: D x H x W tensor
         :return rgb: H x W x 3 tensor
         """

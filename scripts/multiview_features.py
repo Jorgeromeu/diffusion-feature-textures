@@ -11,7 +11,7 @@ import rerun as rr
 import rerun.blueprint as rrb
 import wandb
 from text3d2video.diffusion import depth2img, depth2img_pipe
-from text3d2video.rendering import normalize_depth_map
+from text3d2video.rendering import make_rasterizer, normalize_depth_map
 import text3d2video.rerun_util as ru
 import torchvision.transforms.functional as TF
 import faiss
@@ -57,12 +57,7 @@ def extract_multiview_features(
         ru.log_pt3d_FovCamrea(f'cam_{i}', cameras, batch_idx=i, res=resolution)
 
     # render depth maps
-    raster_settings = RasterizationSettings(
-        image_size=resolution,
-        faces_per_pixel=1
-    )
-    rasterizer = MeshRasterizer(
-        cameras=cameras, raster_settings=raster_settings)
+    rasterizer = make_rasterizer(cameras, resolution)
 
     batch_mesh = mesh.extend(n_views)
     fragments = rasterizer(batch_mesh)
@@ -92,7 +87,7 @@ def extract_multiview_features(
 
     # extract features
     # size = n_views
-    extracted_features = feature_extractor.get_feature(level=1, timestep=25)
+    extracted_features = feature_extractor.get_feature(level=0, timestep=20)
 
     feature_maps = []
     for i in range(n_views):

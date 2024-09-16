@@ -30,29 +30,31 @@ def aggregate_3d_features(
         log_pca_features: bool = True
 ) -> torch.Tensor:
 
+    rr_seq = ru.TimeSequence("steps")
     rr.log('mesh', ru.pt3d_mesh(mesh))
 
     if log_pca_features:
+        # fit PCA matrix
+        feature_dim = feature_maps[0].shape[0]
+        pca = RgbPcaUtil(feature_dim)
+        features_all = torch.stack(feature_maps)
+        features_all = rearrange(features_all, 'v c h w -> (v h w) c')
+        pca.fit(features_all)
 
-        # take first channel as preiminary visualization
-        rgb_feature_maps = [f[0:3] for f in feature_maps]
-
-        # log PCA feature maps
-        n_views = len(cameras)
-        for i in range(n_views):
-            feature_map = rgb_feature_maps[i]
-            res = feature_map.shape[1]
-            ru.log_pt3d_FovCamrea(f'cam_{i}', cameras, batch_idx=i, res=res)
-            rr.log(f'cam_{i}', rr.Image(TF.to_pil_image(feature_map)))
+        # PCA the feature maps
+        rgb_feature_maps = [pca.feature_map_to_rgb(f) for f in feature_maps]
 
     # initialize empty D-dimensional vertex features
     feature_dim = feature_maps[0].shape[0]
-    vertex_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim)
-    vertex_feature_count = torch.zeros(mesh.num_verts_per_mesh()[0])
+    vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim)
+    vert_feature_cnt = torch.zeros(mesh.num_verts_per_mesh()[0])
 
     n_views = len(cameras)
 
     for i in range(n_views):
+
+        rr_seq.step()
+
         # project view features to vertices
         feature_map = feature_maps[i]
         view_vertex_features = project_vertices_to_features(
@@ -67,13 +69,28 @@ def aggregate_3d_features(
             torch.any(view_vertex_features != 0, dim=1))[0]
 
         # update vertex features
-        vertex_features += view_vertex_features
-        vertex_feature_count[nonzero_indices] += 1
+        vert_features += view_vertex_features
+        vert_feature_cnt[nonzero_indices] += 1
 
-        rr.log('mesh', ru.pt3d_mesh(
-            mesh, vertex_colors=vertex_features[:, 0:3]))
+        avg_vertex_features = vert_features / \
+            torch.clamp(vert_feature_cnt, min=1).unsqueeze(1)
 
-    return vertex_features
+        if log_pca_features:
+
+            res = rgb_feature_maps[i].shape[-1]
+            ru.log_pt3d_FovCamrea(f'cam_{i}', cameras, batch_idx=i, res=res)
+            rr.log(f'cam_{i}', rr.Image(TF.to_pil_image(rgb_feature_maps[i])))
+
+            vert_features_rgb = pca.features_to_rgb(avg_vertex_features)
+            rr.log('mesh', ru.pt3d_mesh(mesh, vertex_colors=vert_features_rgb))
+
+    if log_pca_features:
+        # recompute PCA on final features
+        rr_seq.step()
+        rgb_vert_features = pca.fit(avg_vertex_features)
+        rr.log('mesh', ru.pt3d_mesh(mesh, vertex_colors=rgb_vert_features))
+
+    return avg_vertex_features
 
 
 if __name__ == "__main__":
