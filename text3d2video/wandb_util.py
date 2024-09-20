@@ -103,9 +103,29 @@ class AnimationArtifact:
 
     @staticmethod
     def create(artifact_name: str, animation_path: str, static_path: str) -> Artifact:
+
+        # create temproary directory
+        tempdir = tempfile.mkdtemp()
+        tempdir_path = Path(tempdir)
+
+        # copy static mesh
+        shutil.copy(static_path, tempdir_path / 'static.obj')
+
+        # copy frames
+        animation_dir = tempdir_path / 'animation'
+        animation_dir.mkdir()
+        for frame in Path(animation_path).iterdir():
+            number = frame.stem[-4:]
+            frame_name = f'animation{number}.obj'
+            shutil.copy(frame, animation_dir / frame_name)
+
+        # create artifact
         artifact = Artifact(artifact_name, type=AnimationArtifact.type)
-        artifact.add_dir(animation_path, name='animation')
-        artifact.add_file(static_path, name='static.obj')
+        artifact.add_dir(tempdir_path)
+
+        # remove temporary directory
+        shutil.rmtree(tempdir)
+
         return artifact
 
     def __init__(self, artifact: Artifact):
@@ -119,7 +139,4 @@ class AnimationArtifact:
         return load_objs_as_meshes([self.get_mesh_path()], device=device)
 
     def get_animation(self) -> OBJAnimation:
-        return OBJAnimation(self.path / 'animation')
-
-    def get_animation_path(self) -> Path:
-        return self.path / 'animation.obj'
+        return OBJAnimation(self.path / 'animation', anim_name='animation')

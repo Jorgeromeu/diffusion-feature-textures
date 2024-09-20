@@ -13,12 +13,12 @@ class OBJAnimation:
 
     objs_dir: Path
 
-    def __init__(self, objs_dir: Path) -> None:
+    def __init__(self, objs_dir: Path, anim_name: str) -> None:
         self.objs_dir = objs_dir
+        self.anim_name = anim_name
 
     def load_frame(self, frame=0, device='cuda'):
-        directory_name = self.objs_dir.stem
-        path = self.objs_dir / f'{directory_name}{frame:04}.obj'
+        path = self.objs_dir / f'{self.anim_name}{frame:04}.obj'
         mesh = load_objs_as_meshes([path], device=device)
         return mesh
 

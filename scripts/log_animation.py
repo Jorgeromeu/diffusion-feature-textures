@@ -16,7 +16,7 @@ def log_animation(animation_name, animation_path, static_path):
 
 
 if __name__ == "__main__":
-    animation_name = 'dancing'
-    animation_path = 'data/dancing/'
+    animation_name = 'backflip'
+    animation_path = 'data/backflip/'
     static_path = 'data/mixamo-human.obj'
     log_animation(animation_name, animation_path, static_path)
