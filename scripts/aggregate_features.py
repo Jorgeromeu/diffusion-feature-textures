@@ -66,7 +66,8 @@ def aggregate_3d_features(
             mesh,
             cameras,
             feature_map,
-            batch_idx=view_i
+            batch_idx=view_i,
+            mode='bilinear'
         ).cpu()
 
         if aggregation_type == AggregationType.FIRST:
@@ -110,9 +111,9 @@ def aggregate_3d_features(
 
 if __name__ == "__main__":
 
-    features_art = 'multiview_features:latest'
-    feature_identifier = {'level': '2', 'time': '20'}
-    aggregation_type = AggregationType.FIRST
+    features_art = 'fox_features:latest'
+    feature_identifier = {'layer': 'level_2', 'timestep': '20'}
+    aggregation_type = AggregationType.MEAN
 
     wandb.init(project="diffusion-3d-features",
                job_type='aggregate_3d_features')

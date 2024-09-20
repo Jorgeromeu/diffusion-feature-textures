@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from re import Pattern
 import tempfile
-from typing import Dict, List
+from typing import Any, Dict, List
 from pytorch3d.renderer import FoVPerspectiveCameras
 import torch
 from tqdm import tqdm
@@ -13,6 +13,7 @@ from pytorch3d.io import load_objs_as_meshes
 import shutil
 
 from text3d2video.file_util import OBJAnimation
+from text3d2video.multidict import MultiDict
 
 
 def first_logged_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
@@ -36,7 +37,7 @@ class MVFeaturesArtifact:
     def create(
         artifact_name: str,
         cameras: FoVPerspectiveCameras,
-        features: List[Dict[str, torch.Tensor]],
+        features: MultiDict,
         images: List[Image.Image],
     ) -> Artifact:
 
@@ -47,16 +48,17 @@ class MVFeaturesArtifact:
         # save cameras
         torch.save(cameras, tempdir_path / 'cameras.pt')
 
-        # for each view save data
+        # for each view save image
         for i in range(len(cameras)):
-            view_path = tempdir_path / f'view_{i}'
-            view_path.mkdir(parents=True, exist_ok=True)
+            images[i].save(tempdir_path / 'view_{i}.png')
 
-            # save generated image
-            images[i].save(view_path / 'image.png')
-
-            for name, feature in features[i].items():
-                torch.save(feature, view_path / f'feature-{name}.pt')
+        features_path = tempdir_path / 'features'
+        features_path.mkdir()
+        features.serialize_multidict(
+            features_path,
+            extension='pt',
+            save_fun=torch.save
+        )
 
         artifact = Artifact(artifact_name, type=MVFeaturesArtifact.type)
         artifact.add_dir(tempdir_path)
@@ -68,6 +70,12 @@ class MVFeaturesArtifact:
     def __init__(self, artifact: Artifact):
         self.artifact = artifact
         self.path = Path(artifact.download())
+
+    def _ident_dict_to_str(identifier: Dict[str, Any]) -> str:
+        items = sorted(identifier.items())
+        ident_str = [f'{k}:{v}' for k, v in items]
+        ident_str = ','.join(ident_str)
+        return ident_str
 
     def view_indices(self) -> List[int]:
         return range(len(self.get_cameras()))
@@ -82,14 +90,11 @@ class MVFeaturesArtifact:
             ims.append(Image.open(view_dir / 'image.png'))
         return ims
 
-    def get_feature(self, view_i: int, identifier: Dict[str, str]):
-        view_dir = self.path / f'view_{view_i}'
-
-        feature_name = 'feature-'
-        feature_keys = [f'{key}:{value}' for key, value in identifier.items()]
-        feature_name += ','.join(feature_keys) + '.pt'
-
-        return torch.Tensor(torch.load(view_dir / feature_name))
+    def get_feature(self, view_i: int, identifier: Dict[str, Any]):
+        identifier.update({'view': view_i})
+        filename = MultiDict._dict_to_str(identifier) + '.pt'
+        feature_paht = self.path / 'features' / filename
+        return torch.Tensor(torch.load(feature_paht))
 
 
 class AnimationArtifact:

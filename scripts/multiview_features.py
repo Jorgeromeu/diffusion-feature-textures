@@ -6,29 +6,28 @@ import torch
 from diffusers import StableDiffusionControlNetPipeline
 from pytorch3d.structures import Meshes
 from pytorch3d.io import load_objs_as_meshes
-from pytorch3d.renderer import look_at_view_transform, RasterizationSettings, MeshRasterizer
 import rerun as rr
 import rerun.blueprint as rrb
 import wandb
 from text3d2video.diffusion import depth2img, depth2img_pipe
+from text3d2video.multidict import MultiDict
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
 import text3d2video.rerun_util as ru
 import torchvision.transforms.functional as TF
-import faiss
-from PIL import Image
-from text3d2video.sd_feature_extraction import SDFeatureExtractor
-from text3d2video.util import project_vertices_to_features, multiview_cameras, random_solid_color_img
+from text3d2video.sd_feature_extraction import DiffusionFeatureExtractor
+from text3d2video.util import multiview_cameras
 from text3d2video.visualization import RgbPcaUtil
 from text3d2video.wandb_util import MVFeaturesArtifact
 
 
-def extract_multiview_features(pipe: StableDiffusionControlNetPipeline,
-                               mesh: Meshes,
-                               prompt: str = 'Deadpool',
-                               n_views=9,
-                               resolution=512,
-                               device='cpu',
-                               ) -> torch.Tensor:
+def extract_multiview_features(
+    pipe: StableDiffusionControlNetPipeline,
+    mesh: Meshes,
+    prompt: str = 'Deadpool',
+    n_views=9,
+    resolution=512,
+    device='cpu',
+) -> torch.Tensor:
     """
     Compute Diffusion 3D Features for a given mesh, and represent them as vertex features.
     :param pipe: Depth 2 Image Diffusion pipeline to extract features from
@@ -73,7 +72,11 @@ def extract_multiview_features(pipe: StableDiffusionControlNetPipeline,
         rr.log(f'cam_{view_i}', rr.Image(depth_imgs[view_i]))
 
     # setup feature extractor
-    feature_extractor = SDFeatureExtractor(pipe)
+    extractor = DiffusionFeatureExtractor()
+    extractor.add_save_feature_hook('level_0', pipe.unet.up_blocks[0])
+    extractor.add_save_feature_hook('level_1', pipe.unet.up_blocks[1])
+    extractor.add_save_feature_hook('level_2', pipe.unet.up_blocks[2])
+    extractor.add_save_feature_hook('level_3', pipe.unet.up_blocks[3])
 
     # Generate images
     prompts = [prompt] * n_views
@@ -85,18 +88,18 @@ def extract_multiview_features(pipe: StableDiffusionControlNetPipeline,
     for view_i in range(n_views):
         rr.log(f'cam_{view_i}', rr.Image(generted_ims[view_i]))
 
-    # for each view, dictionary of named features
-    features = [dict() for _ in range(n_views)]
+    features = MultiDict()
 
-    for level in range(4):
-        for timestep in range(0, 30, 5):
+    for name in extractor.hook_manager.named_hooks():
+        for timestep in range(extractor.n_saved_timesteps()):
 
-            extracted_features = feature_extractor.get_feature(
-                level=level, timestep=timestep)
+            # get all features for name and timestep
+            extracted_features = extractor.get_feature(name, timestep=timestep)
 
             for view_i in range(n_views):
-                view_features = extracted_features[view_i]
-                features[view_i][f"level:{level},time:{timestep}"] = view_features
+
+                key = {'view': view_i, 'timestep': timestep, 'layer': name}
+                features.add(key, extracted_features[view_i])
 
     return cameras, features, generted_ims
 
@@ -105,7 +108,7 @@ if __name__ == "__main__":
 
     animation_art = 'fox:latest'
     prompt = 'Fox'
-    n_views = 10
+    n_views = 2
     out_artifact_name = 'fox_features'
 
     wandb.init(project='diffusion-3d-features', job_type='multiview_features')
