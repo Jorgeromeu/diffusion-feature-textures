@@ -3,7 +3,7 @@ from pathlib import Path
 import click
 
 import wandb
-from text3d2video.animation_artifact import AnimationArtifact
+from text3d2video.artifacts.animation_artifact import AnimationArtifact
 
 
 def log_animation(artifact_name, animation_path, static_path):

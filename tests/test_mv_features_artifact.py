@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 from scripts.multiview_features import extract_multiview_features
+from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.diffusion import depth2img_pipe
-from text3d2video.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.obj_io import load_objs_as_meshes
 
 

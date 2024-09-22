@@ -10,9 +10,9 @@ from pytorch3d.structures import Meshes
 
 import text3d2video.rerun_util as ru
 import wandb
+from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.diffusion import depth2img, depth2img_pipe
 from text3d2video.multidict import MultiDict
-from text3d2video.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
 from text3d2video.sd_feature_extraction import DiffusionFeatureExtractor
 from text3d2video.util import multiview_cameras
