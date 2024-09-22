@@ -2,6 +2,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from pytorch3d.structures import Meshes
+
+from text3d2video.obj_io import load_objs_as_meshes
 from text3d2video.util import ordered_sample
 from wandb import Artifact
 
@@ -9,6 +12,7 @@ from wandb import Artifact
 class ArtifactWrapper:
 
     artifact_type: str
+    wandb_artifact: Artifact = None
 
     def __init__(self, folder: Path):
         self.folder = folder
@@ -20,10 +24,12 @@ class ArtifactWrapper:
     @classmethod
     def from_wandb_artifact(cls, artifact: Artifact):
         folder = Path(artifact.download())
-        return cls(folder)
+        wrapper = cls(folder)
+        wrapper.wandb_artifact = artifact
+        return wrapper
 
     @staticmethod
-    def write_to_path(dir: Path, **kwargs):
+    def write_to_path(folder: Path, **kwargs):
         pass
 
     @classmethod
@@ -48,13 +54,13 @@ class AnimationArtifact(ArtifactWrapper):
     artifact_type = "animation"
 
     @staticmethod
-    def write_to_path(dir: Path, animation_path: str, static_path: str):
+    def write_to_path(folder: Path, animation_path: str, static_path: str):
 
         # copy static mesh
-        shutil.copy(static_path, dir / "static.obj")
+        shutil.copy(static_path, folder / "static.obj")
 
         # copy frames
-        animation_dir = dir / "animation"
+        animation_dir = folder / "animation"
         animation_dir.mkdir()
         for frame in Path(animation_path).iterdir():
             number = frame.stem[-4:]
@@ -77,3 +83,9 @@ class AnimationArtifact(ArtifactWrapper):
             frame_nums = ordered_sample(frame_nums, sample_n)
 
         return frame_nums
+    
+    def load_static_mesh(self, device: str = 'cuda') -> Meshes:
+        return load_objs_as_meshes([self.get_static_mesh_path()], device=device)
+    
+    def load_frame(self, frame: int, device: str = 'cuda') -> Meshes:
+        return load_objs_as_meshes([self.get_frame_path(frame)], device=device)

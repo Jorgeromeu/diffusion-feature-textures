@@ -1,44 +1,9 @@
 from collections import defaultdict
 from typing import Callable, Dict, List, Set
 
-import numpy as np
 import torch
 import torch.nn as nn
-from diffusers import DiffusionPipeline
 from torch import Tensor
-
-
-class SDFeatureExtractor:
-
-    # store saved features here, list because one per timestep
-    _saved_features: Dict[int, List[np.array]]
-    _handles: List[torch.utils.hooks.RemovableHandle]
-
-    def __init__(self, pipe: DiffusionPipeline):
-        self.unet = pipe.unet
-        self._saved_features = dict()
-        self.create_hooks()
-
-    def create_hooks(self):
-        for level, up_block in enumerate(self.unet.up_blocks):
-            self._saved_features[level] = []
-            handle = up_block.register_forward_hook(self._save_feature_hook(level))
-
-    def get_feature(self, level=0, timestep=0):
-        return self._saved_features[level][timestep]
-
-    def n_levels(self):
-        return len(self._saved_features)
-
-    def n_timesteps(self):
-        return len(self._saved_features[0])
-
-    def _save_feature_hook(self, level):
-        def hook(module, inp, out):
-            out_np = out.cpu().numpy()
-            self._saved_features[level].append(out_np)
-
-        return hook
 
 
 class HookManager:
@@ -47,7 +12,7 @@ class HookManager:
     """
 
     # keep track of named hooks
-    _named_handles: dict[str, torch.utils.hooks.RemovableHandle]
+    _named_handles: Dict[str, torch.utils.hooks.RemovableHandle]
 
     def __init__(self) -> None:
         self._named_handles = dict()
@@ -80,10 +45,13 @@ class HookManager:
 class DiffusionFeatureExtractor:
 
     # store saved features here, list because one per timestep
-    _saved_features: dict[str, List[torch.Tensor]]
+    _saved_features: Dict[str, List[torch.Tensor]]
 
     def __init__(self) -> None:
         self.hook_manager = HookManager()
+        self._saved_features = defaultdict(lambda: [])
+
+    def clear_features(self):
         self._saved_features = defaultdict(lambda: [])
 
     def n_saved_timesteps(self):
@@ -101,6 +69,7 @@ class DiffusionFeatureExtractor:
         Create a hook that saves the output of a module with key `name`
         """
 
+        # pylint: disable=unused-argument
         def hook(module, inp, out):
             self._saved_features[name].append(out.cpu())
 

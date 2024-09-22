@@ -1,23 +1,21 @@
 from pathlib import Path
-import shutil
-import time
-from einops import repeat
-import torch
-from diffusers import StableDiffusionControlNetPipeline
-from pytorch3d.structures import Meshes
-from pytorch3d.io import load_objs_as_meshes
+
 import rerun as rr
 import rerun.blueprint as rrb
+import torch
+import torchvision.transforms.functional as TF
+from diffusers import StableDiffusionControlNetPipeline
+from pytorch3d.io import load_objs_as_meshes
+from pytorch3d.structures import Meshes
+
+import text3d2video.rerun_util as ru
 import wandb
 from text3d2video.diffusion import depth2img, depth2img_pipe
 from text3d2video.multidict import MultiDict
+from text3d2video.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
-import text3d2video.rerun_util as ru
-import torchvision.transforms.functional as TF
 from text3d2video.sd_feature_extraction import DiffusionFeatureExtractor
 from text3d2video.util import multiview_cameras
-from text3d2video.visualization import RgbPcaUtil
-from text3d2video.wandb_util import MVFeaturesArtifact
 
 
 def extract_multiview_features(
@@ -106,10 +104,10 @@ def extract_multiview_features(
 
 if __name__ == "__main__":
 
-    animation_art = 'fox:latest'
-    prompt = 'Fox'
-    n_views = 2
-    out_artifact_name = 'fox_features'
+    animation_art = 'backflip:latest'
+    prompt = 'Deadpool'
+    n_views = 10
+    out_artifact_name = 'deadpool_mv_features'
 
     wandb.init(project='diffusion-3d-features', job_type='multiview_features')
 
@@ -143,11 +141,11 @@ if __name__ == "__main__":
         prompt=prompt
     )
 
-    out_artifact = MVFeaturesArtifact.create(
+    out_artifact = MVFeaturesArtifact.create_wandb_artifact(
         out_artifact_name,
-        cams,
-        features,
-        ims
+        cameras=cams,
+        features=features,
+        images=ims
     )
 
     wandb.log_artifact(out_artifact)

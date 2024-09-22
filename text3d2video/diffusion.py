@@ -4,8 +4,6 @@ from diffusers import (
     StableDiffusionControlNetPipeline,
     UniPCMultistepScheduler,
 )
-from huggingface_hub import hf_hub_download
-from PIL import Image
 from safetensors.torch import *
 
 DIFFUSION_MODEL_ID = "runwayml/stable-diffusion-v1-5"
@@ -36,8 +34,8 @@ def depth2img_pipe(device='cuda:0'):
 
 def depth2img(
     pipe: StableDiffusionControlNetPipeline,
-    prompts: list[str],
-    depths: list[Image],
+    prompts: List,
+    depths: List,
     guidance_scale=7,
     num_inference_steps=30
 
