@@ -1,11 +1,11 @@
 from pathlib import Path
+from typing import Tuple
 
 import rerun as rr
-import rerun.blueprint as rrb
-import torch
 import torchvision.transforms.functional as TF
 from diffusers import StableDiffusionControlNetPipeline
 from pytorch3d.io import load_objs_as_meshes
+from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
 import text3d2video.rerun_util as ru
@@ -25,7 +25,8 @@ def extract_multiview_features(
     n_views=9,
     resolution=512,
     device='cpu',
-) -> torch.Tensor:
+    num_inference_steps=30
+) -> Tuple[FoVPerspectiveCameras, MultiDict, list]:
     """
     Compute Diffusion 3D Features for a given mesh, and represent them as vertex features.
     :param pipe: Depth 2 Image Diffusion pipeline to extract features from
@@ -78,7 +79,7 @@ def extract_multiview_features(
 
     # Generate images
     prompts = [prompt] * n_views
-    generted_ims = depth2img(pipe, prompts, depth_imgs, num_inference_steps=30)
+    generted_ims = depth2img(pipe, prompts, depth_imgs, num_inference_steps=num_inference_steps)
 
     rr_seq.step()
 
@@ -89,7 +90,7 @@ def extract_multiview_features(
     features = MultiDict()
 
     for name in extractor.hook_manager.named_hooks():
-        for timestep in range(extractor.n_saved_timesteps()):
+        for timestep in extractor.save_steps:
 
             # get all features for name and timestep
             extracted_features = extractor.get_feature(name, timestep=timestep)
@@ -101,13 +102,13 @@ def extract_multiview_features(
 
     return cameras, features, generted_ims
 
-
 if __name__ == "__main__":
 
     animation_art = 'backflip:latest'
     prompt = 'Deadpool'
     n_views = 10
     out_artifact_name = 'deadpool_mv_features'
+    n_inf_steps = 30
 
     wandb.init(project='diffusion-3d-features', job_type='multiview_features')
 
@@ -120,10 +121,6 @@ if __name__ == "__main__":
     rr.init('multiview_features')
     rr.serve()
     ru.pt3d_setup()
-
-    # log blueprint
-    blueprint = rrb.Blueprint(rrb.Spatial3DView())
-    rr.send_blueprint(blueprint)
 
     # load mesh
     device = 'cuda:0'

@@ -47,30 +47,46 @@ class DiffusionFeatureExtractor:
     # store saved features here, list because one per timestep
     _saved_features: Dict[str, List[torch.Tensor]]
 
+    # store "local vars for each hook"
+    _hook_data: Dict[str, dict]
+
+    save_steps: list
+
     def __init__(self) -> None:
         self.hook_manager = HookManager()
         self._saved_features = defaultdict(lambda: [])
+        self._hook_data = dict()
+        self.save_steps = [0, 10, 20]
 
     def clear_features(self):
         self._saved_features = defaultdict(lambda: [])
-
-    def n_saved_timesteps(self):
-        first_key = list(self._saved_features.keys())[0]
-        return len(self._saved_features[first_key])
 
     def add_save_feature_hook(self, name: str, module: nn.Module):
         self.hook_manager.add_named_hook(name, module, self._save_feature_hook(name))
 
     def get_feature(self, name: str, timestep=0):
-        return self._saved_features[name][timestep]
+
+        timestep_index = self.save_steps.index(timestep)
+        return self._saved_features[name][timestep_index]
 
     def _save_feature_hook(self, name: str):
         """
         Create a hook that saves the output of a module with key `name`
         """
 
+        self._hook_data[name] = {
+            'cur_step': 0
+        }
+
         # pylint: disable=unused-argument
         def hook(module, inp, out):
-            self._saved_features[name].append(out.cpu())
+
+            # save feature if current step is in save_steps
+            if self._hook_data[name]['cur_step'] in self.save_steps:
+                self._saved_features[name].append(out.cpu())
+
+            # increment step
+            self._hook_data[name]['cur_step'] += 1
+
 
         return hook

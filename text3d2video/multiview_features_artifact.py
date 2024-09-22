@@ -26,7 +26,7 @@ class MVFeaturesArtifact(ArtifactWrapper):
 
         # for each view save image
         for i in range(len(cameras)):
-            images[i].save(folder / "view_{i}.png")
+            images[i].save(folder / f"view_{i}.png")
 
         features_path = folder / "features"
         features_path.mkdir()
