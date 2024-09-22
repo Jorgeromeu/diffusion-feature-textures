@@ -7,7 +7,7 @@ from text3d2video.artifacts.animation_artifact import AnimationArtifact
 
 
 def log_animation(artifact_name, animation_path, static_path):
-    wandb.init(project="diffusion-3D-features", job_type='log artifact')
+    wandb.init(project="diffusion-3D-features", job_type='log_artifact')
 
     artifact = AnimationArtifact.create_wandb_artifact(
         artifact_name,
