@@ -1,12 +1,17 @@
-from einops import rearrange, repeat
-import torch
 import math
-from pytorch3d.renderer import CamerasBase
+
+import torch
+import torch.nn.functional as F
+from einops import rearrange, repeat
+from pytorch3d.renderer import (
+    CamerasBase,
+    FoVPerspectiveCameras,
+    MeshRasterizer,
+    RasterizationSettings,
+    look_at_view_transform,
+)
 from pytorch3d.structures import Meshes
 from torch import Tensor
-from pytorch3d.transforms import Transform3d
-import torch.nn.functional as F
-from pytorch3d.renderer import RasterizationSettings, MeshRasterizer, FoVPerspectiveCameras, look_at_view_transform
 
 
 def ordered_sample(lst, N):

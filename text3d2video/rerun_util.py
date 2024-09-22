@@ -3,7 +3,6 @@ import rerun as rr
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 from pytorch3d.transforms import Transform3d
-import torch
 
 PT3D_ViewCoords = rr.ViewCoordinates.LUF
 

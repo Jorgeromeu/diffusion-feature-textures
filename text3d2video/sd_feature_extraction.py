@@ -1,18 +1,17 @@
 from collections import defaultdict
-from diffusers import UNet2DConditionModel
-from typing import Callable, Dict, List, Set, Tuple
+from typing import Callable, Dict, List, Set
+
 import numpy as np
 import torch
-from diffusers import DiffusionPipeline
-from torch.utils.hooks import RemovableHandle
 import torch.nn as nn
+from diffusers import DiffusionPipeline
 from torch import Tensor
 
 
 class SDFeatureExtractor:
 
     # store saved features here, list because one per timestep
-    _saved_features: Dict[int, list[np.array]]
+    _saved_features: Dict[int, List[np.array]]
     _handles: List[torch.utils.hooks.RemovableHandle]
 
     def __init__(self, pipe: DiffusionPipeline):
@@ -23,8 +22,7 @@ class SDFeatureExtractor:
     def create_hooks(self):
         for level, up_block in enumerate(self.unet.up_blocks):
             self._saved_features[level] = []
-            handle = up_block.register_forward_hook(
-                self._save_feature_hook(level))
+            handle = up_block.register_forward_hook(self._save_feature_hook(level))
 
     def get_feature(self, level=0, timestep=0):
         return self._saved_features[level][timestep]
@@ -39,11 +37,11 @@ class SDFeatureExtractor:
         def hook(module, inp, out):
             out_np = out.cpu().numpy()
             self._saved_features[level].append(out_np)
+
         return hook
 
 
 class HookManager:
-
     """
     Utility class to manage hooks for a model
     """
@@ -61,7 +59,7 @@ class HookManager:
         self,
         name: str,
         module: nn.Module,
-        hook: Callable[[nn.Module, Tensor, Tensor], Tensor]
+        hook: Callable[[nn.Module, Tensor, Tensor], Tensor],
     ):
         """
         Create a named hook
@@ -93,11 +91,7 @@ class DiffusionFeatureExtractor:
         return len(self._saved_features[first_key])
 
     def add_save_feature_hook(self, name: str, module: nn.Module):
-        self.hook_manager.add_named_hook(
-            name,
-            module,
-            self._save_feature_hook(name)
-        )
+        self.hook_manager.add_named_hook(name, module, self._save_feature_hook(name))
 
     def get_feature(self, name: str, timestep=0):
         return self._saved_features[name][timestep]
@@ -106,6 +100,8 @@ class DiffusionFeatureExtractor:
         """
         Create a hook that saves the output of a module with key `name`
         """
+
         def hook(module, inp, out):
             self._saved_features[name].append(out.cpu())
+
         return hook

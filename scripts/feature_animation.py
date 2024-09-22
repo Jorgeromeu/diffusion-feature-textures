@@ -1,6 +1,6 @@
 import imageio
 from text3d2video.visualization import RgbPcaUtil
-from text3d2video.file_util import OBJAnimation
+from text3d2video.obj_io import OBJAnimation
 import torchvision.transforms.functional as TF
 from text3d2video.rendering import normalize_depth_map, rasterize, rasterize_vertex_features
 from pathlib import Path

@@ -1,34 +1,34 @@
 # %% Imports
+from text3d2video.obj_io import OBJAnimation
+from diffusion import depth2img_pipe, depth2img
+from util import feature_per_vertex, sample_feature_map
+from text3d2video.rendering import normalize_depth_map, rasterize, rasterize_vertex_features
+from pathlib import Path
+from text3d2video.obj_io import load_frame_obj
+import torchvision.transforms as transforms
+from pytorch3d.renderer import FoVPerspectiveCameras, look_at_view_transform
+import torch
+from PIL import Image
+import matplotlib.pyplot as plt
+from sd_feature_extraction import SDFeatureExtractor
+from visualization import reduce_feature_map
+import sd_feature_extraction
+from tqdm import tqdm
+from einops import einsum, rearrange
+from IPython import get_ipython
+import imageio
+import sys
 ipy = get_ipython()
 ipy.extension_manager.load_extension('autoreload')
 ipy.run_line_magic('autoreload', '2')
 
-import sys
 sys.path.append('../')
 
-import imageio
-from IPython import get_ipython
-from einops import einsum, rearrange
-from tqdm import tqdm
-import sd_feature_extraction
-from visualization import reduce_feature_map
-from sd_feature_extraction import SDFeatureExtractor
-import matplotlib.pyplot as plt
-from PIL import Image
-import torch
-from pytorch3d.renderer import FoVPerspectiveCameras, look_at_view_transform
-import torchvision.transforms as transforms
-from text3d2video.file_util import load_frame_obj
-from pathlib import Path
-from text3d2video.rendering import normalize_depth_map, rasterize, rasterize_vertex_features
-from util import feature_per_vertex, sample_feature_map
-from diffusion import depth2img_pipe, depth2img
 
 to_pil = transforms.ToPILImage()
 to_tensor = transforms.ToTensor()
 
 # %%
-from text3d2video.file_util import OBJAnimation
 
 device = torch.device("cuda:0")
 
@@ -65,7 +65,7 @@ for i in range(4):
     # reduce feature map to RGB
     feature_map_rgb = reduce_feature_map(feature_map)
 
-    # store feature map 
+    # store feature map
     feature_maps.append(feature_map_rgb)
 
 # also include the original image
@@ -73,19 +73,23 @@ feature_maps.append(to_tensor(img_out))
 
 fig, axs = plt.subplots(1, len(feature_maps))
 for i, ax in enumerate(axs):
-    ax.imshow(feature_maps[i].permute(1,2,0).cpu().numpy())
+    ax.imshow(feature_maps[i].permute(1, 2, 0).cpu().numpy())
     ax.axis('off')
 
 # %%
+
+
 def render_vertex_features_to_frames(animation, cameras, vert_features, resolution, n_frames):
     frames = []
     feature_res = feature_map_rgb.shape[1]
     for frame_i in tqdm(animation.framenums(sample_n=n_frames)):
         mesh = animation.load_frame(frame_i)
-        rendered_features = rasterize_vertex_features(cameras, mesh, resolution, vert_features)
+        rendered_features = rasterize_vertex_features(
+            cameras, mesh, resolution, vert_features)
         frames.append(rendered_features.cpu())
-    
+
     return frames
+
 
 def frames_to_gif(frames, gif_path: Path):
     with imageio.get_writer(gif_path, mode='I', loop=0) as writer:
@@ -94,12 +98,14 @@ def frames_to_gif(frames, gif_path: Path):
             writer.append_data(frame_pil)
     pass
 
+
 n_frames = 10
 for i, map in enumerate(feature_maps):
     vert_features = feature_per_vertex(mesh, cameras, map)
 
     feature_res = map.shape[1]
-    frames = render_vertex_features_to_frames(animation, cameras, vert_features, feature_res, n_frames)
+    frames = render_vertex_features_to_frames(
+        animation, cameras, vert_features, feature_res, n_frames)
     gif_path = Path(f'../outs/feature_animations/{animation_name}/map_{i}.gif')
     gif_path.parent.mkdir(parents=True, exist_ok=True)
     frames_to_gif(frames, gif_path)

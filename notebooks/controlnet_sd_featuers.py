@@ -1,4 +1,18 @@
 # %% Imports
+import torchvision.transforms.functional as TF
+from sd_feature_extraction import SDFeatureExtractor
+from diffusers import UNet2DConditionModel
+from text3d2video.rendering import rasterize, normalize_depth_map
+from pytorch3d.renderer import look_at_view_transform, FoVPerspectiveCameras
+from text3d2video.obj_io import OBJAnimation
+from diffusion import depth2img_pipe, depth2img
+from visualization import reduce_feature_map
+import matplotlib.pyplot as plt
+import torch
+from text3d2video.feature_pipeline import FeaturePipeline
+from einops import rearrange
+import numpy as np
+import sys
 from pathlib import Path
 from IPython import get_ipython
 
@@ -6,22 +20,8 @@ ipy = get_ipython()
 ipy.extension_manager.load_extension('autoreload')
 ipy.run_line_magic('autoreload', '2')
 
-import sys
 sys.path.append('../')
 
-import numpy as np
-from einops import rearrange
-from text3d2video.feature_pipeline import FeaturePipeline
-import torch
-import matplotlib.pyplot as plt
-from visualization import reduce_feature_map
-from diffusion import depth2img_pipe, depth2img
-from text3d2video.file_util import OBJAnimation
-from pytorch3d.renderer import look_at_view_transform, FoVPerspectiveCameras
-from text3d2video.rendering import rasterize, normalize_depth_map
-from diffusers import UNet2DConditionModel
-from sd_feature_extraction import SDFeatureExtractor
-import torchvision.transforms.functional as TF
 
 # %% Get depth map
 device = torch.device("cuda:0")
@@ -55,10 +55,9 @@ img_out
 # %% inspect features
 feature = feature_extractor.get_feature(level=2, timestep=0)
 
-from visualization import reduce_feature_map
 
 feature_pca = reduce_feature_map(feature)
 print(feature_pca.max())
 
 plt.axis('off')
-plt.imshow(feature_pca.permute(1,2,0))
+plt.imshow(feature_pca.permute(1, 2, 0))

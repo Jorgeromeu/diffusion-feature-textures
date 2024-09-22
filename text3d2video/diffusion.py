@@ -1,12 +1,12 @@
 import torch
-from safetensors.torch import *
-from huggingface_hub import hf_hub_download
-from PIL import Image
 from diffusers import (
     ControlNetModel,
     StableDiffusionControlNetPipeline,
-    UniPCMultistepScheduler
+    UniPCMultistepScheduler,
 )
+from huggingface_hub import hf_hub_download
+from PIL import Image
+from safetensors.torch import *
 
 DIFFUSION_MODEL_ID = "runwayml/stable-diffusion-v1-5"
 ckpt = "diffusion_pytorch_model.fp16.safetensors"

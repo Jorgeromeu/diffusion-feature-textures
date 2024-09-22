@@ -1,12 +1,9 @@
 import shutil
 import tempfile
 from pathlib import Path
-from pytorch3d.io import load_objs_as_meshes
 
-from wandb import Artifact
-
-from text3d2video.file_util import OBJAnimation
 from text3d2video.util import ordered_sample
+from wandb import Artifact
 
 
 class ArtifactWrapper:
@@ -48,31 +45,31 @@ class ArtifactWrapper:
 
 class AnimationArtifact(ArtifactWrapper):
 
-    artifact_type = 'animation'
+    artifact_type = "animation"
 
     @staticmethod
     def write_to_path(dir: Path, animation_path: str, static_path: str):
 
         # copy static mesh
-        shutil.copy(static_path, dir / 'static.obj')
+        shutil.copy(static_path, dir / "static.obj")
 
         # copy frames
-        animation_dir = dir / 'animation'
+        animation_dir = dir / "animation"
         animation_dir.mkdir()
         for frame in Path(animation_path).iterdir():
             number = frame.stem[-4:]
-            frame_name = f'animation{number}.obj'
+            frame_name = f"animation{number}.obj"
             shutil.copy(frame, animation_dir / frame_name)
 
     def get_static_mesh_path(self) -> Path:
-        return self.folder / 'static.obj'
+        return self.folder / "static.obj"
 
     def get_frame_path(self, frame=1) -> Path:
-        return self.folder / 'animation' / f'animation{frame:04}.obj'
+        return self.folder / "animation" / f"animation{frame:04}.obj"
 
     def frame_nums(self, sample_n=None):
 
-        frame_paths = (self.folder / 'animation').iterdir()
+        frame_paths = (self.folder / "animation").iterdir()
         frame_nums = [int(path.stem[-4:]) for path in frame_paths]
         frame_nums = sorted(frame_nums)
 

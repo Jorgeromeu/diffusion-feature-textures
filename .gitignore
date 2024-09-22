@@ -232,5 +232,7 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 outs
+data
 artifacts
 wandb
+workspace

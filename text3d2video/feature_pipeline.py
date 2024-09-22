@@ -1,15 +1,15 @@
-from typing import Dict, List, Set, Tuple
-import diffusers
-import torch
-from PIL import Image
-from diffusers import (
-    DiffusionPipeline, AutoencoderKL, UNet2DConditionModel,
-    UniPCMultistepScheduler, UNet2DModel
-)
-
-from transformers import CLIPTokenizer, CLIPTextModel
 from dataclasses import dataclass
+
+import torch
+from diffusers import (
+    AutoencoderKL,
+    DiffusionPipeline,
+    UNet2DConditionModel,
+    UniPCMultistepScheduler,
+)
+from PIL import Image
 from tqdm import tqdm
+from transformers import CLIPTextModel, CLIPTokenizer
 
 
 @dataclass

@@ -1,8 +1,11 @@
 from einops import rearrange
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
-    RasterizationSettings, MeshRasterizer,
-    AmbientLights, SoftPhongShader, MeshRenderer
+    AmbientLights,
+    MeshRasterizer,
+    MeshRenderer,
+    RasterizationSettings,
+    SoftPhongShader,
 )
 from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes

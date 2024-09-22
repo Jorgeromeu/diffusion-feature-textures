@@ -1,11 +1,10 @@
-from einops import rearrange
-from torch import Tensor
 import faiss
 import numpy as np
+from einops import rearrange
+from torch import Tensor
 
 
 class RgbPcaUtil:
-
     """
     Utility class to facilitate performing PCA on high-dimensional features,
     and normalizing/processing for RGB visualization.
@@ -33,10 +32,8 @@ class RgbPcaUtil:
 
         # compute min and max for each channel
         reduced_features = self.apply(features)
-        self.channel_min = np.percentile(
-            reduced_features, lower_percentile, axis=0)
-        self.channel_max = np.percentile(
-            reduced_features, upper_percentile, axis=0)
+        self.channel_min = np.percentile(reduced_features, lower_percentile, axis=0)
+        self.channel_max = np.percentile(reduced_features, upper_percentile, axis=0)
 
         normalized = self.normalize(reduced_features)
         return normalized
@@ -86,13 +83,13 @@ class RgbPcaUtil:
         _, H, W = feature_map.shape
 
         # reshape to flat
-        feature_flat = rearrange(feature_map, 'c h w -> (h w) c')
+        feature_flat = rearrange(feature_map, "c h w -> (h w) c")
 
         # apply conversion
         reduced_flat = self.features_to_rgb(feature_flat)
 
         # reshape to square
-        reduced = rearrange(reduced_flat, '(h w) c -> c h w', h=H, w=W)
+        reduced = rearrange(reduced_flat, "(h w) c -> c h w", h=H, w=W)
         reduced = Tensor(reduced)
 
         return reduced
