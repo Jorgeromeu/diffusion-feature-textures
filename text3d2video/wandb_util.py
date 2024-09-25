@@ -8,6 +8,11 @@ import wandb
 from wandb import Artifact
 
 
+def api_artifact(artifact_tag: str):
+    api = wandb.Api()
+    return api.artifact(f'romeu/diffusion-3D-features/{artifact_tag}')
+    
+
 def first_logged_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
     for artifact in run.logged_artifacts():
         if artifact.type == artifact_type:

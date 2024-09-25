@@ -241,3 +241,8 @@ def random_solid_color_img(res=100):
         h=res,
         w=res
     )
+
+def front_camera(device='cuda') -> FoVPerspectiveCameras:
+    R, T = look_at_view_transform(dist=2, azim=0, elev=0)
+    cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
+    return cameras
