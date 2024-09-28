@@ -1,22 +1,27 @@
+from enum import Enum
 from typing import List
 
+import hydra
 import rerun as rr
 import torch
 import torchvision.transforms.functional as TF
 from einops import rearrange
+from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
 import text3d2video.rerun_util as ru
+import text3d2video.wandb_util as wu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
+from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.util import project_vertices_to_features
 from text3d2video.visualization import RgbPcaUtil
 from text3d2video.wandb_util import first_used_artifact_of_type
 
 
-class AggregationType:
+class AggregationType(Enum):
     MEAN = 0
     FIRST = 1
 
@@ -27,6 +32,7 @@ def aggregate_3d_features(
     mesh: Meshes,
     log_pca_features: bool = True,
     aggregation_type: int = AggregationType.MEAN,
+    interpolation_mode: str = "bilinear",
 ) -> torch.Tensor:
 
     rr_seq = ru.TimeSequence("steps")
@@ -56,7 +62,7 @@ def aggregate_3d_features(
         # project view features to vertices
         feature_map = feature_maps[view_i]
         view_vert_features = project_vertices_to_features(
-            mesh, cameras, feature_map, batch_idx=view_i, mode="bilinear"
+            mesh, cameras, feature_map, batch_idx=view_i, mode=interpolation_mode
         ).cpu()
 
         if aggregation_type == AggregationType.FIRST:
@@ -96,47 +102,64 @@ def aggregate_3d_features(
     return aggr_vert_features
 
 
-if __name__ == "__main__":
+@hydra.main(version_base=None, config_path="../config", config_name="config")
+def run(cfg: DictConfig):
 
-    features_art = "fox_features:latest"
-    feature_identifier = {"layer": "level_2", "timestep": "20"}
-    aggregation_type = AggregationType.MEAN
+    aggr_cfg = cfg.aggregate_3d_features
 
-    wandb.init(project="diffusion-3d-features", job_type="aggregate_3d_features")
+    # init run
+    wu.init_run(job_type="aggregate_3d_features", dev_run=cfg.dev_run)
+    wandb.config.update(dict(aggr_cfg))
 
     # init 3D logging
+    ru.set_logging_state(cfg.rerun_enabled)
     rr.init("multiview_features")
     rr.serve()
     ru.pt3d_setup()
 
-    # download multiview features artifact
-    mv_features_artifact = wandb.use_artifact(features_art)
+    # get multiview features artifact
+    mv_features_artifact = wu.get_artifact(aggr_cfg.mv_features_artifact_tag)
     mv_features_artifact = MVFeaturesArtifact.from_wandb_artifact(mv_features_artifact)
 
-    # get feature map per camera
+    # get feature map per view
     cameras = mv_features_artifact.get_cameras()
+    feature_identifier = {
+        "layer": aggr_cfg.feature_layer,
+        "timestep": aggr_cfg.feature_timestep,
+    }
     features = [
         mv_features_artifact.get_feature(i, feature_identifier)
         for i in mv_features_artifact.view_indices()
     ]
 
-    # get anim artifact
-    mv_features_run = mv_features_artifact.logged_by()
+    # get unposed mesh
+    mv_features_run = mv_features_artifact.wandb_artifact.logged_by()
     anim_artifact = first_used_artifact_of_type(
-        mv_features_run, AnimationArtifact.artifact_type
+        mv_features_run, AnimationArtifact.wandb_artifact_type
     )
     anim_artifact = AnimationArtifact.from_wandb_artifact(anim_artifact)
-
-    # get mesh
-    device = "cuda:0"
-    mesh = anim_artifact.load_static_mesh(device)
+    mesh = anim_artifact.load_static_mesh("cuda:0")
 
     # aggregate features to 3D
+    aggregation_type = AggregationType[str(aggr_cfg.aggregation_method).upper()]
     vertex_features = aggregate_3d_features(
-        cameras, features, mesh, aggregation_type=aggregation_type
+        cameras,
+        features,
+        mesh,
+        aggregation_type=aggregation_type,
+        interpolation_mode=aggr_cfg.projection_interp_method,
+        log_pca_features=cfg.rerun_enabled,
     )
 
-    # PCA the feature maps
-    pca = RgbPcaUtil(vertex_features.shape[1])
-    pca.fit(vertex_features)
-    vertex_features_rgb = pca.features_to_rgb(vertex_features)
+    # save features as artifact
+    artifact = VertAttributesArtifact.create_wandb_artifact(
+        aggr_cfg.out_artifact_name,
+        features=vertex_features,
+    )
+
+    wu.log_artifact_if_enabled(artifact)
+
+
+if __name__ == "__main__":
+    # pylint: disable=no-value-for-parameter
+    run()

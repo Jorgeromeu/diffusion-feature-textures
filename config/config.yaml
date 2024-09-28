@@ -1,0 +1,18 @@
+dev_run: false
+rerun_enabled: true
+
+multiview_feature_extraction:
+  animation_artifact_tag: 'backflip:latest'
+  out_artifact_name: 'deadpool-mv-features'
+  prompt: 'Deadpool does a backflip'
+  num_inference_steps: 30
+  num_views: 2
+  save_steps: [10, 20]
+
+aggregate_3d_features:
+  mv_features_artifact_tag: 'deadpool-mv-features:latest'
+  out_artifact_name: 'deadpool-3d-features'
+  aggregation_method: 'mean'
+  projection_interp_method: 'linear'
+  feature_layer: 'level_2'
+  feature_timestep: 20
