@@ -17,6 +17,18 @@
             },
         },
         {
+            "name": "Aggregate3D",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/aggregate_features.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
             "name": "Current File",
             "type": "debugpy",
             "request": "launch",

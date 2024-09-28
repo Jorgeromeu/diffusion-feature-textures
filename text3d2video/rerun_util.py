@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import rerun as rr
 from pytorch3d.renderer import FoVPerspectiveCameras
@@ -6,8 +8,8 @@ from pytorch3d.transforms import Transform3d
 
 PT3D_ViewCoords = rr.ViewCoordinates.LUF
 
-class TimeSequence:
 
+class TimeSequence:
     """
     Utility class for time sequences in rerun
     """
@@ -16,13 +18,18 @@ class TimeSequence:
         self.cur_step = 0
         self.sequence_name = name
         rr.set_time_sequence(name, 0)
-        
+
     def step(self):
         self.cur_step += 1
         rr.set_time_sequence(self.sequence_name, self.cur_step)
 
-def feature_map(feature_map: np.array):
 
+def set_logging_state(state: bool):
+    value = "on" if state else "off"
+    os.environ["RERUN"] = value
+
+
+def feature_map(feature_map: np.array):
     """
     Log a high-dimensional feature map as a tensor
     :param feature_map: D x H x W tensor
@@ -30,8 +37,10 @@ def feature_map(feature_map: np.array):
     dim_names = ["feature", "height", "width"]
     return rr.Tensor(feature_map, dim_names=dim_names)
 
+
 def pt3d_setup():
-    rr.log('/', PT3D_ViewCoords, static=True)
+    rr.log("/", PT3D_ViewCoords, static=True)
+
 
 def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     # extract verts and faces from idx-th mesh in batch
@@ -47,13 +56,17 @@ def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
         vertex_positions=verts,
         triangle_indices=faces,
         vertex_normals=vertex_normals,
-        vertex_colors=vertex_colors
+        vertex_colors=vertex_colors,
     )
 
-def log_pt3d_FovCamrea(label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
+
+def log_pt3d_FovCamrea(
+    label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100
+):
     rr.log(label, pt3d_FovCamera(cameras, batch_idx, res))
     cam_trans = cameras.get_world_to_view_transform().inverse()
     rr.log(label, pt3d_transform(cam_trans, batch_idx))
+
 
 def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
     # TODO figure out how to get size from raster settings
@@ -67,11 +80,9 @@ def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
         camera_xyz=PT3D_ViewCoords,
     )
 
+
 def pt3d_transform(transforms: Transform3d, batch_idx=0):
     matrix = transforms.get_matrix()
     translation = matrix[batch_idx, 3, 0:3].cpu()
     rotation = matrix[batch_idx, 0:3, 0:3].cpu().inverse()
-    return rr.Transform3D(
-        translation=translation,
-        mat3x3=rotation
-    )
+    return rr.Transform3D(translation=translation, mat3x3=rotation)

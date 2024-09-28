@@ -52,11 +52,14 @@ class DiffusionFeatureExtractor:
 
     save_steps: list
 
-    def __init__(self) -> None:
+    def __init__(self, save_steps=None) -> None:
         self.hook_manager = HookManager()
         self._saved_features = defaultdict(lambda: [])
         self._hook_data = dict()
-        self.save_steps = [0, 10, 20]
+
+        if save_steps is None:
+            save_steps = []
+        self.save_steps = save_steps
 
     def clear_features(self):
         self._saved_features = defaultdict(lambda: [])
@@ -74,19 +77,16 @@ class DiffusionFeatureExtractor:
         Create a hook that saves the output of a module with key `name`
         """
 
-        self._hook_data[name] = {
-            'cur_step': 0
-        }
+        self._hook_data[name] = {"cur_step": 0}
 
         # pylint: disable=unused-argument
         def hook(module, inp, out):
 
             # save feature if current step is in save_steps
-            if self._hook_data[name]['cur_step'] in self.save_steps:
+            if self._hook_data[name]["cur_step"] in self.save_steps:
                 self._saved_features[name].append(out.cpu())
 
             # increment step
-            self._hook_data[name]['cur_step'] += 1
-
+            self._hook_data[name]["cur_step"] += 1
 
         return hook
