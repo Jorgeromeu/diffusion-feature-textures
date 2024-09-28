@@ -1,5 +1,6 @@
 import faiss
 import numpy as np
+import torchvision.transforms.functional as TF
 from einops import rearrange
 from torch import Tensor
 
@@ -78,7 +79,7 @@ class RgbPcaUtil:
         """
         Convert feature map to normalized RGB
         :param feature_map: D x H x W tensor
-        :return rgb: H x W x 3 tensor
+        :return rgb: 3 x H x W tensor
         """
         _, H, W = feature_map.shape
 
@@ -93,3 +94,11 @@ class RgbPcaUtil:
         reduced = Tensor(reduced)
 
         return reduced
+
+    def feature_map_to_rgb_pil(self, feature_map: Tensor):
+        """
+        Convert feature map to normalized RGB PIL image
+        :param feature_map: D x H x W tensor
+        :return rgb: H x W x 3 tensor
+        """
+        return TF.to_pil_image(self.feature_map_to_rgb(feature_map))

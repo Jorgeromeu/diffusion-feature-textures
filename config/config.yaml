@@ -1,5 +1,5 @@
 dev_run: false
-rerun_enabled: true
+rerun_enabled: false
 
 multiview_feature_extraction:
   animation_artifact_tag: 'backflip:latest'
@@ -13,6 +13,6 @@ aggregate_3d_features:
   mv_features_artifact_tag: 'deadpool-mv-features:latest'
   out_artifact_name: 'deadpool-3d-features'
   aggregation_method: 'mean'
-  projection_interp_method: 'linear'
+  projection_interp_method: 'bilinear'
   feature_layer: 'level_2'
   feature_timestep: 20

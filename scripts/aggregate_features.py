@@ -158,6 +158,7 @@ def run(cfg: DictConfig):
     )
 
     wu.log_artifact_if_enabled(artifact)
+    wandb.finish()
 
 
 if __name__ == "__main__":

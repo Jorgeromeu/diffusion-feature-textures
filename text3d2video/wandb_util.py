@@ -41,7 +41,10 @@ def get_artifact(artifact_tag: str):
 
 def log_artifact_if_enabled(artifact: Artifact):
     if is_enabled():
+        print("logging artifact")
         wandb.log_artifact(artifact)
+    else:
+        print("skipping logging artifact")
 
 
 def first_logged_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
@@ -152,3 +155,6 @@ class ArtifactWrapper:
         shutil.rmtree(tempdir)
 
         return artifact
+
+    def logged_by(self):
+        return self.wandb_artifact.logged_by()
