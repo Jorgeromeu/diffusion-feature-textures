@@ -1,6 +1,13 @@
 dev_run: false
 rerun_enabled: false
 
+stable_diffusion:
+  name: runwayml/stable-diffusion-v1-5
+  torch_dtype: torch.float32
+
+controlnet:
+  name: "lllyasviel/control_v11f1p_sd15_depth"
+
 multiview_feature_extraction:
   animation_artifact_tag: 'backflip:latest'
   out_artifact_name: 'deadpool-mv-features'

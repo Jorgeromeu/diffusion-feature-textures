@@ -16,6 +16,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 class FeaturePipelineOutput:
     images: list
 
+
 class FeaturePipeline(DiffusionPipeline):
 
     def __init__(
@@ -35,14 +36,14 @@ class FeaturePipeline(DiffusionPipeline):
             unet=unet,
             scheduler=scheduler,
             tokenizer=tokenizer,
-            text_encoder=text_encoder
+            text_encoder=text_encoder,
         )
 
     def _init_latents(self, batch_size, res=512):
         latents = torch.randn(
             (batch_size, self.unet.config.in_channels, res // 8, res // 8),
             generator=self.generator,
-            device=self.device
+            device=self.device,
         )
 
         return latents
@@ -63,13 +64,13 @@ class FeaturePipeline(DiffusionPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        prompts: list[str],
+        prompts: List[str],
         res=512,
         num_steps=25,
         guidance_scale=7.5,
         generator=None,
         feature_timestep=3,
-        feature_level=2
+        feature_level=2,
     ):
 
         if generator is None:
@@ -82,20 +83,25 @@ class FeaturePipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_steps)
 
         text_input = self.tokenizer(
-            prompts, padding='max_length', max_length=self.tokenizer.model_max_length, truncation=True, return_tensors='pt'
+            prompts,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
         )
 
         # Get CLIP embedding
         with torch.no_grad():
-            text_embeddings = self.text_encoder(
-                text_input.input_ids.to(self.device))[0]
+            text_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
 
         max_length = text_input.input_ids.shape[-1]
         uncond_input = self.tokenizer(
-            [""] * batch_size, padding="max_length", max_length=max_length, return_tensors="pt"
+            [""] * batch_size,
+            padding="max_length",
+            max_length=max_length,
+            return_tensors="pt",
         )
-        uncond_embeddings = self.text_encoder(
-            uncond_input.input_ids.to(self.device))[0]
+        uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
 
         text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
 
@@ -108,18 +114,20 @@ class FeaturePipeline(DiffusionPipeline):
             self.cur_timestep = t
 
             # duplicate latent
-            latent_model_input = torch.cat([latents]*2)
+            latent_model_input = torch.cat([latents] * 2)
 
             # diffusion step
             with torch.no_grad():
 
                 noise_pred = self.unet(
-                    latent_model_input, t, encoder_hidden_states=text_embeddings).sample
+                    latent_model_input, t, encoder_hidden_states=text_embeddings
+                ).sample
 
             # perform guidance
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * \
-                (noise_pred_text - noise_pred_uncond)
+            noise_pred = noise_pred_uncond + guidance_scale * (
+                noise_pred_text - noise_pred_uncond
+            )
 
             # perform step
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample

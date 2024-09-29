@@ -1,5 +1,6 @@
 from einops import rearrange
 from pytorch3d.ops import interpolate_face_attributes
+import torchvision.transforms.functional as TF
 from pytorch3d.renderer import (
     AmbientLights,
     MeshRasterizer,
@@ -28,34 +29,29 @@ def normalize_depth_map(depth):
 
 
 def make_rasterizer(cameras, resolution=512):
-    raster_settings = RasterizationSettings(
-        image_size=resolution,
-        faces_per_pixel=1
-    )
-    rasterizer = MeshRasterizer(
-        cameras=cameras, raster_settings=raster_settings)
+    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
+    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
 
     return rasterizer
 
 
-def init_renderer(cameras, device='cuda:0', resolution=512):
-    raster_settings = RasterizationSettings(
-        image_size=resolution, faces_per_pixel=1)
-    rasterizer = MeshRasterizer(
-        cameras=cameras, raster_settings=raster_settings)
+def render_depth_map(meshes, cameras, resolution=512):
+    rasterizer = make_rasterizer(cameras, resolution)
+    fragments = rasterizer(meshes)
+    depth_maps = fragments.zbuf
+    depth_maps = normalize_depth_map(depth_maps)
+    return [TF.to_pil_image(depth_map[:, :, 0]) for depth_map in depth_maps]
+
+
+def init_renderer(cameras, device="cuda:0", resolution=512):
+    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
+    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
 
     lights = AmbientLights(device=device)
 
-    shader = SoftPhongShader(
-        cameras=cameras,
-        lights=lights,
-        device=device
-    )
+    shader = SoftPhongShader(cameras=cameras, lights=lights, device=device)
 
-    renderer = MeshRenderer(
-        rasterizer=rasterizer,
-        shader=shader
-    )
+    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
 
     return renderer
 
@@ -85,11 +81,9 @@ def rasterize_vertex_features(cameras, mesh, res, vertex_features):
 
     # interpolate with barycentric coords
     pixel_features = interpolate_face_attributes(
-        fragments.pix_to_face,
-        fragments.bary_coords,
-        face_vert_features
+        fragments.pix_to_face, fragments.bary_coords, face_vert_features
     )
 
-    pixel_features = rearrange(pixel_features, '1 h w 1 d -> d h w')
+    pixel_features = rearrange(pixel_features, "1 h w 1 d -> d h w")
 
     return pixel_features
