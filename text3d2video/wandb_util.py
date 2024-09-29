@@ -156,5 +156,5 @@ class ArtifactWrapper:
 
         return artifact
 
-    def logged_by(self):
+    def logged_by(self) -> Run:
         return self.wandb_artifact.logged_by()

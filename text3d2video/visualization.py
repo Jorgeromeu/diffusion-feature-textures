@@ -29,6 +29,7 @@ class RgbPcaUtil:
         """
 
         # fit pca matrix
+        # pylint: disable=no-value-for-parameter
         self.pca.train(features)
 
         # compute min and max for each channel
@@ -46,6 +47,7 @@ class RgbPcaUtil:
         :return reduced: N x 3 tensor
         """
 
+        # pylint: disable=no-value-for-parameter
         return self.pca.apply(features)
 
     def normalize(self, reduced):
