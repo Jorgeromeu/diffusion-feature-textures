@@ -12,6 +12,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from PIL import Image
 from diffusers import ControlNetModel
 from diffusers.image_processor import VaeImageProcessor
+from typeguard import typechecked
 
 
 class MyPipeline(DiffusionPipeline):
@@ -28,6 +29,7 @@ class MyPipeline(DiffusionPipeline):
 
         super().__init__()
 
+        # register modules
         self.register_modules(
             vae=vae,
             unet=unet,
@@ -37,6 +39,7 @@ class MyPipeline(DiffusionPipeline):
             controlnet=controlnet,
         )
 
+        # vae image processors
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
@@ -88,16 +91,24 @@ class MyPipeline(DiffusionPipeline):
 
         return latents
 
-    def decode_latents(self, latents: torch.FloatTensor):
-        latents_p = 1 / 0.18215 * latents
-        with torch.no_grad():
-            images = self.vae.decode(latents_p).sample
+    def latents_to_images(self, latents: torch.FloatTensor, generator=None):
 
-        images = (images / 2 + 0.5).clamp(0, 1)
-        images = images.detach().cpu().permute(0, 2, 3, 1).numpy()
-        images = (images * 255).round().astype("uint8")
-        pil_images = [Image.fromarray(image) for image in images]
-        return pil_images
+        # scale latents
+        latents_scaled = latents / self.vae.config.scaling_factor
+
+        # decode latents
+        images = self.vae.decode(
+            latents_scaled,
+            return_dict=False,
+            generator=generator,
+        )[0]
+
+        # postprocess images
+        images = self.image_processor.postprocess(
+            images, output_type="pil", do_denormalize=[True] * len(latents)
+        )
+
+        return images
 
     def prepare_controlnet_image(
         self, images: List[Image.Image], do_classifier_free_guidance=True
@@ -116,6 +127,7 @@ class MyPipeline(DiffusionPipeline):
         return image
 
     @torch.no_grad()
+    @typechecked
     def __call__(
         self,
         prompts: List[str],
@@ -127,7 +139,10 @@ class MyPipeline(DiffusionPipeline):
         generator=None,
     ):
 
-        # Get text embeddings
+        # number of images being generated
+        batch_size = len(prompts)
+
+        # Get prompt embeddings for guidance
         cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
         text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
 
@@ -135,8 +150,9 @@ class MyPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(len(prompts), res)
+        latents = self.prepare_latents(batch_size, res)
 
+        # denoising loop
         for t in tqdm(self.scheduler.timesteps):
 
             # duplicate latent, to feed to model with CFG
@@ -146,11 +162,7 @@ class MyPipeline(DiffusionPipeline):
             # controlnet step
             controlnet_model_input = latent_model_input
             controlnet_prompt_embeds = text_embeddings
-
-            # process controlnet image
             processed_control_image = self.prepare_controlnet_image(depth_maps)
-
-            # run controlnet
             down_block_res_samples, mid_block_res_sample = self.controlnet(
                 controlnet_model_input,
                 t,
@@ -179,4 +191,4 @@ class MyPipeline(DiffusionPipeline):
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         # decode latents
-        return self.decode_latents(latents)
+        return self.latents_to_images(latents)
