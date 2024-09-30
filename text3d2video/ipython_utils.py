@@ -4,6 +4,22 @@ import matplotlib.pyplot as plt
 from PIL.Image import Image
 
 
+def display_ims_grid(images: List[List[Image]], scale=1):
+
+    n_rows = len(images)
+    n_cols = len(images[0])
+
+    _, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
+
+    for row_i in range(n_rows):
+        for col_i in range(n_cols):
+            axs[row_i, col_i].imshow(images[row_i][col_i])
+            axs[row_i, col_i].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
 def display_ims(images: List[Image], scale=1):
 
     if len(images) == 1:

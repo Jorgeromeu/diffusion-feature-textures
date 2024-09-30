@@ -1,4 +1,5 @@
 from enum import Enum
+import math
 from typing import List
 
 import hydra
@@ -132,6 +133,13 @@ def run(cfg: DictConfig):
         for i in mv_features_artifact.view_indices()
     ]
 
+    feature_maps = []
+    for feature in features:
+        seq_len, _ = feature.shape
+        feature_map_size = int(math.sqrt(seq_len))
+        feature_map = rearrange(feature, "(h w) d -> d h w", h=feature_map_size)
+        feature_maps.append(feature_map)
+
     # get unposed mesh
     mv_features_run = mv_features_artifact.wandb_artifact.logged_by()
     anim_artifact = first_used_artifact_of_type(
@@ -144,7 +152,7 @@ def run(cfg: DictConfig):
     aggregation_type = AggregationType[str(aggr_cfg.aggregation_method).upper()]
     vertex_features = aggregate_3d_features(
         cameras,
-        features,
+        feature_maps,
         mesh,
         aggregation_type=aggregation_type,
         interpolation_mode=aggr_cfg.projection_interp_method,

@@ -15,7 +15,7 @@ from diffusers.image_processor import VaeImageProcessor
 from typeguard import typechecked
 
 
-class MyPipeline(DiffusionPipeline):
+class MyControlNetPipeline(DiffusionPipeline):
 
     def __init__(
         self,
@@ -126,18 +126,6 @@ class MyPipeline(DiffusionPipeline):
 
         return image
 
-    def check_inputs(
-        self,
-        prompts: List[str],
-        depth_maps: List[Image.Image],
-    ):
-
-        n_prompts = len(prompts)
-        n_depth_maps = len(depth_maps)
-
-        if not (n_prompts == n_depth_maps):
-            raise ValueError("Number of prompts and depth maps")
-
     @torch.no_grad()
     @typechecked
     def __call__(
@@ -151,9 +139,6 @@ class MyPipeline(DiffusionPipeline):
         generator=None,
     ):
 
-        # check inputs
-        self.check_inputs(prompts, depth_maps)
-
         # number of images being generated
         batch_size = len(prompts)
 
@@ -165,7 +150,7 @@ class MyPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, res, generator)
+        latents = self.prepare_latents(batch_size, res)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
@@ -206,4 +191,4 @@ class MyPipeline(DiffusionPipeline):
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         # decode latents
-        return self.latents_to_images(latents, generator)
+        return self.latents_to_images(latents)

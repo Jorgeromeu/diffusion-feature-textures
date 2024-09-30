@@ -1,5 +1,5 @@
 dev_run: false
-rerun_enabled: false
+rerun_enabled: true
 
 stable_diffusion:
   name: runwayml/stable-diffusion-v1-5
@@ -9,17 +9,37 @@ controlnet:
   name: "lllyasviel/control_v11f1p_sd15_depth"
 
 multiview_feature_extraction:
-  animation_artifact_tag: 'backflip:latest'
-  out_artifact_name: 'deadpool-mv-features'
-  prompt: 'Deadpool does a backflip'
+  sd_seed: 0
+  animation_artifact_tag: "backflip:latest"
+  out_artifact_name: "deadpool-mv-features"
+  prompt: "Deadpool does a backflip"
   num_inference_steps: 30
-  num_views: 2
+  num_views: 10
   save_steps: [10, 20]
+  module_paths:
+    [
+      "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
+      "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
+      "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+      "mid_block.attentions.0.transformer_blocks.0.attn1",
+    ]
 
 aggregate_3d_features:
-  mv_features_artifact_tag: 'deadpool-mv-features:latest'
-  out_artifact_name: 'deadpool-3d-features'
-  aggregation_method: 'mean'
-  projection_interp_method: 'bilinear'
-  feature_layer: 'level_2'
+  mv_features_artifact_tag: "deadpool-mv-features:latest"
+  out_artifact_name: "deadpool-3d-features"
+  aggregation_method: "first"
+  projection_interp_method: "bilinear"
+  feature_layer: "up_blocks.3.attentions.2.transformer_blocks.0.attn1"
   feature_timestep: 20

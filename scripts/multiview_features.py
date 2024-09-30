@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import List, Tuple
 
 import hydra
 import rerun as rr
@@ -16,7 +16,10 @@ from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifac
 from text3d2video.diffusion import depth2img, depth2img_pipe
 from text3d2video.multidict import MultiDict
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
-from text3d2video.sd_feature_extraction import DiffusionFeatureExtractor
+from text3d2video.sd_feature_extraction import (
+    DiffusionFeatureExtractor,
+    get_module_from_path,
+)
 from text3d2video.util import multiview_cameras
 
 
@@ -26,9 +29,10 @@ def extract_multiview_features(
     prompt: str = "Deadpool",
     n_views=9,
     resolution=512,
-    device="cpu",
+    device="cuda",
     num_inference_steps=30,
-    save_steps=None,
+    save_steps: List[int] = None,
+    module_paths: List[str] = None,
 ) -> Tuple[FoVPerspectiveCameras, MultiDict, list]:
     """
     Compute Diffusion 3D Features for a given mesh, and represent them as vertex features.
@@ -40,6 +44,12 @@ def extract_multiview_features(
     :param device: Device to run the computation
     :return: Vertex features representing the diffusion features
     """
+
+    if save_steps is None:
+        save_steps = []
+
+    if module_paths is None:
+        module_paths = []
 
     # manual timesteps
     rr_seq = ru.TimeSequence("steps")
@@ -60,10 +70,8 @@ def extract_multiview_features(
 
     # render depth maps
     rasterizer = make_rasterizer(cameras, resolution)
-
     batch_mesh = mesh.extend(n_views)
     fragments = rasterizer(batch_mesh)
-
     depth_maps = normalize_depth_map(fragments.zbuf)
     depth_imgs = [TF.to_pil_image(depth_maps[i, :, :, 0]) for i in range(n_views)]
 
@@ -72,14 +80,12 @@ def extract_multiview_features(
     for view_i in range(n_views):
         rr.log(f"cam_{view_i}", rr.Image(depth_imgs[view_i]))
 
-    # setup feature extractor
+    # add hooks
     extractor = DiffusionFeatureExtractor()
-    extractor.add_save_feature_hook("level_0", pipe.unet.up_blocks[0])
-    extractor.add_save_feature_hook("level_1", pipe.unet.up_blocks[1])
-    extractor.add_save_feature_hook("level_2", pipe.unet.up_blocks[2])
-    extractor.add_save_feature_hook("level_3", pipe.unet.up_blocks[3])
-    if save_steps is None:
-        save_steps = []
+    for module_path in module_paths:
+        module = get_module_from_path(pipe.unet, module_path)
+        extractor.add_save_feature_hook(module_path, module)
+
     extractor.save_steps = save_steps
 
     # Generate images
@@ -146,6 +152,7 @@ def run(cfg: DictConfig):
         num_inference_steps=mv_cfg.num_inference_steps,
         device=device,
         save_steps=mv_cfg.save_steps,
+        module_paths=mv_cfg.module_paths,
     )
 
     # save features as artifact

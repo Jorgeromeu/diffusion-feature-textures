@@ -18,6 +18,12 @@ class RgbPcaUtil:
     channel_min: Tensor
     channel_max: Tensor
 
+    @classmethod
+    def init_and_fit(cls, features: Tensor, lower_percentile=1, upper_percentile=99):
+        pca = cls(features.shape[1])
+        pca.fit(features, lower_percentile, upper_percentile)
+        return pca
+
     def __init__(self, feature_dim: int):
         self.pca = faiss.PCAMatrix(feature_dim, 3)
         self.feature_dim = feature_dim
