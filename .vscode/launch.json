@@ -29,6 +29,18 @@
             },
         },
         {
+            "name": "Generate Video",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/generate_video.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
             "name": "Current File",
             "type": "debugpy",
             "request": "launch",

@@ -10,7 +10,9 @@ from einops import rearrange
 from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
+from tqdm import tqdm
 
+from text3d2video.multidict import MultiDict
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
 import wandb
@@ -122,47 +124,52 @@ def run(cfg: DictConfig):
     mv_features_artifact = wu.get_artifact(aggr_cfg.mv_features_artifact_tag)
     mv_features_artifact = MVFeaturesArtifact.from_wandb_artifact(mv_features_artifact)
 
-    # get feature map per view
+    # recover unposed mesh from lineage
+    animation = mv_features_artifact.get_animation_from_lineage()
+    mesh = animation.load_static_mesh("cuda:0")
+
+    # get views
     cameras = mv_features_artifact.get_cameras()
-    feature_identifier = {
-        "layer": aggr_cfg.feature_layer,
-        "timestep": aggr_cfg.feature_timestep,
-    }
-    features = [
-        mv_features_artifact.get_feature(i, feature_identifier)
-        for i in mv_features_artifact.view_indices()
-    ]
 
-    feature_maps = []
-    for feature in features:
-        seq_len, _ = feature.shape
-        feature_map_size = int(math.sqrt(seq_len))
-        feature_map = rearrange(feature, "(h w) d -> d h w", h=feature_map_size)
-        feature_maps.append(feature_map)
+    # store all aggregated 3D features
+    all_vertex_features = MultiDict()
 
-    # get unposed mesh
-    mv_features_run = mv_features_artifact.wandb_artifact.logged_by()
-    anim_artifact = first_used_artifact_of_type(
-        mv_features_run, AnimationArtifact.wandb_artifact_type
-    )
-    anim_artifact = AnimationArtifact.from_wandb_artifact(anim_artifact)
-    mesh = anim_artifact.load_static_mesh("cuda:0")
+    for layer in tqdm(aggr_cfg.module_paths, "layers"):
+        for timestep in tqdm(aggr_cfg.feature_timesteps, "timesteps"):
 
-    # aggregate features to 3D
-    aggregation_type = AggregationType[str(aggr_cfg.aggregation_method).upper()]
-    vertex_features = aggregate_3d_features(
-        cameras,
-        feature_maps,
-        mesh,
-        aggregation_type=aggregation_type,
-        interpolation_mode=aggr_cfg.projection_interp_method,
-        log_pca_features=cfg.rerun_enabled,
-    )
+            # get feature map per view
+            feature_identifier = {"layer": layer, "timestep": timestep}
+            features = [
+                mv_features_artifact.get_feature(i, feature_identifier)
+                for i in mv_features_artifact.view_indices()
+            ]
+
+            # reshape features to square
+            feature_maps = []
+            for feature in features:
+                seq_len, _ = feature.shape
+                feature_map_size = int(math.sqrt(seq_len))
+                feature_map = rearrange(feature, "(h w) d -> d h w", h=feature_map_size)
+                feature_maps.append(feature_map)
+
+            # aggregate features to 3D
+            aggregation_type = AggregationType[str(aggr_cfg.aggregation_method).upper()]
+            vertex_features = aggregate_3d_features(
+                cameras,
+                feature_maps,
+                mesh,
+                aggregation_type=aggregation_type,
+                interpolation_mode=aggr_cfg.projection_interp_method,
+                log_pca_features=cfg.rerun_enabled,
+            )
+
+            # save 3D features
+            all_vertex_features.add(feature_identifier, vertex_features)
 
     # save features as artifact
     artifact = VertAttributesArtifact.create_wandb_artifact(
         aggr_cfg.out_artifact_name,
-        features=vertex_features,
+        features=all_vertex_features,
     )
 
     wu.log_artifact_if_enabled(artifact)

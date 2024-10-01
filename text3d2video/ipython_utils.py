@@ -1,7 +1,11 @@
 from typing import List
 
+import tempfile
 import matplotlib.pyplot as plt
 from PIL.Image import Image
+import numpy as np
+from moviepy.editor import ImageSequenceClip
+from IPython.display import Video
 
 
 def display_ims_grid(images: List[List[Image]], scale=1):
@@ -39,3 +43,23 @@ def display_ims(images: List[Image], scale=1):
 
     plt.tight_layout()
     plt.show()
+
+
+def display_frames_as_video(frames: List[Image], fps=10):
+
+    # convert PIL images to numpy arrays
+    frames_np = [np.asarray(im) for im in frames]
+
+    # create video
+    clip = ImageSequenceClip(frames_np, fps=fps)
+
+    # create tempfile
+    tmp_video_path = None
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+        tmp_video_path = f.name
+
+    # write video to tempfile
+    clip.write_videofile(tmp_video_path)
+    clip.close()
+
+    return tmp_video_path

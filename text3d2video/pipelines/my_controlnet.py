@@ -1,4 +1,4 @@
-from typing import List
+from typing import Callable, List, Optional
 from diffusers import DiffusionPipeline
 from diffusers import (
     AutoencoderKL,
@@ -137,6 +137,8 @@ class MyControlNetPipeline(DiffusionPipeline):
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         generator=None,
+        before_step_callback: Optional[Callable[[int], None]] = None,
+        after_step_callback: Optional[Callable[[int], None]] = None,
     ):
 
         # number of images being generated
@@ -154,6 +156,10 @@ class MyControlNetPipeline(DiffusionPipeline):
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
+
+            # run before step callback
+            if before_step_callback is not None:
+                before_step_callback(t)
 
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)

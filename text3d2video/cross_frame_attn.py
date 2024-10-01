@@ -4,13 +4,14 @@ from einops import einsum, rearrange
 from diffusers.models.attention_processor import Attention
 from math import sqrt
 
+from text3d2video.multidict import MultiDict
 from text3d2video.sd_feature_extraction import get_module_path
 
 
 class CrossFrameAttnProcessor:
 
-    feature_images: torch.Tensor
-    module_path: str
+    feature_images_multidict: MultiDict
+    do_feature_injection: bool = False
 
     def __init__(self, unet, unet_chunk_size=2, do_cross_frame_attn=True):
         """
@@ -57,7 +58,7 @@ class CrossFrameAttnProcessor:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
-        if not is_cross_attention:
+        if not is_cross_attention and self.do_cross_frame_attn:
 
             # number of frames
             video_length = key.size()[0] // self.unet_chunk_size
@@ -88,30 +89,33 @@ class CrossFrameAttnProcessor:
         # linear proj to output dim
         hidden_states = attn.to_out[0](hidden_states)
 
-        # reshape to square
-        hidden_states_square = rearrange(
-            hidden_states,
-            "(b f) (h w) c -> b f h w c",
-            f=video_length,
-            h=feature_map_size,
-        )
-
         path = get_module_path(self.unet, attn)
 
-        if path == self.module_path:
+        identifier = {"layer": path, "timestep": 20}
+        feature_images = self.feature_images_multidict.get(identifier)
 
-            feature_images_reshaped = rearrange(
-                self.feature_images, "f c h w -> f h w c"
+        if feature_images is not None:
+
+            # reshape to square
+            hidden_states_square = rearrange(
+                hidden_states,
+                "(b f) (h w) c -> b f h w c",
+                f=video_length,
+                h=feature_map_size,
             )
-            feature_images_expended = torch.stack(
-                [feature_images_reshaped] * self.unet_chunk_size, dim=0
+
+            feature_images = rearrange(feature_images, "f c h w -> f h w c")
+            feature_images = torch.stack(
+                [feature_images] * self.unet_chunk_size, dim=0
             ).to(hidden_states_square.dtype)
 
-            # inject feature
-            hidden_states_square = hidden_states_square + feature_images_expended
+            # TODO overwrite/blend
+            hidden_states_square = hidden_states_square + feature_images
 
-        # flatten features
-        hidden_states = rearrange(hidden_states_square, "b f h w c -> (b f) (h w) c")
+            # flatten features
+            hidden_states = rearrange(
+                hidden_states_square, "b f h w c -> (b f) (h w) c"
+            )
 
         # dropout
         hidden_states = attn.to_out[1](hidden_states)

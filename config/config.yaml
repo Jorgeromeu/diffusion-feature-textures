@@ -41,5 +41,33 @@ aggregate_3d_features:
   out_artifact_name: "deadpool-3d-features"
   aggregation_method: "first"
   projection_interp_method: "bilinear"
-  feature_layer: "up_blocks.3.attentions.2.transformer_blocks.0.attn1"
-  feature_timestep: 20
+  feature_timesteps: [10, 20]
+  module_paths:
+    [
+      "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
+      "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
+      "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+      "mid_block.attentions.0.transformer_blocks.0.attn1",
+    ]
+
+generate_video:
+  vertex_attributes_artifact_tag: "deadpool-3d-features:latest"
+  animation_artifact_tag: "rumba:latest"
+  out_artifact_name: "deadpool-backflip"
+  frame_indices: [1,2,3,4,5,6]
+  out_resolution: 512
+  prompt: 'Deadpool'
+  seed: 0
+  fps: 10

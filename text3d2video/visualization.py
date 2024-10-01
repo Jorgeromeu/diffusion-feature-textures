@@ -1,5 +1,6 @@
 import faiss
 import numpy as np
+import torch
 import torchvision.transforms.functional as TF
 from einops import rearrange
 from torch import Tensor
