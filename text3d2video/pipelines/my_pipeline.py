@@ -1,21 +1,23 @@
 from typing import List
-from diffusers import DiffusionPipeline
 from diffusers import (
     AutoencoderKL,
     DiffusionPipeline,
     UNet2DConditionModel,
     UniPCMultistepScheduler,
+    ControlNetModel,
 )
 import torch
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from PIL import Image
-from diffusers import ControlNetModel
 from diffusers.image_processor import VaeImageProcessor
 from typeguard import typechecked
 
 
 class MyPipeline(DiffusionPipeline):
+
+    current_step: int = None
+    current_step_index: int = None
 
     def __init__(
         self,
@@ -168,7 +170,11 @@ class MyPipeline(DiffusionPipeline):
         latents = self.prepare_latents(batch_size, res, generator)
 
         # denoising loop
-        for t in tqdm(self.scheduler.timesteps):
+        for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+
+            # expose diffusion state
+            self.current_step = t
+            self.current_step_index = i
 
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
@@ -204,6 +210,10 @@ class MyPipeline(DiffusionPipeline):
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+        # diffusion done, reset state
+        self.current_step = None
+        self.current_step_index = None
 
         # decode latents
         return self.latents_to_images(latents, generator)

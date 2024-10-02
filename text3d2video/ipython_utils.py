@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List
 
 import tempfile
@@ -45,7 +46,7 @@ def display_ims(images: List[Image], scale=1):
     plt.show()
 
 
-def display_frames_as_video(frames: List[Image], fps=10):
+def display_frames_as_video(frames: List[Image], path: Path, fps=10):
 
     # convert PIL images to numpy arrays
     frames_np = [np.asarray(im) for im in frames]
@@ -53,13 +54,8 @@ def display_frames_as_video(frames: List[Image], fps=10):
     # create video
     clip = ImageSequenceClip(frames_np, fps=fps)
 
-    # create tempfile
-    tmp_video_path = None
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-        tmp_video_path = f.name
-
     # write video to tempfile
-    clip.write_videofile(tmp_video_path)
+    clip.write_videofile(str(path))
     clip.close()
 
-    return tmp_video_path
+    return Video(path.absolute())

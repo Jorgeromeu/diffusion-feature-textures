@@ -12,13 +12,14 @@ class CrossFrameAttnProcessor:
 
     feature_images_multidict: MultiDict
     do_feature_injection: bool = False
+    feature_blend_alpha = 1
 
-    def __init__(self, unet, unet_chunk_size=2, do_cross_frame_attn=True):
+    def __init__(self, pipe, unet_chunk_size=2, do_cross_frame_attn=True):
         """
         :param unet_chunk_size:
             number of batches for each generated image, 2 for classifier free guidance
         """
-        self.unet = unet
+        self.pipe = pipe
         self.unet_chunk_size = unet_chunk_size
         self.do_cross_frame_attn = do_cross_frame_attn
 
@@ -35,8 +36,6 @@ class CrossFrameAttnProcessor:
 
         # number of frames
         video_length = batch_size // self.unet_chunk_size
-        # feature map size (assume square image)
-        feature_map_size = int(sqrt(sequence_length))
 
         attention_mask = attn.prepare_attention_mask(
             attention_mask, sequence_length, batch_size
@@ -89,14 +88,17 @@ class CrossFrameAttnProcessor:
         # linear proj to output dim
         hidden_states = attn.to_out[0](hidden_states)
 
-        path = get_module_path(self.unet, attn)
-
-        identifier = {"layer": path, "timestep": 20}
+        # get feature images for current attention layer
+        attn_path = get_module_path(self.pipe.unet, attn)
+        identifier = {"layer": attn_path, "timestep": self.pipe.current_step_index}
         feature_images = self.feature_images_multidict.get(identifier)
 
-        if feature_images is not None:
+        if feature_images is not None and self.do_feature_injection:
 
-            # reshape to square
+            print("blending")
+
+            # reshape hidden states to square
+            feature_map_size = int(sqrt(sequence_length))
             hidden_states_square = rearrange(
                 hidden_states,
                 "(b f) (h w) c -> b f h w c",
@@ -104,13 +106,18 @@ class CrossFrameAttnProcessor:
                 h=feature_map_size,
             )
 
+            # reshape feature images to match
             feature_images = rearrange(feature_images, "f c h w -> f h w c")
             feature_images = torch.stack(
                 [feature_images] * self.unet_chunk_size, dim=0
             ).to(hidden_states_square.dtype)
 
-            # TODO overwrite/blend
-            hidden_states_square = hidden_states_square + feature_images
+            # blend features
+            w_original = 1 - self.feature_blend_alpha
+            w_new = self.feature_blend_alpha
+            hidden_states_square = (
+                w_new * feature_images + w_original * hidden_states_square
+            )
 
             # flatten features
             hidden_states = rearrange(

@@ -1,19 +1,23 @@
+from pathlib import Path
 from typing import List, Tuple
+from codetiming import Timer
 
+import torch
 import hydra
 import rerun as rr
 import torchvision.transforms.functional as TF
-from diffusers import StableDiffusionControlNetPipeline
+from diffusers import StableDiffusionControlNetPipeline, ControlNetModel
 from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
+from text3d2video.disk_multidict import TensorDiskMultiDict
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
-from text3d2video.diffusion import depth2img, depth2img_pipe
+from text3d2video.pipelines.my_pipeline import MyPipeline
 from text3d2video.multidict import MultiDict
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
 from text3d2video.sd_feature_extraction import (
@@ -24,6 +28,7 @@ from text3d2video.util import multiview_cameras
 
 
 def extract_multiview_features(
+    features_multidict: TensorDiskMultiDict,
     pipe: StableDiffusionControlNetPipeline,
     mesh: Meshes,
     prompt: str = "Deadpool",
@@ -90,30 +95,29 @@ def extract_multiview_features(
 
     # Generate images
     prompts = [prompt] * n_views
-    generted_ims = depth2img(
-        pipe, prompts, depth_imgs, num_inference_steps=num_inference_steps
-    )
+    with Timer(initial_text="Generating images"):
+        generted_ims = pipe(
+            prompts, depth_imgs, num_inference_steps=num_inference_steps
+        )
 
     # log generated images
     rr_seq.step()
     for view_i in range(n_views):
         rr.log(f"cam_{view_i}", rr.Image(generted_ims[view_i]))
 
-    # collect features
-    features = MultiDict()
+    with Timer(initial_text="Saving Features to disk"):
+        for name in extractor.hook_manager.named_hooks():
+            for timestep in extractor.save_steps:
 
-    for name in extractor.hook_manager.named_hooks():
-        for timestep in extractor.save_steps:
+                # get all features for name and timestep
+                extracted_features = extractor.get_feature(name, timestep=timestep)
 
-            # get all features for name and timestep
-            extracted_features = extractor.get_feature(name, timestep=timestep)
+                for view_i in range(n_views):
 
-            for view_i in range(n_views):
+                    key = {"view": view_i, "timestep": timestep, "layer": name}
+                    features_multidict[key] = torch.Tensor(extracted_features[view_i])
 
-                key = {"view": view_i, "timestep": timestep, "layer": name}
-                features.add(key, extracted_features[view_i])
-
-    return cameras, features, generted_ims
+    return cameras, generted_ims
 
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
@@ -140,11 +144,25 @@ def run(cfg: DictConfig):
     device = "cuda:0"
     mesh = animation_artifact.load_static_mesh(device)
 
-    # load pipeline
-    pipe = depth2img_pipe(device=device)
+    # load depth2img pipeline
+    dtype = torch.float16
+    sd_repo = cfg.stable_diffusion.name
+    controlnet_repo = cfg.controlnet.name
+    device = torch.device("cuda")
+
+    controlnet = ControlNetModel.from_pretrained(
+        controlnet_repo, torch_dtype=torch.float16
+    ).to(device)
+
+    pipe = MyPipeline.from_pretrained(
+        sd_repo, controlnet=controlnet, torch_dtype=dtype
+    ).to(device)
 
     # get multiview diffusion features
-    cams, features, ims = extract_multiview_features(
+    features_multidict = TensorDiskMultiDict(Path("outs/multiview_features"))
+    features_multidict.clear()
+    cams, ims = extract_multiview_features(
+        features_multidict,
         pipe,
         mesh,
         prompt=mv_cfg.prompt,
@@ -155,14 +173,16 @@ def run(cfg: DictConfig):
         module_paths=mv_cfg.module_paths,
     )
 
-    # save features as artifact
-    out_artifact = MVFeaturesArtifact.create_wandb_artifact(
-        mv_cfg.out_artifact_name, cameras=cams, features=features, images=ims
-    )
+    # # save features as artifact
+    # out_artifact = MVFeaturesArtifact.create_wandb_artifact(
+    #     mv_cfg.out_artifact_name,
+    #     cameras=cams,
+    #     features_path=features_multidict.path,
+    #     images=ims,
+    # )
 
-    wu.log_artifact_if_enabled(out_artifact)
-
-    wandb.finish()
+    # wu.log_artifact_if_enabled(out_artifact)
+    # wandb.finish()
 
 
 if __name__ == "__main__":

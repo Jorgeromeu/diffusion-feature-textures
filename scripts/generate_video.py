@@ -6,7 +6,6 @@ from diffusers import StableDiffusionControlNetPipeline
 from PIL.Image import Image
 import hydra
 from omegaconf import DictConfig
-import torch
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
@@ -16,28 +15,10 @@ from text3d2video.multidict import MultiDict
 from text3d2video.pipelines.my_pipeline import MyPipeline
 from text3d2video.rendering import rasterize_vertex_features, render_depth_map
 import text3d2video.wandb_util as wu
-import text3d2video.rerun_util as ru
-import rerun as rr
 import wandb
 
 from text3d2video.util import front_camera
 from diffusers import ControlNetModel
-
-
-def generate_video(
-    pipe: StableDiffusionControlNetPipeline,
-    prompt: str,
-    depth_maps: List[Image],
-    num_inference_steps: int = 50,
-) -> List[Image]:
-
-    prompts = [prompt] * len(depth_maps)
-
-    frames = pipe(
-        prompts, image=depth_maps, num_inference_steps=num_inference_steps
-    ).images
-
-    return frames
 
 
 def render_feature_images(
@@ -45,10 +26,11 @@ def render_feature_images(
     mv_features: MVFeaturesArtifact,
     animation: AnimationArtifact,
     frame_indices: List[int],
+    timesteps: List[int],
 ) -> MultiDict:
 
     # read vertex features to multidict
-    vert_features_multidict = vert_features.get_vert_features_multidict()
+    vert_features_multidict = vert_features.get_disk_multidict()
 
     # store feature images here
     all_feature_images = MultiDict()
@@ -58,6 +40,10 @@ def render_feature_images(
     frames = animation.load_frames(frame_indices)
 
     for identifier in vert_features_multidict.keys():
+
+        if int(identifier["timestep"]) not in timesteps:
+            continue
+
         vert_features = vert_features_multidict[identifier].cuda()
 
         # feature resolution
@@ -130,6 +116,7 @@ def run(cfg: DictConfig):
     attn_processor = CrossFrameAttnProcessor(unet_chunk_size=2, unet=pipe.unet)
     attn_processor.feature_images_multidict = all_feature_images
     attn_processor.do_cross_frame_attn = True
+    attn_processor.do_feature_injection = True
     pipe.unet.set_attn_processor(attn_processor)
 
     # run pipeline

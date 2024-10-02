@@ -1,5 +1,6 @@
 from enum import Enum
 import math
+from pathlib import Path
 from typing import List
 
 import hydra
@@ -12,16 +13,14 @@ from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 from tqdm import tqdm
 
-from text3d2video.multidict import MultiDict
+from text3d2video.disk_multidict import TensorDiskMultiDict
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
 import wandb
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.util import project_vertices_to_features
 from text3d2video.visualization import RgbPcaUtil
-from text3d2video.wandb_util import first_used_artifact_of_type
 
 
 class AggregationType(Enum):
@@ -121,27 +120,32 @@ def run(cfg: DictConfig):
     ru.pt3d_setup()
 
     # get multiview features artifact
-    mv_features_artifact = wu.get_artifact(aggr_cfg.mv_features_artifact_tag)
-    mv_features_artifact = MVFeaturesArtifact.from_wandb_artifact(mv_features_artifact)
+    mv_features = wu.get_artifact(aggr_cfg.mv_features_artifact_tag)
+    mv_features = MVFeaturesArtifact.from_wandb_artifact(mv_features)
 
     # recover unposed mesh from lineage
-    animation = mv_features_artifact.get_animation_from_lineage()
+    animation = mv_features.get_animation_from_lineage()
     mesh = animation.load_static_mesh("cuda:0")
 
     # get views
-    cameras = mv_features_artifact.get_cameras()
+    cameras = mv_features.get_cameras()
 
     # store all aggregated 3D features
-    all_vertex_features = MultiDict()
+    vertex_features_path = Path("outs/vertex_features")
+    all_vertex_features = TensorDiskMultiDict(vertex_features_path, init_empty=True)
 
-    for layer in tqdm(aggr_cfg.module_paths, "layers"):
-        for timestep in tqdm(aggr_cfg.feature_timesteps, "timesteps"):
+    # iterate over saved layers and timesteps
+    layers = mv_features.get_key_values("layer")
+    timesteps = mv_features.get_key_values("timestep")
+
+    for layer in tqdm(layers, "layers"):
+        for timestep in tqdm(timesteps, "timesteps"):
 
             # get feature map per view
             feature_identifier = {"layer": layer, "timestep": timestep}
             features = [
-                mv_features_artifact.get_feature(i, feature_identifier)
-                for i in mv_features_artifact.view_indices()
+                mv_features.get_feature(i, feature_identifier)
+                for i in mv_features.view_indices()
             ]
 
             # reshape features to square
@@ -169,7 +173,7 @@ def run(cfg: DictConfig):
     # save features as artifact
     artifact = VertAttributesArtifact.create_wandb_artifact(
         aggr_cfg.out_artifact_name,
-        features=all_vertex_features,
+        features_path=all_vertex_features.path.absolute(),
     )
 
     wu.log_artifact_if_enabled(artifact)
