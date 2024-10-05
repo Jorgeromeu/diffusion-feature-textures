@@ -30,7 +30,7 @@ def render_feature_images(
 ) -> MultiDict:
 
     # read vertex features to multidict
-    vert_features_multidict = vert_features.get_disk_multidict()
+    vert_features_multidict = vert_features.get_features_disk_dict()
 
     # store feature images here
     all_feature_images = MultiDict()

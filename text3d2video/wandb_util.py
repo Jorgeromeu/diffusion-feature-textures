@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import shutil
 import tempfile
 from pathlib import Path
@@ -114,47 +116,50 @@ def delete_artifact_collection(
 
 class ArtifactWrapper:
     """
-    Abstract base class for reading and writing artifacts to/from disk.
+    Wrapper over wandb artifact to ease reading/writing from artifacts
     """
 
     # the type id of the wandb artifact class
     wandb_artifact_type: str
     wandb_artifact: Artifact = None
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path = None, artifact: Artifact = None):
         self.folder = folder
+        self.wandb_artifact = artifact
+
+    def setup_tempdir(self):
+        self.folder = Path(tempfile.mkdtemp())
+
+    def delete_folder(self):
+        shutil.rmtree(self.folder)
 
     @classmethod
-    def from_path(cls, path: Path):
-        return cls(path)
-
-    @classmethod
-    def from_wandb_artifact(cls, artifact: Artifact):
-        folder = Path(artifact.download())
-        wrapper = cls(folder)
-        # when reading from an artifact, additionally store the artifact
-        wrapper.wandb_artifact = artifact
+    def create_empty_artifact(cls, name: str):
+        artifact = Artifact(name, type=cls.wandb_artifact_type)
+        wrapper = cls(artifact=artifact)
+        wrapper.setup_tempdir()
         return wrapper
 
-    @staticmethod
-    def write_to_path(folder: Path, **kwargs):
-        pass
+    @classmethod
+    def from_wandb_artifact(cls, artifact: Artifact, download=False):
+
+        if download:
+            artifact.download()
+
+        # pylint: disable=protected-access
+        folder = Path(artifact._default_root())
+        wrapper = cls(folder=folder, artifact=artifact)
+        return wrapper
 
     @classmethod
-    def create_wandb_artifact(cls, name: str, **kwargs) -> Artifact:
+    def from_wandb_artifact_tag(cls, artifact_tag: str, download=False):
+        artifact = get_artifact(artifact_tag)
+        return cls.from_wandb_artifact(artifact, download)
 
-        # create temporary directory and write the data to it
-        tempdir = tempfile.mkdtemp()
-        cls.write_to_path(Path(tempdir), **kwargs)
-
-        # create artifact with the folder
-        artifact = Artifact(name, type=cls.wandb_artifact_type)
-        artifact.add_dir(tempdir)
-
-        # remove temporary directory
-        shutil.rmtree(tempdir)
-
-        return artifact
+    def log(self):
+        self.wandb_artifact.add_dir(self.folder)
+        log_artifact_if_enabled(self.wandb_artifact)
+        self.delete_folder()
 
     def logged_by(self) -> Run:
         return self.wandb_artifact.logged_by()

@@ -142,7 +142,7 @@ def run(cfg: DictConfig):
 
     # get mesh
     device = "cuda:0"
-    mesh = animation_artifact.load_static_mesh(device)
+    mesh = animation_artifact.load_unposed_mesh(device)
 
     # load depth2img pipeline
     dtype = torch.float16
@@ -158,9 +158,13 @@ def run(cfg: DictConfig):
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 
+    # create empty output artifact
+    out_artifact: MVFeaturesArtifact = MVFeaturesArtifact.create_empty_artifact(
+        mv_cfg.out_artifact_name
+    )
+
     # get multiview diffusion features
-    features_multidict = TensorDiskMultiDict(Path("outs/multiview_features"))
-    features_multidict.clear()
+    features_multidict = out_artifact.create_features_disk_dict()
     cams, ims = extract_multiview_features(
         features_multidict,
         pipe,
@@ -173,16 +177,11 @@ def run(cfg: DictConfig):
         module_paths=mv_cfg.module_paths,
     )
 
-    # # save features as artifact
-    # out_artifact = MVFeaturesArtifact.create_wandb_artifact(
-    #     mv_cfg.out_artifact_name,
-    #     cameras=cams,
-    #     features_path=features_multidict.path,
-    #     images=ims,
-    # )
+    # save cameras and images
+    out_artifact.save_views(cams, ims)
 
-    # wu.log_artifact_if_enabled(out_artifact)
-    # wandb.finish()
+    out_artifact.log()
+    wandb.finish()
 
 
 if __name__ == "__main__":

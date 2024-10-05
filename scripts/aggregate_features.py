@@ -120,19 +120,24 @@ def run(cfg: DictConfig):
     ru.pt3d_setup()
 
     # get multiview features artifact
-    mv_features = wu.get_artifact(aggr_cfg.mv_features_artifact_tag)
-    mv_features = MVFeaturesArtifact.from_wandb_artifact(mv_features)
+    mv_features = MVFeaturesArtifact.from_wandb_artifact_tag(
+        aggr_cfg.mv_features_artifact_tag, download=True
+    )
 
-    # recover unposed mesh from lineage
+    # get original mesh from lineage
     animation = mv_features.get_animation_from_lineage()
-    mesh = animation.load_static_mesh("cuda:0")
+    mesh = animation.load_unposed_mesh("cuda:0")
 
     # get views
     cameras = mv_features.get_cameras()
 
+    # create empty out artifact
+    out_artifact = VertAttributesArtifact.create_empty_artifact(
+        aggr_cfg.out_artifact_name
+    )
+
     # store all aggregated 3D features
-    vertex_features_path = Path("outs/vertex_features")
-    all_vertex_features = TensorDiskMultiDict(vertex_features_path, init_empty=True)
+    all_vertex_features = out_artifact.get_features_disk_dict()
 
     # iterate over saved layers and timesteps
     layers = mv_features.get_key_values("layer")
@@ -171,13 +176,7 @@ def run(cfg: DictConfig):
             all_vertex_features.add(feature_identifier, vertex_features)
 
     # save features as artifact
-    artifact = VertAttributesArtifact.create_wandb_artifact(
-        aggr_cfg.out_artifact_name,
-        features_path=all_vertex_features.path.absolute(),
-    )
-
-    wu.log_artifact_if_enabled(artifact)
-    wandb.finish()
+    out_artifact.log()
 
 
 if __name__ == "__main__":
