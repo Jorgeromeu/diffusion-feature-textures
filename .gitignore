@@ -237,3 +237,4 @@ data
 artifacts
 wandb
 workspace
+.hydra

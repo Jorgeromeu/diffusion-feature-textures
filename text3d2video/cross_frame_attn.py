@@ -95,8 +95,6 @@ class CrossFrameAttnProcessor:
 
         if feature_images is not None and self.do_feature_injection:
 
-            print("blending")
-
             # reshape hidden states to square
             feature_map_size = int(sqrt(sequence_length))
             hidden_states_square = rearrange(
@@ -108,9 +106,8 @@ class CrossFrameAttnProcessor:
 
             # reshape feature images to match
             feature_images = rearrange(feature_images, "f c h w -> f h w c")
-            feature_images = torch.stack(
-                [feature_images] * self.unet_chunk_size, dim=0
-            ).to(hidden_states_square.dtype)
+            feature_images = torch.stack([feature_images] * self.unet_chunk_size, dim=0)
+            feature_images = feature_images.to(hidden_states_square)
 
             # blend features
             w_original = 1 - self.feature_blend_alpha

@@ -20,7 +20,9 @@ class RgbPcaUtil:
     channel_max: Tensor
 
     @classmethod
-    def init_and_fit(cls, features: Tensor, lower_percentile=1, upper_percentile=99):
+    def init_from_features(
+        cls, features: Tensor, lower_percentile=1, upper_percentile=99
+    ):
         pca = cls(features.shape[1])
         pca.fit(features, lower_percentile, upper_percentile)
         return pca

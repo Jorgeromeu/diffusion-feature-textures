@@ -137,17 +137,17 @@ def run(cfg: DictConfig):
     ru.pt3d_setup()
 
     # load animation artifact
-    animation_artifact = wu.get_artifact(mv_cfg.animation_artifact_tag)
+    animation_artifact = wu.get_artifact(cfg.inputs.unposed_artifact)
     animation_artifact = AnimationArtifact.from_wandb_artifact(animation_artifact)
 
     # get mesh
     device = "cuda:0"
     mesh = animation_artifact.load_unposed_mesh(device)
 
-    # load depth2img pipeline
+    # setup pipeline
     dtype = torch.float16
-    sd_repo = cfg.stable_diffusion.name
-    controlnet_repo = cfg.controlnet.name
+    sd_repo = cfg.model.sd_repo
+    controlnet_repo = cfg.model.controlnet_repo
     device = torch.device("cuda")
 
     controlnet = ControlNetModel.from_pretrained(
@@ -169,7 +169,7 @@ def run(cfg: DictConfig):
         features_multidict,
         pipe,
         mesh,
-        prompt=mv_cfg.prompt,
+        prompt=cfg.inputs.multiview_prompt,
         n_views=mv_cfg.num_views,
         num_inference_steps=mv_cfg.num_inference_steps,
         device=device,

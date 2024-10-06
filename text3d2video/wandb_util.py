@@ -1,20 +1,18 @@
-from __future__ import annotations
-
 import shutil
 import tempfile
 from pathlib import Path
+import logging
 
-from wandb.apis.public import Run
 
 import wandb
 from wandb import Artifact
 
 
-def init_run(dev_run: bool = False, job_type: str = None):
+def init_run(dev_run: bool = False, job_type: str = None, tags: list = None):
 
     # init wand
     mode = "disabled" if dev_run else "online"
-    wandb.init(project="diffusion-3d-features", job_type=job_type, mode=mode)
+    wandb.init(project="diffusion-3d-features", job_type=job_type, mode=mode, tags=tags)
 
 
 def api_artifact(artifact_tag: str):
@@ -49,14 +47,14 @@ def log_artifact_if_enabled(artifact: Artifact):
         print("skipping logging artifact")
 
 
-def first_logged_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
+def first_logged_artifact_of_type(run, artifact_type: str) -> Artifact:
     for artifact in run.logged_artifacts():
         if artifact.type == artifact_type:
             return artifact
     return None
 
 
-def first_used_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
+def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
     for artifact in run.used_artifacts():
         if artifact.type == artifact_type:
             return artifact
@@ -129,9 +127,11 @@ class ArtifactWrapper:
 
     def setup_tempdir(self):
         self.folder = Path(tempfile.mkdtemp())
+        logging.info("Created artifact tempdir at %s", str(self.folder.absolute()))
 
     def delete_folder(self):
         shutil.rmtree(self.folder)
+        logging.info("Deleted artifact tempdir at %s", str(self.folder.absolute()))
 
     @classmethod
     def create_empty_artifact(cls, name: str):
@@ -161,5 +161,5 @@ class ArtifactWrapper:
         log_artifact_if_enabled(self.wandb_artifact)
         self.delete_folder()
 
-    def logged_by(self) -> Run:
+    def logged_by(self):
         return self.wandb_artifact.logged_by()
