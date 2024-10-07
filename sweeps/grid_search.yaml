@@ -1,0 +1,18 @@
+program: scripts/generate_video.py
+method: grid
+
+parameters:
+  generate_video.feature_blend_alpha: 
+    values: [0.25, 0.5, 0.75, 1.0]
+
+  generate_video/layers:
+    values: [encoder_blocks, decoder_blocks, all_blocks]
+
+  generate_video/timesteps:
+    values: [first_half, second_half, all]
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}
