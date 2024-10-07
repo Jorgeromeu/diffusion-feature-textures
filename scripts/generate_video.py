@@ -81,7 +81,6 @@ def run(cfg: DictConfig):
     # init wandb
     wu.init_run(dev_run=cfg.dev_run, job_type="generate_video", tags=cfg.wandb.tags)
     wandb.config.update(dict(video_cfg))
-    wandb.config.upda
 
     # setup pipeline
     pipe = make_controlnet_diffusion_pipeline(
