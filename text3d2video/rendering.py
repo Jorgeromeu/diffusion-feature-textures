@@ -28,8 +28,13 @@ class FeatureShader(nn.Module):
         # get the vertex features
         texels = meshes.sample_textures(fragments)
 
+        valid_max = fragments.pix_to_face >= 0
+
+        blended_texels = torch.zeros_like(texels)
+        blended_texels[valid_max] = texels[valid_max]
+
         # todo blending?
-        return texels[:, :, :, 0, :]
+        return blended_texels[:, :, :, 0, :]
 
 
 def normalize_depth_map(depth):
@@ -86,7 +91,7 @@ def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
 
     # create a rasterizer
     raster_settings = RasterizationSettings(
-        image_size=resolution, blur_radius=0.0, faces_per_pixel=3
+        image_size=resolution, blur_radius=0.0, faces_per_pixel=3, bin_size=0
     )
 
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings).to(

@@ -88,6 +88,12 @@ class HookManager:
     def clear_named_hook(self, name: str):
         if self._named_handles.get(name):
             self._named_handles[name].remove()
+            del self._named_handles[name]
+
+    def clear_all_hooks(self):
+        for handle in self._named_handles.values():
+            handle.remove()
+        self._named_handles = dict()
 
 
 class DiffusionFeatureExtractor:
@@ -137,3 +143,24 @@ class DiffusionFeatureExtractor:
             self._hook_data[name]["cur_step"] += 1
 
         return hook
+
+
+class SAFeatureExtractor:
+
+    def __init__(self) -> None:
+        self.hooks = HookManager()
+        self.saved_outputs = dict()
+        self.saved_inputs = dict()
+
+    def _pre_post_attn_hook(self, module_name: str):
+        # pylint: disable=unused-argument
+        def hook(module, inp, output):
+            self.saved_inputs[module_name] = inp[0].cpu()
+            self.saved_outputs[module_name] = output.cpu()
+
+        return hook
+
+    def add_attn_hooks(self, attn: Attention, name: str):
+        self.hooks.add_named_hook(
+            f"save_{name}_out", attn, self._pre_post_attn_hook(name)
+        )
