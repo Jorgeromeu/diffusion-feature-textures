@@ -26,21 +26,21 @@ def run(_: DictConfig):
 
     pipe.module_paths = [
         "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
-        "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
-        "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-        "mid_block.attentions.0.transformer_blocks.0.attn1",
+        # "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
+        # "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
+        # "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+        # "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
+        # "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+        # "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+        # "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+        # "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+        # "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+        # "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+        # "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+        # "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+        # "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+        # "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+        # "mid_block.attentions.0.transformer_blocks.0.attn1",
     ]
 
     # read animation
@@ -53,7 +53,7 @@ def run(_: DictConfig):
     generator = torch.Generator(device=device)
     generator.manual_seed(0)
 
-    pipe("deadpool", frames, num_inference_steps=10, generator=generator, rerun=True)
+    pipe("deadpool", frames, num_inference_steps=1, generator=generator, rerun=True)
 
 
 if __name__ == "__main__":

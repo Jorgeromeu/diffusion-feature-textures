@@ -15,8 +15,8 @@ class GenerativeRenderingAttn:
     do_cross_frame_attn: bool = False
 
     # use saved inputs for key and value computation
-    saved_pre_attn: Dict[str, torch.Tensor]
     do_pre_attn_injection: bool = False
+    saved_pre_attn: Dict[str, torch.Tensor]
 
     # use saved post_attn output for attention computation
     saved_post_attn: torch.Tensor = None
@@ -92,40 +92,59 @@ class GenerativeRenderingAttn:
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
 
-        # Cross-frame attention
-        if is_self_attention and self.do_cross_frame_attn:
+        if is_self_attention:
 
-            frame_index = [0] * n_frames
+            # cross frame attention
+            if self.do_cross_frame_attn:
+                frame_index = [0] * n_frames
 
-            # for key and value, use frame 0
-            key = rearrange(key, "(b f) d c -> b f d c", f=n_frames)
-            key = key[:, frame_index].detach().clone()
-            key = rearrange(key, "b f d c -> (b f) d c")
+                # for key and value, use frame 0
+                key = rearrange(key, "(b f) d c -> b f d c", f=n_frames)
+                key = key[:, frame_index].detach().clone()
+                key = rearrange(key, "b f d c -> (b f) d c")
 
-            value = rearrange(value, "(b f) d c -> b f d c", f=n_frames)
-            value = value[:, frame_index].detach().clone()
-            value = rearrange(value, "b f d c -> (b f) d c")
+                value = rearrange(value, "(b f) d c -> b f d c", f=n_frames)
+                value = value[:, frame_index].detach().clone()
+                value = rearrange(value, "b f d c -> (b f) d c")
 
-        # Extended attention
-        if is_self_attention and self.do_extended_attention:
+            # Extended attention
+            elif self.do_extended_attention:
 
-            # stack all frames across time dimension
-            hidden_states_extended = rearrange(
-                hidden_states, "(b f) t c -> b (f t) c", f=n_frames
-            )
-
-            # hidden_states_extended = repeat(
-            #     hidden_states_extended, "b t c -> (b f) t c", f=n_frames
-            # )
-            hidden_states_extended = (
-                hidden_states_extended.unsqueeze(1)
-                .expand(-1, n_frames, -1, -1)
-                .reshape(
-                    -1, hidden_states_extended.shape[1], hidden_states_extended.shape[2]
+                # stack all frames across time dimension
+                hidden_states_extended = rearrange(
+                    hidden_states, "(b f) t c -> b (f t) c", f=n_frames
                 )
-            )
-            key = attn.to_k(hidden_states_extended)
-            value = attn.to_v(hidden_states_extended)
+
+                # repeat b t c -> (b f) t c
+                hidden_states_extended = (
+                    hidden_states_extended.unsqueeze(1)
+                    .expand(-1, n_frames, -1, -1)
+                    .reshape(
+                        -1,
+                        hidden_states_extended.shape[1],
+                        hidden_states_extended.shape[2],
+                    )
+                )
+
+                key = attn.to_k(hidden_states_extended)
+                value = attn.to_v(hidden_states_extended)
+
+            elif self.do_pre_attn_injection:
+
+                # get saved hidden states
+                module_path = get_module_path(self.unet, attn)
+                saved_hidden_states = self.saved_pre_attn.get(module_path)
+
+                # if exists, use saved hidden states for key and value computation
+                if saved_hidden_states is not None:
+
+                    saved_hidden_states = saved_hidden_states.to(hidden_states)
+                    concated_hidden_states = torch.cat(
+                        [saved_hidden_states, hidden_states], dim=1
+                    )
+
+                    key = attn.to_k(concated_hidden_states)
+                    value = attn.to_v(concated_hidden_states)
 
         attn_out = self.do_memory_efficient_attention(
             attn, key, query, value, attention_mask

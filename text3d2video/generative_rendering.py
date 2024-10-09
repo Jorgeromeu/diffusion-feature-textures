@@ -1,3 +1,4 @@
+from math import sqrt
 from typing import List
 from diffusers import (
     AutoencoderKL,
@@ -22,6 +23,8 @@ from text3d2video.sd_feature_extraction import get_module_from_path
 import rerun as rr
 import text3d2video.rerun_util as ru
 import rerun.blueprint as rrb
+
+from text3d2video.visualization import RgbPcaUtil
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -158,8 +161,16 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             name="Generated Images",
         )
 
+        pose_views = [
+            rrb.Spatial3DView(contents=[f"+/frame_{i}"]) for i in range(n_frames)
+        ]
+
+        features_3d_tab = rrb.Vertical(
+            rrb.Horizontal(*pose_views, name="Poses"),
+        )
+
         return rrb.Blueprint(
-            rrb.Tabs(main_tab),
+            rrb.Tabs(main_tab, features_3d_tab),
             collapse_panels=True,
         )
 
@@ -182,6 +193,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         rr.init("generative_rendering")
         rr.serve()
         rr.send_blueprint(self.setup_blueprint(len(frames)))
+        ru.pt3d_setup()
         seq = ru.TimeSequence("timesteps")
 
         # number of images being generated
@@ -240,13 +252,13 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 return_dict=False,
             )
 
-            # diffusion step to extract features
+            # keyframe diffusion step to extract features
             extractor = SAFeatureExtractor()
 
             for attn_path in self.module_paths:
                 attn = get_module_from_path(self.unet, attn_path)
                 extractor.add_attn_hooks(attn, attn_path)
-
+            attn_processor.do_extended_attention = True
             self.unet(
                 latent_model_input,
                 t,
@@ -254,18 +266,46 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 down_block_additional_residuals=down_block_res_samples,
                 encoder_hidden_states=text_embeddings,
             )
-
+            attn_processor.do_extended_attention = False
             extractor.hooks.clear_all_hooks()
 
-            # diffusion step with:
+            # diffusion step on all with:
             # - controlnet residuals
             # - classifier free guidance
             # - TODO pre attn feature injection
             # - TODO post attn feature injection
 
-            self.unet.do_pre_attn_injection = True
+            for attn_path in self.module_paths:
+                # B T D
+                features = extractor.saved_outputs[attn_path]
+                features = rearrange(features, "(b f) t c -> b f t c", f=batch_size)
+
+                resolution = int(sqrt(features.shape[2]))
+                feature_maps = rearrange(
+                    features, "b f (h w) c -> b f c h w", h=resolution
+                )
+
+                if rerun:
+
+                    # dimensionality reduce features
+                    all_features = rearrange(features, "b f t c -> (b f t) c")
+                    pca = RgbPcaUtil.init_from_features(all_features)
+
+                    for frame in range(batch_size):
+
+                        rr.log(f"frame_{frame}", ru.pt3d_mesh(frames, batch_idx=frame))
+                        rr.log(
+                            f"feature_{frame}",
+                            rr.Image(
+                                pca.feature_map_to_rgb_pil(feature_maps[0, frame])
+                            ),
+                        )
+
+            # pass extracted features to attn processor
             attn_processor.saved_pre_attn = extractor.saved_inputs
             attn_processor.savd_outputs = extractor.saved_outputs
+            attn_processor.do_pre_attn_injection = True
+            attn_processor.do_post_attn_injection = True
 
             noise_pred = self.unet(
                 latent_model_input,

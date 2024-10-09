@@ -152,15 +152,23 @@ class SAFeatureExtractor:
         self.saved_outputs = dict()
         self.saved_inputs = dict()
 
-    def _pre_post_attn_hook(self, module_name: str):
+    def _post_attn_hook(self, module_name: str):
         # pylint: disable=unused-argument
         def hook(module, inp, output):
-            self.saved_inputs[module_name] = inp[0].cpu()
+            # self.saved_inputs[module_name] = inp[0].cpu()
             self.saved_outputs[module_name] = output.cpu()
 
         return hook
 
+    def _pre_attn_hook(self, module_name: str):
+        # pylint: disable=unused-argument
+        def hook(module, inp, output):
+            self.saved_inputs[module_name] = inp[0].cpu()
+
+        return hook
+
     def add_attn_hooks(self, attn: Attention, name: str):
+        self.hooks.add_named_hook(f"save_{name}_out", attn, self._post_attn_hook(name))
         self.hooks.add_named_hook(
-            f"save_{name}_out", attn, self._pre_post_attn_hook(name)
+            f"save_{name}_in", attn.to_k, self._pre_attn_hook(name)
         )
