@@ -16,10 +16,10 @@ class GenerativeRenderingAttn:
 
     # use saved inputs for key and value computation
     do_pre_attn_injection: bool = False
-    saved_pre_attn: Dict[str, torch.Tensor]
+    saved_pre_attn: Dict[str, torch.Tensor] = dict()
 
     # use saved post_attn output for attention computation
-    saved_post_attn: torch.Tensor = None
+    saved_post_attn: Dict[str, torch.Tensor] = dict()
     do_post_attn_injection: bool = False
 
     def __init__(self, unet, unet_chunk_size=2):
@@ -30,7 +30,7 @@ class GenerativeRenderingAttn:
         self.unet = unet
         self.unet_chunk_size = unet_chunk_size
 
-    def do_memory_efficient_attention(self, attn, key, query, value, attention_mask):
+    def memory_efficient_attention(self, attn, key, query, value, attention_mask):
 
         batch_size = query.shape[0]
 
@@ -111,23 +111,28 @@ class GenerativeRenderingAttn:
             elif self.do_extended_attention:
 
                 # stack all frames across time dimension
-                hidden_states_extended = rearrange(
+                # unet_chunk_size * (n_frames * sequence_length) hidden_size
+                saved_hidden_states = rearrange(
                     hidden_states, "(b f) t c -> b (f t) c", f=n_frames
                 )
 
+                # save pre attn features
+                module_path = get_module_path(self.unet, attn)
+                self.saved_pre_attn[module_path] = saved_hidden_states
+
                 # repeat b t c -> (b f) t c
-                hidden_states_extended = (
-                    hidden_states_extended.unsqueeze(1)
+                saved_hidden_states = (
+                    saved_hidden_states.unsqueeze(1)
                     .expand(-1, n_frames, -1, -1)
                     .reshape(
                         -1,
-                        hidden_states_extended.shape[1],
-                        hidden_states_extended.shape[2],
+                        saved_hidden_states.shape[1],
+                        saved_hidden_states.shape[2],
                     )
                 )
 
-                key = attn.to_k(hidden_states_extended)
-                value = attn.to_v(hidden_states_extended)
+                key = attn.to_k(saved_hidden_states)
+                value = attn.to_v(saved_hidden_states)
 
             elif self.do_pre_attn_injection:
 
@@ -138,7 +143,17 @@ class GenerativeRenderingAttn:
                 # if exists, use saved hidden states for key and value computation
                 if saved_hidden_states is not None:
 
-                    saved_hidden_states = saved_hidden_states.to(hidden_states)
+                    # repeat b t c -> (b f) t c
+                    saved_hidden_states = (
+                        saved_hidden_states.unsqueeze(1)
+                        .expand(-1, n_frames, -1, -1)
+                        .reshape(
+                            -1,
+                            saved_hidden_states.shape[1],
+                            saved_hidden_states.shape[2],
+                        )
+                    )
+
                     concated_hidden_states = torch.cat(
                         [saved_hidden_states, hidden_states], dim=1
                     )
@@ -146,7 +161,7 @@ class GenerativeRenderingAttn:
                     key = attn.to_k(concated_hidden_states)
                     value = attn.to_v(concated_hidden_states)
 
-        attn_out = self.do_memory_efficient_attention(
+        attn_out = self.memory_efficient_attention(
             attn, key, query, value, attention_mask
         )
 

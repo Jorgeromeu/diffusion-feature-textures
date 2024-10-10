@@ -16,7 +16,7 @@ from diffusers.image_processor import VaeImageProcessor
 from typeguard import typechecked
 from pytorch3d.structures import Meshes
 from text3d2video.generative_rendering_attn import GenerativeRenderingAttn
-from text3d2video.rendering import render_depth_map
+from text3d2video.rendering import make_feature_renderer, render_depth_map
 from text3d2video.sd_feature_extraction import SAFeatureExtractor
 from text3d2video.util import front_camera
 from text3d2video.sd_feature_extraction import get_module_from_path
@@ -25,6 +25,7 @@ import text3d2video.rerun_util as ru
 import rerun.blueprint as rrb
 
 from text3d2video.visualization import RgbPcaUtil
+from pytorch3d.renderer import TexturesUV
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -106,6 +107,59 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return latents
 
+    def prepare_uv_initialized_latents(
+        self,
+        frames: Meshes,
+        verts_uvs: torch.Tensor,
+        faces_uvs: torch.Tensor,
+        out_resolution: int = 512,
+        generator=None,
+    ):
+
+        # setup noise texture
+        latent_res = out_resolution // 8
+        noise_texture_res = latent_res * 1
+        in_channels = self.unet.config.in_channels
+        noise_texture_map = torch.randn(
+            noise_texture_res,
+            noise_texture_res,
+            in_channels,
+            device=self.device,
+            generator=generator,
+        )
+
+        n_frames = len(frames)
+
+        noise_texture = TexturesUV(
+            verts_uvs=verts_uvs.expand(n_frames, -1, -1).to(self.device),
+            faces_uvs=faces_uvs.expand(n_frames, -1, -1).to(self.device),
+            maps=noise_texture_map.expand(n_frames, -1, -1, -1).to(self.device),
+        )
+
+        frames.textures = noise_texture
+
+        # render noise texture for each frame
+        camera = front_camera()
+        renderer = make_feature_renderer(camera, latent_res)
+        noise_renders = renderer(frames).to(self.dtype)
+
+        noise_renders = rearrange(noise_renders, "b h w c -> b c h w")
+        noise_renders = noise_renders.to(device=self.device, dtype=self.dtype)
+
+        background_noise = torch.randn(
+            in_channels,
+            latent_res,
+            latent_res,
+        ).expand(n_frames, -1, -1, -1)
+        background_noise = background_noise.to(self.device, dtype=self.dtype)
+
+        latents_mask = (noise_renders == 0).float()
+        latents = noise_renders + background_noise * latents_mask
+
+        latents = latents.to(self.device, dtype=self.dtype)
+
+        return latents
+
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
 
         # scale latents
@@ -140,6 +194,38 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             image = torch.cat([image] * 2)
 
         return image
+
+    def controlnet_and_unet_forward(
+        self,
+        latents: torch.Tensor,
+        text_embeddings: torch.Tensor,
+        depth_maps: List[Image.Image],
+        t: int,
+        controlnet_conditioning_scale: float = 1.0,
+    ):
+
+        # controlnet step
+        controlnet_model_input = latents
+        controlnet_prompt_embeds = text_embeddings
+        processed_control_image = self.prepare_controlnet_image(depth_maps)
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            controlnet_model_input,
+            t,
+            encoder_hidden_states=controlnet_prompt_embeds,
+            controlnet_cond=processed_control_image,
+            conditioning_scale=controlnet_conditioning_scale,
+            guess_mode=False,
+            return_dict=False,
+        )
+
+        # unet, with controlnet residuals
+        return self.unet(
+            latents,
+            t,
+            mid_block_additional_residual=mid_block_res_sample,
+            down_block_additional_residuals=down_block_res_samples,
+            encoder_hidden_states=text_embeddings,
+        )
 
     def setup_blueprint(self, n_frames: int):
 
@@ -180,10 +266,13 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         self,
         prompt: str,
         frames: Meshes,
+        verts_uvs: torch.Tensor,
+        faces_uvs: torch.Tensor,
         res=512,
         num_inference_steps=30,
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
+        num_keyframes=2,
         generator=None,
         rerun=False,
     ):
@@ -197,8 +286,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         seq = ru.TimeSequence("timesteps")
 
         # number of images being generated
-        batch_size = len(frames)
-        prompts = [prompt] * batch_size
+        n_frames = len(frames)
+        prompts = [prompt] * n_frames
 
         # render depth maps
         camera = front_camera()
@@ -214,8 +303,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
 
-        # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, res, generator)
+        # uv-initialized latents
+        latents = self.prepare_uv_initialized_latents(frames, verts_uvs, faces_uvs)
 
         # setup attn processor
         attn_processor = GenerativeRenderingAttn(self.unet, unet_chunk_size=2)
@@ -238,36 +327,28 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-            # controlnet step
-            controlnet_model_input = latent_model_input
-            controlnet_prompt_embeds = text_embeddings
-            processed_control_image = self.prepare_controlnet_image(depth_maps)
-            down_block_res_samples, mid_block_res_sample = self.controlnet(
-                controlnet_model_input,
-                t,
-                encoder_hidden_states=controlnet_prompt_embeds,
-                controlnet_cond=processed_control_image,
-                conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=False,
-                return_dict=False,
+            latents_kf = rearrange(
+                latent_model_input, "(b f) h w c -> b f h w c", f=n_frames
             )
+            kf_indices = torch.randperm(n_frames)[:num_keyframes]
+            latents_kf = latents_kf[:, kf_indices]
+            latents_kf = rearrange(latents_kf, "b f h w c -> (b f) h w c")
 
-            # keyframe diffusion step to extract features
-            extractor = SAFeatureExtractor()
+            text_embeddings_kf = rearrange(
+                text_embeddings, "(b f) t d -> b f t d", f=n_frames
+            )
+            text_embeddings_kf = text_embeddings_kf[:, kf_indices]
+            text_embeddings_kf = rearrange(text_embeddings_kf, "b f t d -> (b f) t d")
 
-            for attn_path in self.module_paths:
-                attn = get_module_from_path(self.unet, attn_path)
-                extractor.add_attn_hooks(attn, attn_path)
             attn_processor.do_extended_attention = True
-            self.unet(
-                latent_model_input,
+            self.controlnet_and_unet_forward(
+                latents_kf,
+                text_embeddings_kf,
+                [depth_maps[i] for i in kf_indices.tolist()],
                 t,
-                mid_block_additional_residual=mid_block_res_sample,
-                down_block_additional_residuals=down_block_res_samples,
-                encoder_hidden_states=text_embeddings,
+                controlnet_conditioning_scale=controlnet_conditioning_scale,
             )
             attn_processor.do_extended_attention = False
-            extractor.hooks.clear_all_hooks()
 
             # diffusion step on all with:
             # - controlnet residuals
@@ -275,54 +356,27 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # - TODO pre attn feature injection
             # - TODO post attn feature injection
 
-            for attn_path in self.module_paths:
-                # B T D
-                features = extractor.saved_outputs[attn_path]
-                features = rearrange(features, "(b f) t c -> b f t c", f=batch_size)
-
-                resolution = int(sqrt(features.shape[2]))
-                feature_maps = rearrange(
-                    features, "b f (h w) c -> b f c h w", h=resolution
-                )
-
-                if rerun:
-
-                    # dimensionality reduce features
-                    all_features = rearrange(features, "b f t c -> (b f t) c")
-                    pca = RgbPcaUtil.init_from_features(all_features)
-
-                    for frame in range(batch_size):
-
-                        rr.log(f"frame_{frame}", ru.pt3d_mesh(frames, batch_idx=frame))
-                        rr.log(
-                            f"feature_{frame}",
-                            rr.Image(
-                                pca.feature_map_to_rgb_pil(feature_maps[0, frame])
-                            ),
-                        )
-
             # pass extracted features to attn processor
-            attn_processor.saved_pre_attn = extractor.saved_inputs
-            attn_processor.savd_outputs = extractor.saved_outputs
             attn_processor.do_pre_attn_injection = True
-            attn_processor.do_post_attn_injection = True
-
-            noise_pred = self.unet(
+            attn_processor.do_post_attn_injection = False
+            noise_pred = self.controlnet_and_unet_forward(
                 latent_model_input,
+                text_embeddings,
+                depth_maps,
                 t,
-                mid_block_additional_residual=mid_block_res_sample,
-                down_block_additional_residuals=down_block_res_samples,
-                encoder_hidden_states=text_embeddings,
+                controlnet_conditioning_scale=controlnet_conditioning_scale,
             ).sample
+            attn_processor.do_pre_attn_injection = False
+            attn_processor.do_post_attn_injection = False
 
             # preform classifier free guidance
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
             guidance_direction = noise_pred_text - noise_pred_uncond
             noise_pred = noise_pred_uncond + guidance_scale * guidance_direction
+            noise_pred = noise_pred_uncond
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
-
             seq.step()
 
         # decode latents

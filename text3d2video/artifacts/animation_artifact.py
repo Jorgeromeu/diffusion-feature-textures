@@ -1,11 +1,14 @@
 import shutil
 from pathlib import Path
+from typing import Tuple
 
 from pytorch3d.structures import Meshes
+from torch import Tensor
 
 from text3d2video.obj_io import load_objs_as_meshes
 from text3d2video.util import ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
+from pytorch3d.io import load_obj
 
 
 class AnimationArtifact(ArtifactWrapper):
@@ -48,6 +51,13 @@ class AnimationArtifact(ArtifactWrapper):
 
     def load_unposed_mesh(self, device: str = "cuda") -> Meshes:
         return load_objs_as_meshes([self.get_unposed_mesh_path()], device=device)
+
+    def texture_data(self) -> Tuple[Tensor, Tensor]:
+        frame_path = self.get_frame_path(self.frame_nums()[0])
+        _, faces, aux = load_obj(frame_path)
+        verts_uvs = aux.verts_uvs
+        faces_uvs = faces.textures_idx
+        return verts_uvs, faces_uvs
 
     def load_frame(self, frame: int, device: str = "cuda") -> Meshes:
         return load_objs_as_meshes([self.get_frame_path(frame)], device=device)
