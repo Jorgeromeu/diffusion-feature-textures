@@ -1,4 +1,3 @@
-from math import sqrt
 from typing import List
 from diffusers import (
     AutoencoderKL,
@@ -17,9 +16,7 @@ from typeguard import typechecked
 from pytorch3d.structures import Meshes
 from text3d2video.generative_rendering_attn import GenerativeRenderingAttn
 from text3d2video.rendering import make_feature_renderer, render_depth_map
-from text3d2video.sd_feature_extraction import SAFeatureExtractor
 from text3d2video.util import front_camera
-from text3d2video.sd_feature_extraction import get_module_from_path
 import rerun as rr
 import text3d2video.rerun_util as ru
 import rerun.blueprint as rrb
@@ -160,17 +157,28 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return latents
 
-    def latents_to_images(self, latents: torch.FloatTensor, generator=None):
+    def latents_to_images(
+        self, latents: torch.FloatTensor, generator=None, chunk_size=10
+    ):
 
         # scale latents
         latents_scaled = latents / self.vae.config.scaling_factor
 
-        # decode latents
-        images = self.vae.decode(
-            latents_scaled,
-            return_dict=False,
-            generator=generator,
-        )[0]
+        images = []
+        for chunk_indices in torch.split(torch.arange(len(latents)), chunk_size):
+
+            chunk_latents = latents_scaled[chunk_indices]
+
+            # decode latents
+            chunk_images = self.vae.decode(
+                chunk_latents,
+                return_dict=False,
+                generator=generator,
+            )[0]
+
+            images.append(chunk_images)
+
+        images = torch.cat(images, dim=0)
 
         # postprocess images
         images = self.image_processor.postprocess(
@@ -227,7 +235,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             encoder_hidden_states=text_embeddings,
         )
 
-    def setup_blueprint(self, n_frames: int):
+    def setup_rerun_blueprint(self, n_frames: int):
 
         frame_views = []
         latent_views = []
@@ -281,7 +289,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         ru.set_logging_state(rerun)
         rr.init("generative_rendering")
         rr.serve()
-        rr.send_blueprint(self.setup_blueprint(len(frames)))
+        if rerun:
+            rr.send_blueprint(self.setup_rerun_blueprint(len(frames)))
         ru.pt3d_setup()
         seq = ru.TimeSequence("timesteps")
 
@@ -298,7 +307,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # Get prompt embeddings for guidance
         cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
-        text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
+        # 2, F, T, D
+        text_embeddings = torch.stack([uncond_embeddings, cond_embeddings])
 
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
@@ -324,56 +334,82 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     rr.log(f"frame_{f_i}", rr.Image(im))
 
             # duplicate latent, to feed to model with CFG
-            latent_model_input = torch.cat([latents] * 2)
-            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+            # 2, F, C, H, W
+            latents_stacked = torch.stack([latents] * 2)
+            latents_stacked = self.scheduler.scale_model_input(latents_stacked, t)
 
-            latents_kf = rearrange(
-                latent_model_input, "(b f) h w c -> b f h w c", f=n_frames
-            )
+            # sample keyframe indices
             kf_indices = torch.randperm(n_frames)[:num_keyframes]
-            latents_kf = latents_kf[:, kf_indices]
-            latents_kf = rearrange(latents_kf, "b f h w c -> (b f) h w c")
 
-            text_embeddings_kf = rearrange(
-                text_embeddings, "(b f) t d -> b f t d", f=n_frames
-            )
-            text_embeddings_kf = text_embeddings_kf[:, kf_indices]
-            text_embeddings_kf = rearrange(text_embeddings_kf, "b f t d -> (b f) t d")
+            # get keyframe inputs
+            kf_latents = latents_stacked[:, kf_indices]
+            kf_embeddings = text_embeddings[:, kf_indices]
+            kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
 
+            # stack inputs for model input
+            kf_latents_input = rearrange(kf_latents, "b f h w c -> (b f) h w c")
+            kf_embeddings_input = rearrange(kf_embeddings, "b f t d -> (b f) t d")
             attn_processor.do_extended_attention = True
             self.controlnet_and_unet_forward(
-                latents_kf,
-                text_embeddings_kf,
-                [depth_maps[i] for i in kf_indices.tolist()],
+                kf_latents_input,
+                kf_embeddings_input,
+                kf_depth_maps,
                 t,
                 controlnet_conditioning_scale=controlnet_conditioning_scale,
             )
             attn_processor.do_extended_attention = False
+
+            # nex
 
             # diffusion step on all with:
             # - controlnet residuals
             # - classifier free guidance
             # - TODO pre attn feature injection
             # - TODO post attn feature injection
-
             # pass extracted features to attn processor
             attn_processor.do_pre_attn_injection = True
             attn_processor.do_post_attn_injection = False
-            noise_pred = self.controlnet_and_unet_forward(
-                latent_model_input,
-                text_embeddings,
-                depth_maps,
-                t,
-                controlnet_conditioning_scale=controlnet_conditioning_scale,
-            ).sample
+
+            # chunked forward pass
+            noise_preds = []
+
+            chunk_size = 4
+            for chunk_indices in torch.split(torch.arange(0, n_frames), chunk_size):
+
+                # get chunk inputs
+                chunk_latents = latents_stacked[:, chunk_indices]
+                chunk_embeddings = text_embeddings[:, chunk_indices]
+                chunk_depth_maps = [depth_maps[i] for i in chunk_indices.tolist()]
+
+                # stack inputs for model input
+                chunk_latents_input = rearrange(
+                    chunk_latents, "b f h w c -> (b f) h w c"
+                )
+                chunk_embeddings_input = rearrange(
+                    chunk_embeddings, "b f t d -> (b f) t d"
+                )
+
+                noise_pred = self.controlnet_and_unet_forward(
+                    chunk_latents_input,
+                    chunk_embeddings_input,
+                    chunk_depth_maps,
+                    t,
+                    controlnet_conditioning_scale=controlnet_conditioning_scale,
+                ).sample
+
+                noise_pred = rearrange(noise_pred, "(b f) c h w -> b f c h w", b=2)
+                noise_preds.append(noise_pred)
+
+            # concat predictions
+            noise_pred_all = torch.cat(noise_preds, dim=1)
+
             attn_processor.do_pre_attn_injection = False
             attn_processor.do_post_attn_injection = False
 
             # preform classifier free guidance
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred_uncond, noise_pred_text = noise_pred_all
             guidance_direction = noise_pred_text - noise_pred_uncond
             noise_pred = noise_pred_uncond + guidance_scale * guidance_direction
-            noise_pred = noise_pred_uncond
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample

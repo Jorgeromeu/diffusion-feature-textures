@@ -49,11 +49,11 @@ def run(_: DictConfig):
     ]
 
     # read animation
-    animation_tag = "joyful-jump:latest"
+    animation_tag = "backflip:latest"
     animation = AnimationArtifact.from_wandb_artifact_tag(animation_tag, download=True)
 
     # setup frames
-    frames = animation.load_frames(animation.frame_nums(20))
+    mesh_frames = animation.load_frames(animation.frame_nums(20))
 
     generator = torch.Generator(device=device)
     generator.manual_seed(0)
@@ -61,14 +61,14 @@ def run(_: DictConfig):
     uv_verts, uv_faces = animation.texture_data()
 
     frames = pipe(
-        "Stormtrooper",
-        frames,
+        "Deadpool",
+        mesh_frames,
         uv_verts,
         uv_faces,
         num_inference_steps=50,
         generator=generator,
-        num_keyframes=4,
-        rerun=True,
+        num_keyframes=6,
+        rerun=False,
     )
 
     # save video
