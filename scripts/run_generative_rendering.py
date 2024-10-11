@@ -7,7 +7,9 @@ import text3d2video.wandb_util as wbu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering import GenerativeRenderingPipeline
+from text3d2video.generative_rendering.generative_rendering import (
+    GenerativeRenderingPipeline,
+)
 
 
 @hydra.main(config_path="../config", config_name="generative_rendering")

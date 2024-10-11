@@ -6,7 +6,7 @@ from pytorch3d.io import load_obj
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.obj_io import load_objs_as_meshes
+from pytorch3d.io import load_objs_as_meshes
 from text3d2video.util import front_camera, ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
 
@@ -75,7 +75,7 @@ class AnimationArtifact(ArtifactWrapper):
 
     # pylint: disable=unused-argument
     def camera(self, frame: int):
-        return front_camera()
+        return front_camera(1)
 
     def cameras(self, frame_indices=None):
 

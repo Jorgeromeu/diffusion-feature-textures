@@ -12,8 +12,6 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 from torch import Tensor, nn
 
-EXTENT_UV = [0, 1, 0, 1]
-
 
 class FeatureShader(nn.Module):
 
@@ -62,28 +60,6 @@ def render_depth_map(meshes, cameras, resolution=512):
     depth_maps = fragments.zbuf
     depth_maps = normalize_depth_map(depth_maps)
     return [TF.to_pil_image(depth_map[:, :, 0]) for depth_map in depth_maps]
-
-
-# TODO figure out why this gives the weird cuda illegal access error when batched...
-def rasterize_vertex_features_batched(
-    cameras: CamerasBase, meshes: Meshes, res: int, vertex_features: Tensor
-):
-    rasterizer = make_rasterizer(cameras, res)
-
-    # rasterize meshes from camera
-    fragments = rasterizer(meshes)
-
-    # B, F, V, D storing feature for each vertex in each face
-    face_vert_features = vertex_features[meshes[0].faces_list()[0]]
-
-    # interpolate with barycentric coords
-    pixel_features = interpolate_face_attributes(
-        fragments.pix_to_face, fragments.bary_coords, face_vert_features
-    )
-
-    pixel_features = rearrange(pixel_features, "b h w 1 d -> b d h w")
-
-    return pixel_features
 
 
 def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
