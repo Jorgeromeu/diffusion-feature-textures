@@ -1,12 +1,10 @@
 import math
 from enum import Enum
-from pathlib import Path
 from typing import List
 
 import hydra
 import rerun as rr
 import torch
-import torchvision.transforms.functional as TF
 from einops import rearrange
 from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
@@ -16,13 +14,9 @@ from tqdm import tqdm
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
 import wandb
-from text3d2video.artifacts.multiview_features_artifact import \
-    MVFeaturesArtifact
-from text3d2video.artifacts.vertex_atributes_artifact import \
-    VertAttributesArtifact
-from text3d2video.disk_multidict import TensorDiskMultiDict
+from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
+from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.util import project_vertices_to_features
-from text3d2video.visualization import RgbPcaUtil
 
 
 class AggregationType(Enum):
@@ -142,7 +136,6 @@ def run(cfg: DictConfig):
                 mesh,
                 aggregation_type=aggregation_type,
                 interpolation_mode=aggr_cfg.projection_interp_method,
-                log_pca_features=cfg.rerun_enabled,
             )
 
             # save 3D features

@@ -1,12 +1,16 @@
 import torch
-import torch.nn as nn
 import torchvision.transforms.functional as TF
 from einops import rearrange
 from pytorch3d.ops import interpolate_face_attributes
-from pytorch3d.renderer import (BlendParams, CamerasBase, MeshRasterizer,
-                                MeshRenderer, RasterizationSettings)
+from pytorch3d.renderer import (
+    BlendParams,
+    CamerasBase,
+    MeshRasterizer,
+    MeshRenderer,
+    RasterizationSettings,
+)
 from pytorch3d.structures import Meshes
-from torch import Tensor
+from torch import Tensor, nn
 
 EXTENT_UV = [0, 1, 0, 1]
 
@@ -14,7 +18,7 @@ EXTENT_UV = [0, 1, 0, 1]
 class FeatureShader(nn.Module):
 
     def __init__(self, device="cuda", blend_params=BlendParams()):
-        super(FeatureShader, self).__init__()
+        super().__init__()
         self.device = device
         self.blend_params = blend_params
 
@@ -28,7 +32,7 @@ class FeatureShader(nn.Module):
         blended_texels = torch.zeros_like(texels)
         blended_texels[valid_max] = texels[valid_max]
 
-        # todo blending?
+        # TODO blending
         return blended_texels[:, :, :, 0, :]
 
 

@@ -1,7 +1,5 @@
 import torch
-from diffusers import (ControlNetModel, StableDiffusionControlNetPipeline,
-                       UniPCMultistepScheduler)
-from safetensors.torch import *
+from diffusers import ControlNetModel
 
 from text3d2video.pipelines.my_pipeline import MyPipeline
 

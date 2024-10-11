@@ -1,8 +1,13 @@
 from typing import Callable, List, Optional
 
 import torch
-from diffusers import (AutoencoderKL, ControlNetModel, DiffusionPipeline,
-                       UNet2DConditionModel, UniPCMultistepScheduler)
+from diffusers import (
+    AutoencoderKL,
+    ControlNetModel,
+    DiffusionPipeline,
+    UNet2DConditionModel,
+    UniPCMultistepScheduler,
+)
 from diffusers.image_processor import VaeImageProcessor
 from PIL import Image
 from tqdm import tqdm

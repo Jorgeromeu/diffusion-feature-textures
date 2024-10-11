@@ -44,7 +44,7 @@ class DiskMultiDict:
     def str_to_dict(cls, key: str) -> Dict[str, Any]:
         items_str = key.split("&")
         items = [item.split("=") for item in items_str]
-        return {k: v for k, v in items}
+        return dict(items)
 
     def clear(self):
         for file in self.path.iterdir():
@@ -91,7 +91,11 @@ class DiskMultiDict:
         return len(self.keys())
 
     def __repr__(self):
-        return f"OnDiskMultiDict(path={self.path}, serialization_fun={self.serialization_fun}, deserialization_fun={self.deserialization_fun})"
+        return (
+            f"OnDiskMultiDict(path={self.path},"
+            "serialization_fun={self.serialization_fun}, "
+            "deserialization_fun={self.deserialization_fun})"
+        )
 
     def __delitem__(self, key: Dict[str, Any]):
         pass

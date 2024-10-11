@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 import hydra
 import torch
 from diffusers import ControlNetModel

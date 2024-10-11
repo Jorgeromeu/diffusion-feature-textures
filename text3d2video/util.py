@@ -3,21 +3,25 @@ import math
 import torch
 import torch.nn.functional as F
 from einops import rearrange
-from pytorch3d.renderer import (CamerasBase, FoVPerspectiveCameras,
-                                MeshRasterizer, RasterizationSettings,
-                                look_at_view_transform)
+from pytorch3d.renderer import (
+    CamerasBase,
+    FoVPerspectiveCameras,
+    MeshRasterizer,
+    RasterizationSettings,
+    look_at_view_transform,
+)
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
 
-def ordered_sample(lst, N):
+def ordered_sample(lst, n):
     """
-    Sample N elements from a list in order.
+    Sample n elements from a list in order.
     """
 
-    step_size = len(lst) // (N - 1)
+    step_size = len(lst) // (n - 1)
     # Get the sample by slicing the list
-    sample = [lst[i * step_size] for i in range(N - 1)]
+    sample = [lst[i * step_size] for i in range(n - 1)]
     sample.append(lst[-1])  # Add the last element
     return sample
 
@@ -54,7 +58,7 @@ def ndc_grid(resolution=100, corner_aligned=False):
 
 def reproject_features(cameras: CamerasBase, depth: Tensor, feature_map: Tensor):
 
-    H, W = depth.shape
+    H, _ = depth.shape
 
     # 2D grid with ndc coordinate at each pixel
     xy_ndc = ndc_grid(H).to(feature_map)
@@ -86,8 +90,6 @@ def project_feature_map_to_vertices(
     vertex_features: Tensor = None,
     distance_epsilon=0.1,
 ):
-    # extract resolution from depth map
-    F = feature_map.shape[0]
 
     # if no initial features provided, initialize to zeros
     if vertex_features is None:

@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import List, Tuple
 
 import hydra
@@ -15,14 +14,15 @@ import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
-from text3d2video.artifacts.multiview_features_artifact import \
-    MVFeaturesArtifact
+from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.multidict import MultiDict
 from text3d2video.pipelines.my_pipeline import MyPipeline
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
-from text3d2video.sd_feature_extraction import (DiffusionFeatureExtractor,
-                                                get_module_from_path)
+from text3d2video.sd_feature_extraction import (
+    DiffusionFeatureExtractor,
+    get_module_from_path,
+)
 from text3d2video.util import multiview_cameras
 
 
@@ -68,7 +68,7 @@ def extract_multiview_features(
     # log cameras
     rr_seq.step()
     for view_i in range(n_views):
-        ru.log_pt3d_FovCamrea(
+        ru.log_pt3d_fov_camera(
             f"cam_{view_i}", cameras, batch_idx=view_i, res=resolution
         )
 

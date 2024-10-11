@@ -4,13 +4,17 @@ from typing import List
 import rerun as rr
 import rerun.blueprint as rrb
 import torch
-from diffusers import (AutoencoderKL, ControlNetModel, DiffusionPipeline,
-                       UNet2DConditionModel, UniPCMultistepScheduler)
+from diffusers import (
+    AutoencoderKL,
+    ControlNetModel,
+    DiffusionPipeline,
+    UNet2DConditionModel,
+    UniPCMultistepScheduler,
+)
 from diffusers.image_processor import VaeImageProcessor
 from einops import rearrange
 from PIL import Image
-from pytorch3d.renderer import (FoVPerspectiveCameras, TexturesUV,
-                                TexturesVertex)
+from pytorch3d.renderer import FoVPerspectiveCameras, TexturesUV, TexturesVertex
 from pytorch3d.structures import Meshes
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
@@ -363,7 +367,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             attn_processor.do_post_attn_injection = do_post_attn_injection
 
             # rendered post attn features
-            all_feature_images = dict()
+            all_feature_images = {}
 
             if do_post_attn_injection:
 

@@ -1,10 +1,13 @@
 from typing import List
 
 import torch
-from diffusers import (AutoencoderKL, DiffusionPipeline, UNet2DConditionModel,
-                       UniPCMultistepScheduler)
+from diffusers import (
+    AutoencoderKL,
+    DiffusionPipeline,
+    UNet2DConditionModel,
+    UniPCMultistepScheduler,
+)
 from diffusers.image_processor import VaeImageProcessor
-from PIL import Image
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked

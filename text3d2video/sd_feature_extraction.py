@@ -2,10 +2,8 @@ from collections import defaultdict
 from typing import Callable, Dict, List, Set
 
 import torch
-import torch.nn as nn
-from diffusers.models import UNet2DConditionModel
 from diffusers.models.attention_processor import Attention
-from torch import Tensor
+from torch import Tensor, nn
 
 
 def find_attn_modules(module: nn.Module):
@@ -63,7 +61,7 @@ class HookManager:
     _named_handles: Dict[str, torch.utils.hooks.RemovableHandle]
 
     def __init__(self) -> None:
-        self._named_handles = dict()
+        self._named_handles = {}
 
     def named_hooks(self) -> Set[str]:
         return set(self._named_handles.keys())
@@ -93,7 +91,7 @@ class HookManager:
     def clear_all_hooks(self):
         for handle in self._named_handles.values():
             handle.remove()
-        self._named_handles = dict()
+        self._named_handles = {}
 
 
 class DiffusionFeatureExtractor:
@@ -109,7 +107,7 @@ class DiffusionFeatureExtractor:
     def __init__(self, save_steps=None) -> None:
         self.hook_manager = HookManager()
         self._saved_features = defaultdict(lambda: [])
-        self._hook_data = dict()
+        self._hook_data = {}
 
         if save_steps is None:
             save_steps = []
@@ -149,8 +147,8 @@ class SAFeatureExtractor:
 
     def __init__(self) -> None:
         self.hooks = HookManager()
-        self.saved_outputs = dict()
-        self.saved_inputs = dict()
+        self.saved_outputs = {}
+        self.saved_inputs = {}
 
     def _post_attn_hook(self, module_name: str):
         # pylint: disable=unused-argument

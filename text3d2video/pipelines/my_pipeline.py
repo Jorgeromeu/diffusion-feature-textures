@@ -1,8 +1,13 @@
 from typing import List
 
 import torch
-from diffusers import (AutoencoderKL, ControlNetModel, DiffusionPipeline,
-                       UNet2DConditionModel, UniPCMultistepScheduler)
+from diffusers import (
+    AutoencoderKL,
+    ControlNetModel,
+    DiffusionPipeline,
+    UNet2DConditionModel,
+    UniPCMultistepScheduler,
+)
 from diffusers.image_processor import VaeImageProcessor
 from PIL import Image
 from tqdm import tqdm
@@ -133,7 +138,7 @@ class MyPipeline(DiffusionPipeline):
         n_prompts = len(prompts)
         n_depth_maps = len(depth_maps)
 
-        if not (n_prompts == n_depth_maps):
+        if not n_prompts == n_depth_maps:
             raise ValueError("Number of prompts and depth maps")
 
     @torch.no_grad()

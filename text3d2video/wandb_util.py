@@ -34,16 +34,16 @@ def get_artifact(artifact_tag: str):
 
     if is_enabled():
         return wandb.use_artifact(artifact_tag)
-    else:
-        return api_artifact(artifact_tag)
+
+    return api_artifact(artifact_tag)
 
 
 def log_artifact_if_enabled(artifact: Artifact):
     if is_enabled():
         print("logging artifact")
         wandb.log_artifact(artifact)
-    else:
-        print("skipping logging artifact")
+
+    print("skipping logging artifact")
 
 
 def first_logged_artifact_of_type(run, artifact_type: str) -> Artifact:
@@ -106,9 +106,8 @@ def delete_artifact_collection(
         print(f"{artifact_name}: No artifacts found")
         return
 
-    else:
-        print(f"{artifact_name}: Deleting artifacts")
-        collection.delete()
+    print(f"{artifact_name}: Deleting artifacts")
+    collection.delete()
 
 
 class ArtifactWrapper:

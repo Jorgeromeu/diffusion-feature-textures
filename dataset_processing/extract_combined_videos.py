@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from moviepy.editor import VideoFileClip
-from PIL import Image
 
 input_data_dir = Path("data/generative_rendering_results")
 output_data_dir = Path("data/generative_rendering_results_processed")

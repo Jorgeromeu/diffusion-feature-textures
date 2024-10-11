@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from moviepy.editor import VideoFileClip
-from PIL import Image
 
 input_data_dir = Path("data/generative_rendering_results")
 output_data_dir = Path("data/generative_rendering_results_processed")
@@ -13,7 +12,6 @@ class Cropper:
         self.square_w = 320
 
     def crop_vid_window(self, vid: VideoFileClip, i):
-        y_offset = self.square_w * i
         return vid.crop(
             x1=(self.square_w * i),
             y1=0,

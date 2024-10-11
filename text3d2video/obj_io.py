@@ -53,7 +53,6 @@ def load_objs_as_meshes(
             tex = None
             # use empty texture
             # tex_map = tex.get
-            pass
 
         mesh = Meshes(
             verts=[verts.to(device)], faces=[faces.verts_idx.to(device)], textures=tex

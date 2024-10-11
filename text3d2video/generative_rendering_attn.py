@@ -4,9 +4,8 @@ from typing import Dict, Optional
 import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
-from einops import einsum, rearrange, repeat
+from einops import rearrange
 
-from text3d2video.multidict import MultiDict
 from text3d2video.sd_feature_extraction import get_module_path
 
 
@@ -18,11 +17,11 @@ class GenerativeRenderingAttn:
 
     # use saved inputs for key and value computation
     do_pre_attn_injection: bool = False
-    saved_pre_attn: Dict[str, torch.Tensor] = dict()
+    saved_pre_attn: Dict[str, torch.Tensor] = {}
 
     # use saved post_attn output for attention computation
-    saved_post_attn: Dict[str, torch.Tensor] = dict()
-    feature_images: Dict[str, torch.Tensor] = dict()
+    saved_post_attn: Dict[str, torch.Tensor] = {}
+    feature_images: Dict[str, torch.Tensor] = {}
     do_post_attn_injection: bool = False
 
     def __init__(self, unet, unet_chunk_size=2):
@@ -77,7 +76,7 @@ class GenerativeRenderingAttn:
         """
 
         # hidden_states: (batch_size, sequence_length, c)
-        batch_size, sequence_length, _ = hidden_states.shape
+        batch_size, _, _ = hidden_states.shape
         n_frames = batch_size // self.unet_chunk_size
 
         query = attn.to_q(hidden_states)

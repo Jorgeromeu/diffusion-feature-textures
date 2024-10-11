@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict
 
@@ -9,7 +8,7 @@ class MultiDict:
     """
 
     def __init__(self):
-        self._data = dict()
+        self._data = {}
 
     @classmethod
     def dict_to_string_dict(cls, keys: Dict[str, Any]) -> Dict[str, str]:
@@ -26,7 +25,7 @@ class MultiDict:
     def str_to_dict(cls, key: str) -> Dict[str, Any]:
         items_str = key.split("&")
         items = [item.split("=") for item in items_str]
-        return {k: v for k, v in items}
+        return dict(items)
 
     def add(self, key: Dict[str, Any], value: Any):
         self._data[self.dict_to_str(key)] = value
@@ -38,7 +37,7 @@ class MultiDict:
         return list(self._data.values())
 
     def keys(self):
-        return [self.str_to_dict(k) for k in self._data.keys()]
+        return [self.str_to_dict(k) for k in self._data]
 
     def items(self):
         return [(self.str_to_dict(k), v) for k, v in self._data.items()]

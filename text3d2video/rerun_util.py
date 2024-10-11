@@ -60,15 +60,15 @@ def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     )
 
 
-def log_pt3d_FovCamrea(
+def log_pt3d_fov_camera(
     label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100
 ):
-    rr.log(label, pt3d_FovCamera(cameras, batch_idx, res))
+    rr.log(label, pt3d_fov_camera(cameras, batch_idx, res))
     cam_trans = cameras.get_world_to_view_transform().inverse()
     rr.log(label, pt3d_transform(cam_trans, batch_idx))
 
 
-def pt3d_FovCamera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
+def pt3d_fov_camera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
     # TODO figure out how to get size from raster settings
     fov = cameras[batch_idx].fov.item()
     focal_length = int(res / (2 * np.tan(fov * np.pi / 360)))
