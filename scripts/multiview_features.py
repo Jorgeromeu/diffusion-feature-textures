@@ -1,29 +1,28 @@
 from pathlib import Path
 from typing import List, Tuple
-from codetiming import Timer
 
-import torch
 import hydra
 import rerun as rr
+import torch
 import torchvision.transforms.functional as TF
-from diffusers import StableDiffusionControlNetPipeline, ControlNetModel
+from codetiming import Timer
+from diffusers import ControlNetModel, StableDiffusionControlNetPipeline
 from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
-from text3d2video.disk_multidict import TensorDiskMultiDict
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
-from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
-from text3d2video.pipelines.my_pipeline import MyPipeline
+from text3d2video.artifacts.multiview_features_artifact import \
+    MVFeaturesArtifact
+from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.multidict import MultiDict
+from text3d2video.pipelines.my_pipeline import MyPipeline
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
-from text3d2video.sd_feature_extraction import (
-    DiffusionFeatureExtractor,
-    get_module_from_path,
-)
+from text3d2video.sd_feature_extraction import (DiffusionFeatureExtractor,
+                                                get_module_from_path)
 from text3d2video.util import multiview_cameras
 
 

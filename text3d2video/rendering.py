@@ -1,17 +1,12 @@
-from einops import rearrange
-from pytorch3d.ops import interpolate_face_attributes
-from torch import Tensor
-import torchvision.transforms.functional as TF
-from pytorch3d.renderer import (
-    MeshRasterizer,
-    RasterizationSettings,
-    CamerasBase,
-    MeshRenderer,
-)
-from pytorch3d.structures import Meshes
 import torch
 import torch.nn as nn
-from pytorch3d.renderer import BlendParams
+import torchvision.transforms.functional as TF
+from einops import rearrange
+from pytorch3d.ops import interpolate_face_attributes
+from pytorch3d.renderer import (BlendParams, CamerasBase, MeshRasterizer,
+                                MeshRenderer, RasterizationSettings)
+from pytorch3d.structures import Meshes
+from torch import Tensor
 
 EXTENT_UV = [0, 1, 0, 1]
 

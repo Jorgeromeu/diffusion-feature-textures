@@ -1,8 +1,9 @@
-from typing import Optional
-import torch
-from einops import einsum, rearrange
-from diffusers.models.attention_processor import Attention
 from math import sqrt
+from typing import Optional
+
+import torch
+from diffusers.models.attention_processor import Attention
+from einops import einsum, rearrange
 
 from text3d2video.multidict import MultiDict
 from text3d2video.sd_feature_extraction import get_module_path

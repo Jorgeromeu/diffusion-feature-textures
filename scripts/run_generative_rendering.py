@@ -1,25 +1,27 @@
-import hydra
-from omegaconf import DictConfig
-import wandb
+from dataclasses import dataclass
 
+import hydra
 import torch
+from diffusers import ControlNetModel
+from omegaconf import DictConfig
+
+import text3d2video.wandb_util as wbu
+import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.generative_rendering import GenerativeRenderingPipeline
-from diffusers import ControlNetModel
-import text3d2video.wandb_util as wbu
 
 
-@hydra.main(config_path="../config", config_name="config")
-def run(_: DictConfig):
+@hydra.main(config_path="../config", config_name="generative_rendering")
+def run(cfg: DictConfig):
 
-    wbu.init_run(dev_run=False, job_type="generate_video", tags=[])
-
-    sd_repo = "runwayml/stable-diffusion-v1-5"
-    controlnet_repo = "lllyasviel/control_v11f1p_sd15_depth"
+    wbu.init_run(dev_run=True, job_type="generate_video", tags=[])
 
     device = torch.device("cuda")
     dtype = torch.float16
+
+    sd_repo = cfg.model.sd_repo
+    controlnet_repo = cfg.model.controlnet_repo
 
     controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(
         device
@@ -29,50 +31,41 @@ def run(_: DictConfig):
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 
-    pipe.module_paths = [
-        "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
-        "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
-        "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-        "mid_block.attentions.0.transformer_blocks.0.attn1",
-    ]
-
     # read animation
-    animation_tag = "backflip:latest"
-    animation = AnimationArtifact.from_wandb_artifact_tag(animation_tag, download=True)
+    animation = AnimationArtifact.from_wandb_artifact_tag(
+        cfg.inputs.animation_artifact_tag, download=False
+    )
+    frame_nums = animation.frame_nums(cfg.inputs.animation_n_frames)
 
-    # setup frames
-    mesh_frames = animation.load_frames(animation.frame_nums(20))
+    # read frames
+    mesh_frames = animation.load_frames(frame_nums)
+    cameras = animation.cameras(frame_nums)
 
     generator = torch.Generator(device=device)
-    generator.manual_seed(0)
+    generator.manual_seed(cfg.inputs.sd_seed)
 
     uv_verts, uv_faces = animation.texture_data()
 
+    # set attention module paths
+    pipe.module_paths = cfg.generative_rendering.module_paths
+
     frames = pipe(
-        "Deadpool",
+        cfg.inputs.prompt,
         mesh_frames,
+        cameras,
         uv_verts,
         uv_faces,
-        num_inference_steps=50,
+        num_inference_steps=cfg.generative_rendering.num_inference_steps,
         generator=generator,
-        num_keyframes=6,
+        num_keyframes=cfg.generative_rendering.num_keyframes,
+        chunk_size=cfg.generative_rendering.chunk_size,
+        do_pre_attn_injection=cfg.generative_rendering.do_pre_attn_injection,
+        do_post_attn_injection=cfg.generative_rendering.do_post_attn_injection,
         rerun=False,
     )
 
     # save video
-    video_artifact = VideoArtifact.create_empty_artifact("deadpool-joyful-jump")
+    video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
     video_artifact.write_frames(frames, fps=10)
 
     # log video to run

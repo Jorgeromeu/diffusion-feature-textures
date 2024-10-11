@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Any, Dict
 
-from text3d2video.disk_multidict import TensorDiskMultiDict
 import text3d2video.wandb_util as wu
-from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
+from text3d2video.artifacts.multiview_features_artifact import \
+    MVFeaturesArtifact
+from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.wandb_util import ArtifactWrapper
 
 

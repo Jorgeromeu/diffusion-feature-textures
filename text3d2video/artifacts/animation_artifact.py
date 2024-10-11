@@ -2,13 +2,13 @@ import shutil
 from pathlib import Path
 from typing import Tuple
 
+from pytorch3d.io import load_obj
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
 from text3d2video.obj_io import load_objs_as_meshes
-from text3d2video.util import ordered_sample
+from text3d2video.util import front_camera, ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
-from pytorch3d.io import load_obj
 
 
 class AnimationArtifact(ArtifactWrapper):
@@ -17,10 +17,10 @@ class AnimationArtifact(ArtifactWrapper):
 
     def write_animation(self, animation_path: str, static_path: str):
 
-        shutil.copy(static_path, self.get_unposed_mesh_path())
+        shutil.copy(static_path, self.unposed_mesh_path())
 
         # copy frames
-        animation_dir = self.get_animation_path()
+        animation_dir = self.animation_path()
         animation_dir.mkdir()
         for frame in Path(animation_path).iterdir():
             number = frame.stem[-4:]
@@ -29,13 +29,13 @@ class AnimationArtifact(ArtifactWrapper):
 
     # reading methods
 
-    def get_animation_path(self) -> Path:
+    def animation_path(self) -> Path:
         return self.folder / "animation"
 
-    def get_unposed_mesh_path(self) -> Path:
+    def unposed_mesh_path(self) -> Path:
         return self.folder / "static.obj"
 
-    def get_frame_path(self, frame=1) -> Path:
+    def frame_path(self, frame=1) -> Path:
         return self.folder / "animation" / f"animation{frame:04}.obj"
 
     def frame_nums(self, sample_n=None):
@@ -50,17 +50,17 @@ class AnimationArtifact(ArtifactWrapper):
         return frame_nums
 
     def load_unposed_mesh(self, device: str = "cuda") -> Meshes:
-        return load_objs_as_meshes([self.get_unposed_mesh_path()], device=device)
+        return load_objs_as_meshes([self.unposed_mesh_path()], device=device)
 
     def texture_data(self) -> Tuple[Tensor, Tensor]:
-        frame_path = self.get_frame_path(self.frame_nums()[0])
+        frame_path = self.frame_path(self.frame_nums()[0])
         _, faces, aux = load_obj(frame_path)
         verts_uvs = aux.verts_uvs
         faces_uvs = faces.textures_idx
         return verts_uvs, faces_uvs
 
     def load_frame(self, frame: int, device: str = "cuda") -> Meshes:
-        return load_objs_as_meshes([self.get_frame_path(frame)], device=device)
+        return load_objs_as_meshes([self.frame_path(frame)], device=device)
 
     def load_frames(self, frame_indices=None, device: str = "cuda") -> Meshes:
 
@@ -68,9 +68,18 @@ class AnimationArtifact(ArtifactWrapper):
             frame_indices = self.frame_nums()
 
         return load_objs_as_meshes(
-            [self.get_frame_path(frame) for frame in frame_indices], device=device
+            [self.frame_path(frame) for frame in frame_indices], device=device
         )
 
-    def load_ordered_frames_sample(self, sample_n: int, device: str = "cuda") -> Meshes:
-        frame_indices = ordered_sample(self.frame_nums(), sample_n)
-        return self.load_frames(frame_indices, device=device)
+    # TODO include camera data in animation, for now just return front camera
+
+    # pylint: disable=unused-argument
+    def camera(self, frame: int):
+        return front_camera()
+
+    def cameras(self, frame_indices=None):
+
+        if frame_indices is None:
+            frame_indices = self.frame_nums()
+
+        return front_camera(len(frame_indices))

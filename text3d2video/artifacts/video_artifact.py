@@ -1,16 +1,17 @@
 from pathlib import Path
 from typing import List
 
-from einops import rearrange
 import numpy as np
+import torch
+from einops import rearrange
 from moviepy.editor import ImageSequenceClip, VideoFileClip
 from PIL import Image
 from torch import Tensor
-import torch
 
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
-from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 import text3d2video.wandb_util as wu
+from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.artifacts.vertex_atributes_artifact import \
+    VertAttributesArtifact
 
 
 class VideoArtifact(wu.ArtifactWrapper):

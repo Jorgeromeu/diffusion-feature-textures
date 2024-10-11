@@ -1,12 +1,12 @@
+import tempfile
 from pathlib import Path
 from typing import List
 
-import tempfile
 import matplotlib.pyplot as plt
-from PIL.Image import Image
 import numpy as np
-from moviepy.editor import ImageSequenceClip
 from IPython.display import Video
+from moviepy.editor import ImageSequenceClip
+from PIL.Image import Image
 
 
 def display_ims_grid(images: List[List[Image]], scale=1):

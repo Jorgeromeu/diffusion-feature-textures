@@ -1,15 +1,16 @@
-from pathlib import Path
-import shutil
-from typing import Any, Dict, List
 import math
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List
 
 import torch
 from PIL import Image
 from pytorch3d.renderer import FoVPerspectiveCameras
 
-from text3d2video.disk_multidict import TensorDiskMultiDict
 import text3d2video.wandb_util as wu
-from text3d2video.artifacts.animation_artifact import AnimationArtifact, ArtifactWrapper
+from text3d2video.artifacts.animation_artifact import (AnimationArtifact,
+                                                       ArtifactWrapper)
+from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.multidict import MultiDict
 from wandb import Artifact
 

@@ -2,14 +2,10 @@ import math
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange, repeat
-from pytorch3d.renderer import (
-    CamerasBase,
-    FoVPerspectiveCameras,
-    MeshRasterizer,
-    RasterizationSettings,
-    look_at_view_transform,
-)
+from einops import rearrange
+from pytorch3d.renderer import (CamerasBase, FoVPerspectiveCameras,
+                                MeshRasterizer, RasterizationSettings,
+                                look_at_view_transform)
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
@@ -29,8 +25,6 @@ def ordered_sample(lst, N):
 def pixel_coords_uv(
     res=100,
 ):
-    pixel_w = (1 / res) / 2
-
     xs = torch.linspace(0, 1, res)
     ys = torch.linspace(1, 0, res)
     x, y = torch.meshgrid(xs, ys, indexing="xy")
@@ -118,7 +112,7 @@ def project_feature_map_to_vertices(
 
 
 def project_vertices_to_features(
-    mesh: Meshes, cam: CamerasBase, feature_map: Tensor, batch_idx=0, mode="nearest"
+    mesh: Meshes, cam: CamerasBase, feature_map: Tensor, mode="nearest"
 ):
 
     feature_dim, _, _ = feature_map.shape
@@ -129,7 +123,7 @@ def project_vertices_to_features(
         blur_radius=0.0,
         faces_per_pixel=1,
     )
-    rasterizer = MeshRasterizer(cameras=cam[batch_idx], raster_settings=raster_settings)
+    rasterizer = MeshRasterizer(cameras=cam, raster_settings=raster_settings)
     fragments = rasterizer(mesh)
 
     # get visible faces
@@ -142,7 +136,7 @@ def project_vertices_to_features(
 
     # TODO extract projected points from rasterization pass output, no need to do it again
     # project points to NDC
-    visible_points_ndc = cam[batch_idx].transform_points_ndc(visible_verts).cpu()
+    visible_points_ndc = cam.transform_points_ndc(visible_verts).cpu()
 
     # extract features for each projected vertex
     visible_point_features = sample_feature_map(
@@ -157,7 +151,6 @@ def project_vertices_to_features(
 
 
 def sample_feature_map(feature_map: Tensor, coords: Tensor, mode="nearest"):
-
     batched_feature_map = rearrange(feature_map, "c h w -> 1 c h w").to(torch.float32)
     coords[:, 0] *= -1
     coords[:, 1] *= -1
@@ -208,11 +201,8 @@ def multiview_cameras(
     return cameras
 
 
-def random_solid_color_img(res=100):
-    return repeat(torch.randn(3), "c -> c h w", h=res, w=res)
+def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
 
-
-def front_camera(device="cuda") -> FoVPerspectiveCameras:
-    R, T = look_at_view_transform(dist=2, azim=0, elev=0)
+    R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
     cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
     return cameras

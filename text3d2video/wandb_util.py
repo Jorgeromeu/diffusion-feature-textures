@@ -1,8 +1,7 @@
+import logging
 import shutil
 import tempfile
 from pathlib import Path
-import logging
-
 
 import wandb
 from wandb import Artifact

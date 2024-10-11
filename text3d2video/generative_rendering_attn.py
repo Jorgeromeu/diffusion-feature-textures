@@ -1,11 +1,13 @@
+from math import sqrt
 from typing import Dict, Optional
+
 import torch
-from einops import einsum, rearrange, repeat
+import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
+from einops import einsum, rearrange, repeat
 
 from text3d2video.multidict import MultiDict
 from text3d2video.sd_feature_extraction import get_module_path
-import torch.nn.functional as F
 
 
 class GenerativeRenderingAttn:
@@ -20,6 +22,7 @@ class GenerativeRenderingAttn:
 
     # use saved post_attn output for attention computation
     saved_post_attn: Dict[str, torch.Tensor] = dict()
+    feature_images: Dict[str, torch.Tensor] = dict()
     do_post_attn_injection: bool = False
 
     def __init__(self, unet, unet_chunk_size=2):
@@ -134,6 +137,7 @@ class GenerativeRenderingAttn:
                 key = attn.to_k(saved_hidden_states)
                 value = attn.to_v(saved_hidden_states)
 
+            # pre attn injection
             elif self.do_pre_attn_injection:
 
                 # get saved hidden states
@@ -164,6 +168,27 @@ class GenerativeRenderingAttn:
         attn_out = self.memory_efficient_attention(
             attn, key, query, value, attention_mask
         )
+
+        if self.do_post_attn_injection:
+            module_path = get_module_path(self.unet, attn)
+            feature_images = self.feature_images.get(module_path)
+
+            if feature_images is not None:
+
+                feature_res = int(sqrt(attn_out.shape[1]))
+                attn_out_square = rearrange(
+                    attn_out,
+                    "(b f) (h w) c -> b f c h w",
+                    b=self.unet_chunk_size,
+                    h=feature_res,
+                    w=feature_res,
+                )
+
+                print(module_path)
+                print("feature_im", feature_images.shape)
+                print("attn_out", attn_out_square.shape)
+
+        self.saved_post_attn[get_module_path(self.unet, attn)] = attn_out
 
         # linear proj to output dim
         attn_out = attn.to_out[0](attn_out)

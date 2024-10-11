@@ -1,7 +1,6 @@
 [MESSAGES CONTROL]
 
 confidence=HIGH,
-           CONTROL_FLOW,
            INFERENCE,
            INFERENCE_FAILURE,
            UNDEFINED

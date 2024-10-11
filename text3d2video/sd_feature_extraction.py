@@ -3,9 +3,9 @@ from typing import Callable, Dict, List, Set
 
 import torch
 import torch.nn as nn
-from torch import Tensor
 from diffusers.models import UNet2DConditionModel
 from diffusers.models.attention_processor import Attention
+from torch import Tensor
 
 
 def find_attn_modules(module: nn.Module):

@@ -2,33 +2,32 @@ import itertools
 from math import sqrt
 from typing import List
 
-from codetiming import Timer
-from einops import rearrange
-import torch
 import hydra
+import torch
+from codetiming import Timer
+from diffusers import ControlNetModel
+from einops import rearrange
 from omegaconf import DictConfig
+from pytorch3d.renderer import TexturesVertex
+from pytorch3d.structures import Meshes, join_meshes_as_batch
 from tqdm import tqdm
+
+import text3d2video.wandb_util as wu
+import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
-from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
-from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
+from text3d2video.artifacts.multiview_features_artifact import \
+    MVFeaturesArtifact
+from text3d2video.artifacts.vertex_atributes_artifact import \
+    VertAttributesArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.cross_frame_attn import CrossFrameAttnProcessor
 from text3d2video.diffusion import make_controlnet_diffusion_pipeline
 from text3d2video.multidict import MultiDict
 from text3d2video.pipelines.my_pipeline import MyPipeline
-from text3d2video.rendering import (
-    make_feature_renderer,
-    rasterize_vertex_features,
-    render_depth_map,
-)
-from pytorch3d.structures import join_meshes_as_batch
-import text3d2video.wandb_util as wu
-import wandb
-from pytorch3d.renderer import TexturesVertex
-from pytorch3d.structures import Meshes
-
+from text3d2video.rendering import (make_feature_renderer,
+                                    rasterize_vertex_features,
+                                    render_depth_map)
 from text3d2video.util import front_camera
-from diffusers import ControlNetModel
 
 
 def render_feature_images(
