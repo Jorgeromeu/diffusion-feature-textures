@@ -5,6 +5,7 @@ from typing import List
 import hydra
 import torch
 from codetiming import Timer
+from diffusers import ControlNetModel
 from einops import rearrange
 from omegaconf import DictConfig
 from pytorch3d.renderer import TexturesVertex
@@ -17,8 +18,8 @@ from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifac
 from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.cross_frame_attn import CrossFrameAttnProcessor
-from text3d2video.diffusion import make_controlnet_diffusion_pipeline
 from text3d2video.multidict import MultiDict
+from text3d2video.pipelines.controlnet_pipeline import ControlNetPipeline
 from text3d2video.rendering import make_feature_renderer, render_depth_map
 from text3d2video.util import front_camera
 
@@ -75,9 +76,18 @@ def run(cfg: DictConfig):
     wandb.config.update(dict(video_cfg))
 
     # setup pipeline
-    pipe = make_controlnet_diffusion_pipeline(
-        cfg.model.sd_repo, cfg.model.controlnet_repo
-    )
+    dtype = torch.float16
+    sd_repo = cfg.model.sd_repo
+    controlnet_repo = cfg.model.controlnet_repo
+    device = torch.device("cuda")
+
+    controlnet = ControlNetModel.from_pretrained(
+        controlnet_repo, torch_dtype=torch.float16
+    ).to(device)
+
+    pipe = ControlNetPipeline.from_pretrained(
+        sd_repo, controlnet=controlnet, torch_dtype=dtype
+    ).to(device)
 
     # read animation
     animation = AnimationArtifact.from_wandb_artifact_tag(

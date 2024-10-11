@@ -1,15 +1,17 @@
-from codetiming import Timer
-from einops import rearrange
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
-from torchvision.io import read_image
+import time
+
 import rerun as rr
 import rerun.blueprint as rrb
-from text3d2video.rendering import make_feature_renderer
-import text3d2video.rerun_util as ru
 import torchvision.transforms.functional as TF
-import time
-from text3d2video.util import project_vertices_to_features
+from codetiming import Timer
+from einops import rearrange
 from pytorch3d.renderer import TexturesVertex
+from torchvision.io import read_image
+
+import text3d2video.rerun_util as ru
+from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.rendering import make_feature_renderer
+from text3d2video.util import project_vertices_to_features
 
 
 def test_projection(anim_tag: str, image_path: str):
@@ -37,7 +39,7 @@ def test_projection(anim_tag: str, image_path: str):
     camera = animation.camera(1)
 
     # load image
-    image = read_image("data/collins.png") / 255
+    image = read_image(image_path) / 255
     image_pil = TF.to_pil_image(image)
     rr.log("/cam", rr.Image(image_pil))
     ru.log_pt3d_fov_camera("/cam", camera, res=image.shape[1])

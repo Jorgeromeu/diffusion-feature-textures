@@ -15,7 +15,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked
 
 
-class MyControlNetPipeline(DiffusionPipeline):
+class ControlNetPipeline(DiffusionPipeline):
 
     def __init__(
         self,

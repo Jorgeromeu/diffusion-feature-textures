@@ -7,7 +7,7 @@ import text3d2video.wandb_util as wbu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.generative_rendering import (
+from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 

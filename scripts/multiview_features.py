@@ -17,7 +17,7 @@ from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.multidict import MultiDict
-from text3d2video.pipelines.my_pipeline import MyPipeline
+from text3d2video.pipelines.controlnet_pipeline import ControlNetPipeline
 from text3d2video.rendering import make_rasterizer, normalize_depth_map
 from text3d2video.sd_feature_extraction import (
     DiffusionFeatureExtractor,
@@ -153,7 +153,7 @@ def run(cfg: DictConfig):
         controlnet_repo, torch_dtype=torch.float16
     ).to(device)
 
-    pipe = MyPipeline.from_pretrained(
+    pipe = ControlNetPipeline.from_pretrained(
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 

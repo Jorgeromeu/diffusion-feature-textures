@@ -2,11 +2,10 @@ import shutil
 from pathlib import Path
 from typing import Tuple
 
-from pytorch3d.io import load_obj
+from pytorch3d.io import load_obj, load_objs_as_meshes
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from pytorch3d.io import load_objs_as_meshes
 from text3d2video.util import front_camera, ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
 
