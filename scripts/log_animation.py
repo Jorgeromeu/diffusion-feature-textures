@@ -10,7 +10,7 @@ def log_animation(artifact_name: str, animation_path: Path, static_path: Path):
     wandb.init(project="diffusion-3D-features", job_type="log_artifact")
     artifact: AnimationArtifact = AnimationArtifact.create_empty_artifact(artifact_name)
     artifact.write_animation(animation_path, static_path)
-    artifact.log()
+    artifact.log_if_enabled()
     wandb.finish()
 
 

@@ -151,7 +151,7 @@ def run(cfg: DictConfig):
     wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})
 
     # save video artifact
-    video_artifact.log()
+    video_artifact.log_if_enabled()
     wandb.finish()
 
 

@@ -5,24 +5,29 @@ import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
+from jaxtyping import Float
 
 from text3d2video.sd_feature_extraction import get_module_path
+from text3d2video.util import blend_features
 
 
 class GenerativeRenderingAttn:
 
-    # perform extended attention
+    # types of attention
     do_extended_attention: bool = False
-    do_cross_frame_attn: bool = False
-
-    # use saved inputs for key and value computation
     do_pre_attn_injection: bool = False
-    saved_pre_attn: Dict[str, torch.Tensor] = {}
 
-    # use saved post_attn output for attention computation
-    saved_post_attn: Dict[str, torch.Tensor] = {}
-    feature_images: Dict[str, torch.Tensor] = {}
+    # wether or not to save features
+    module_paths = []
+    save_pre_attn_features = False
+    save_post_attn_features = False
+
+    saved_pre_attn: Dict[str, Float[torch.Tensor, "b t c"]] = {}
+    saved_post_attn: Dict[str, Float[torch.Tensor, "b f t c"]] = {}
+
+    feature_blend_alpha: float = 1
     do_post_attn_injection: bool = False
+    feature_images: Dict[str, Float[torch.Tensor, "b d h w"]] = {}
 
     def __init__(self, unet, unet_chunk_size=2):
         """
@@ -61,6 +66,78 @@ class GenerativeRenderingAttn:
 
         return attn_out
 
+    def get_kv_hidden_states(
+        self,
+        attn: Attention,
+        module_path: str,
+        hidden_states: Float[torch.Tensor, "b t d"],
+        encoder_hidden_states: Float[torch.Tensor, "b t d"],
+    ) -> Float[torch.Tensor, "b t d"]:
+
+        # if encoder hidden states are provided use them for cross attention
+        if encoder_hidden_states is not None:
+            hidden_states = encoder_hidden_states
+            if attn.norm_cross is not None:
+                hidden_states = attn.norm_cross(hidden_states)
+            return hidden_states
+
+        n_frames = hidden_states.shape[0] // self.unet_chunk_size
+
+        if self.do_extended_attention:
+
+            # stack all frames across time dimension
+            # unet_chunk_size * (n_frames * sequence_length) hidden_size
+            ext_hidden_states = rearrange(
+                hidden_states, "(b f) t c -> b (f t) c", f=n_frames
+            )
+
+            # save hidden states for later use
+            if self.save_pre_attn_features and module_path in self.module_paths:
+                self.saved_pre_attn[module_path] = ext_hidden_states
+
+            # repeat along batch dimension
+            # repeat b t c -> (b f) t c
+            ext_hidden_states = (
+                ext_hidden_states.unsqueeze(1)
+                .expand(-1, n_frames, -1, -1)
+                .reshape(
+                    -1,
+                    ext_hidden_states.shape[1],
+                    ext_hidden_states.shape[2],
+                )
+            )
+
+            return ext_hidden_states
+
+        elif self.do_pre_attn_injection:
+
+            # get saved hidden states
+            saved_hidden_states = self.saved_pre_attn.get(module_path)
+            if saved_hidden_states is None:
+                return hidden_states
+
+            # repeat saved hdiden states along batch dimension
+            # repeat b t c -> (b f) t c
+            saved_hidden_states = (
+                saved_hidden_states.unsqueeze(1)
+                .expand(-1, n_frames, -1, -1)
+                .reshape(
+                    -1,
+                    saved_hidden_states.shape[1],
+                    saved_hidden_states.shape[2],
+                )
+            )
+
+            # concatenate saved hidden states with current hidden states
+            # (b f) t*(f+1) c
+            concated_hidden_states = torch.cat(
+                [saved_hidden_states, hidden_states], dim=1
+            )
+
+            return concated_hidden_states
+
+        return hidden_states
+
     def __call__(
         self,
         attn: Attention,
@@ -75,119 +152,51 @@ class GenerativeRenderingAttn:
         :param attention_mask: attention mask
         """
 
-        # hidden_states: (batch_size, sequence_length, c)
-        batch_size, _, _ = hidden_states.shape
-        n_frames = batch_size // self.unet_chunk_size
+        # figure out which attention layer we are in
+        module_path = get_module_path(self.unet, attn)
 
         query = attn.to_q(hidden_states)
 
-        is_cross_attention = encoder_hidden_states is not None
-        is_self_attention = not is_cross_attention
+        # get hidden states for k/v computation
+        kv_hidden_states = self.get_kv_hidden_states(
+            attn, module_path, hidden_states, encoder_hidden_states
+        )
 
-        # if cross attention, use encoder_hidden_states for key and value
-        if is_cross_attention:
-            hidden_states = encoder_hidden_states
-            if attn.norm_cross is not None:
-                hidden_states = attn.norm_cross(hidden_states)
+        key = attn.to_k(kv_hidden_states)
+        value = attn.to_v(kv_hidden_states)
 
-        # project to key, value
-        key = attn.to_k(hidden_states)
-        value = attn.to_v(hidden_states)
-
-        if is_self_attention:
-
-            # cross frame attention
-            if self.do_cross_frame_attn:
-                frame_index = [0] * n_frames
-
-                # for key and value, use frame 0
-                key = rearrange(key, "(b f) d c -> b f d c", f=n_frames)
-                key = key[:, frame_index].detach().clone()
-                key = rearrange(key, "b f d c -> (b f) d c")
-
-                value = rearrange(value, "(b f) d c -> b f d c", f=n_frames)
-                value = value[:, frame_index].detach().clone()
-                value = rearrange(value, "b f d c -> (b f) d c")
-
-            # Extended attention
-            elif self.do_extended_attention:
-
-                # stack all frames across time dimension
-                # unet_chunk_size * (n_frames * sequence_length) hidden_size
-                saved_hidden_states = rearrange(
-                    hidden_states, "(b f) t c -> b (f t) c", f=n_frames
-                )
-
-                # save pre attn features
-                module_path = get_module_path(self.unet, attn)
-                self.saved_pre_attn[module_path] = saved_hidden_states
-
-                # repeat b t c -> (b f) t c
-                saved_hidden_states = (
-                    saved_hidden_states.unsqueeze(1)
-                    .expand(-1, n_frames, -1, -1)
-                    .reshape(
-                        -1,
-                        saved_hidden_states.shape[1],
-                        saved_hidden_states.shape[2],
-                    )
-                )
-
-                key = attn.to_k(saved_hidden_states)
-                value = attn.to_v(saved_hidden_states)
-
-            # pre attn injection
-            elif self.do_pre_attn_injection:
-
-                # get saved hidden states
-                module_path = get_module_path(self.unet, attn)
-                saved_hidden_states = self.saved_pre_attn.get(module_path)
-
-                # if exists, use saved hidden states for key and value computation
-                if saved_hidden_states is not None:
-
-                    # repeat b t c -> (b f) t c
-                    saved_hidden_states = (
-                        saved_hidden_states.unsqueeze(1)
-                        .expand(-1, n_frames, -1, -1)
-                        .reshape(
-                            -1,
-                            saved_hidden_states.shape[1],
-                            saved_hidden_states.shape[2],
-                        )
-                    )
-
-                    concated_hidden_states = torch.cat(
-                        [saved_hidden_states, hidden_states], dim=1
-                    )
-
-                    key = attn.to_k(concated_hidden_states)
-                    value = attn.to_v(concated_hidden_states)
-
+        # compute attention
         attn_out = self.memory_efficient_attention(
             attn, key, query, value, attention_mask
         )
 
-        if self.do_post_attn_injection:
-            module_path = get_module_path(self.unet, attn)
-            feature_images = self.feature_images.get(module_path)
+        # save post attn
+        if self.save_post_attn_features and module_path in self.module_paths:
+            post_attn_features = rearrange(
+                attn_out, "(b f) t c -> b f t c", b=self.unet_chunk_size
+            )
+            self.saved_post_attn[module_path] = post_attn_features
 
+        if self.do_post_attn_injection:
+            feature_images = self.feature_images.get(module_path)
             if feature_images is not None:
 
-                feature_res = int(sqrt(attn_out.shape[1]))
+                # reshape attn_out to square
                 attn_out_square = rearrange(
                     attn_out,
-                    "(b f) (h w) c -> b f c h w",
+                    "(b f) (h w) d -> b f d h w",
+                    h=int(sqrt(attn_out.shape[1])),
                     b=self.unet_chunk_size,
-                    h=feature_res,
-                    w=feature_res,
                 )
 
-                print(module_path)
-                print("feature_im", feature_images.shape)
-                print("attn_out", attn_out_square.shape)
+                blended = blend_features(
+                    attn_out_square,
+                    feature_images.to(attn_out),
+                    self.feature_blend_alpha,
+                    channel_dim=2,
+                )
 
-        self.saved_post_attn[get_module_path(self.unet, attn)] = attn_out
+                attn_out = rearrange(blended, "b f d h w -> (b f) (h w) d")
 
         # linear proj to output dim
         attn_out = attn.to_out[0](attn_out)

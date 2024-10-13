@@ -1,7 +1,11 @@
+from dataclasses import dataclass
 import hydra
+import omegaconf
 import torch
 from diffusers import ControlNetModel
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+
+from diffusers import StableDiffusionPipeline
 
 import text3d2video.wandb_util as wbu
 import wandb
@@ -15,8 +19,20 @@ from text3d2video.generative_rendering.generative_rendering_pipeline import (
 @hydra.main(config_path="../config", config_name="generative_rendering")
 def run(cfg: DictConfig):
 
-    wbu.init_run(dev_run=True, job_type="generate_video", tags=[])
+    do_run = wbu.setup_run(cfg)
+    if not do_run:
+        return
 
+    # read animation
+    animation = AnimationArtifact.from_wandb_artifact_tag(
+        cfg.inputs.animation_artifact_tag, download=False
+    )
+    frame_nums = animation.frame_nums(cfg.inputs.animation_n_frames)
+    mesh_frames = animation.load_frames(frame_nums)
+    cameras = animation.cameras(frame_nums)
+    uv_verts, uv_faces = animation.texture_data()
+
+    # load pipeline
     device = torch.device("cuda")
     dtype = torch.float16
 
@@ -31,22 +47,6 @@ def run(cfg: DictConfig):
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 
-    # read animation
-    animation = AnimationArtifact.from_wandb_artifact_tag(
-        cfg.inputs.animation_artifact_tag, download=False
-    )
-    frame_nums = animation.frame_nums(cfg.inputs.animation_n_frames)
-
-    # read frames
-    mesh_frames = animation.load_frames(frame_nums)
-    cameras = animation.cameras(frame_nums)
-
-    generator = torch.Generator(device=device)
-    generator.manual_seed(cfg.inputs.sd_seed)
-
-    uv_verts, uv_faces = animation.texture_data()
-
-    # set attention module paths
     pipe.module_paths = cfg.generative_rendering.module_paths
 
     frames = pipe(
@@ -55,24 +55,18 @@ def run(cfg: DictConfig):
         cameras,
         uv_verts,
         uv_faces,
-        num_inference_steps=cfg.generative_rendering.num_inference_steps,
-        generator=generator,
-        num_keyframes=cfg.generative_rendering.num_keyframes,
-        chunk_size=cfg.generative_rendering.chunk_size,
-        do_pre_attn_injection=cfg.generative_rendering.do_pre_attn_injection,
-        do_post_attn_injection=cfg.generative_rendering.do_post_attn_injection,
-        rerun=False,
+        **OmegaConf.to_container(cfg.generative_rendering),
     )
 
     # save video
-    video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
+    video_artifact = VideoArtifact.create_empty_artifact(cfg.inputs.out_artifact)
     video_artifact.write_frames(frames, fps=10)
 
     # log video to run
     wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})
 
     # save video artifact
-    video_artifact.log()
+    video_artifact.log_if_enabled()
     wandb.finish()
 
 

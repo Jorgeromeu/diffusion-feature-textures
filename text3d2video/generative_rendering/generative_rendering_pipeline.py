@@ -1,5 +1,7 @@
 from math import sqrt
-from typing import List
+from typing import Dict, List, Tuple
+from jaxtyping import Float
+from torch import Tensor
 
 import rerun as rr
 import rerun.blueprint as rrb
@@ -30,8 +32,15 @@ from text3d2video.rendering import make_feature_renderer, render_depth_map
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
 
-    current_step: int = None
-    current_step_index: int = None
+    num_inference_steps: int = 30
+    guidance_scale: float = 7.5
+    controlnet_conditioning_scale: float = 1.0
+    num_keyframes: int = 2
+    do_uv_noise_init: bool = True
+    do_pre_attn_injection: bool = True
+    do_post_attn_injection: bool = True
+    chunk_size: int = 10
+    module_paths: list[str]
 
     def __init__(
         self,
@@ -66,7 +75,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             do_normalize=False,
         )
 
-    def encode_prompt(self, prompts: List[str]):
+    def encode_prompt(self, prompts: List[str]) -> Tuple[Tensor, Tensor]:
 
         # tokenize prompts
         text_input = self.tokenizer(
@@ -92,7 +101,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return cond_embeddings, uncond_embeddings
 
-    def prepare_latents(self, batch_size: int, out_resolution: int, generator=None):
+    def prepare_latents(
+        self, batch_size: int, out_resolution: int, generator=None
+    ) -> Float[Tensor, "b c h w"]:
         latent_res = out_resolution // 8
         in_channels = self.unet.config.in_channels
         latents = torch.randn(
@@ -115,7 +126,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         faces_uvs: torch.Tensor,
         out_resolution: int = 512,
         generator=None,
-    ):
+    ) -> Float[Tensor, "b c h w"]:
 
         # setup noise texture
         latent_res = out_resolution // 8
@@ -227,41 +238,185 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             encoder_hidden_states=text_embeddings,
         )
 
-    def setup_rerun_blueprint(self, n_frames: int):
+    def model_forward(
+        self,
+        latents: Float[Tensor, "b f c h w"],
+        text_embeddings: Float[Tensor, "b f t d"],
+        depth_maps: List[Image.Image],
+        t: int,
+        controlnet_conditioning_scale: float = 1.0,
+    ) -> Float[Tensor, "b f c h w"]:
 
-        frame_views = []
-        latent_views = []
-        depth_map_views = []
+        chunk_size = latents.shape[0]
+        batched_latents = rearrange(latents, "b f c h w -> (b f) c h w")
+        batched_embeddings = rearrange(text_embeddings, "b f t d -> (b f) t d")
 
-        for frame_i in range(n_frames):
-            frame_views.append(rrb.Spatial2DView(contents=[f"+/frame_{frame_i}"]))
-            latent_views.append(rrb.TensorView(contents=[f"+/latent_{frame_i}"]))
-            depth_map_views.append(
-                rrb.Spatial2DView(contents=[f"+/depth_map_{frame_i}"])
+        # controlnet step
+        controlnet_model_input = batched_latents
+        controlnet_prompt_embeds = batched_embeddings
+        processed_control_image = self.prepare_controlnet_image(depth_maps)
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            controlnet_model_input,
+            t,
+            encoder_hidden_states=controlnet_prompt_embeds,
+            controlnet_cond=processed_control_image,
+            conditioning_scale=controlnet_conditioning_scale,
+            guess_mode=False,
+            return_dict=False,
+        )
+
+        # unet, with controlnet residuals
+        noise_pred = self.unet(
+            batched_latents,
+            t,
+            mid_block_additional_residual=mid_block_res_sample,
+            down_block_additional_residuals=down_block_res_samples,
+            encoder_hidden_states=batched_embeddings,
+        ).sample
+
+        noise_pred = rearrange(noise_pred, "(b f) c h w -> b f c h w", b=chunk_size)
+        return noise_pred
+
+    def sample_keyframes(self, n_frames: int):
+        return torch.randperm(n_frames)[: self.num_keyframes]
+
+    def aggregate_kf_features(
+        self,
+        kf_cameras: FoVPerspectiveCameras,
+        kf_frames: Meshes,
+        saved_post_attn: Dict[str, Float[Tensor, "b f t d"]],
+    ) -> Dict[str, Tuple[Float[Tensor, "b v d"], int]]:
+        """
+        Aggregate features in saved_post_attn across keyframe poses and render them for all poses
+        """
+
+        # if not doing post attn injection, skip
+        if not self.do_post_attn_injection:
+            return {}
+
+        all_aggregated_features = {}
+
+        for module, kf_post_attn_features in saved_post_attn.items():
+
+            # reshape features to square
+            feature_res = int(sqrt(kf_post_attn_features.shape[2]))
+            kf_post_attn_feature_maps = rearrange(
+                kf_post_attn_features,
+                "b f_kf (h w) d -> b f_kf d h w",
+                h=feature_res,
+                f_kf=len(kf_cameras),
             )
 
-        main_tab = rrb.Vertical(
-            rrb.Horizontal(*latent_views, name="Latents"),
-            rrb.Horizontal(*frame_views, name="Frames"),
-            rrb.Horizontal(*depth_map_views, name="Depth Maps"),
-            name="Generated Images",
-        )
+            stacked_vert_features = []
+            for feature_maps in kf_post_attn_feature_maps:
+                # aggregate multi-pose features to 3D
+                vert_features = aggregate_3d_features(
+                    kf_cameras, kf_frames, feature_maps
+                )
+                stacked_vert_features.append(vert_features)
 
-        pose_views = [
-            rrb.Spatial3DView(contents=[f"+/frame_{i}"]) for i in range(n_frames)
-        ]
+            stacked_vert_features = torch.stack(stacked_vert_features)
+            all_aggregated_features[module] = (stacked_vert_features, feature_res)
 
-        features_3d_tab = rrb.Vertical(
-            rrb.Horizontal(*pose_views, name="Poses"),
-        )
+        return all_aggregated_features
 
-        return rrb.Blueprint(
-            rrb.Tabs(main_tab, features_3d_tab),
-            collapse_panels=True,
-        )
+    def render_aggregated_features(
+        self,
+        cameras: FoVPerspectiveCameras,
+        frames: Meshes,
+        aggregated_features: Dict[str, Tuple[Float[Tensor, "b v d"], int]],
+    ) -> Dict[str, Float[Tensor, "b f d h w"]]:
+        """
+        Aggregate features in saved_post_attn across keyframe poses and render them for all poses
+        """
 
-    def denoising_step(self, latents: torch.Tensor, t: int):
-        pass
+        # if not doing post attn injection, skip
+        if not self.do_post_attn_injection:
+            return {}
+
+        all_feature_images = {}
+
+        for module, (batched_vert_features, feature_res) in aggregated_features.items():
+
+            renderer = make_feature_renderer(cameras, feature_res)
+
+            # render for each batch
+            stacked_feature_images = []
+            for vert_features in batched_vert_features:
+
+                # construct feature texture
+                vert_features_tex = TexturesVertex(
+                    vert_features.expand(len(frames), -1, -1).to(self.device)
+                )
+                frames.textures = vert_features_tex
+                feature_images = renderer(frames)
+                feature_images = rearrange(feature_images, "f h w d -> f d h w")
+                stacked_feature_images.append(feature_images)
+
+            # B, F, D, H, W
+            stacked_feature_images = torch.stack(stacked_feature_images)
+            all_feature_images[module] = stacked_feature_images
+
+        return all_feature_images
+
+    def aggregate_and_render_kf_features(
+        self,
+        cameras: FoVPerspectiveCameras,
+        frames: Meshes,
+        kf_cameras: FoVPerspectiveCameras,
+        kf_frames: Meshes,
+        saved_post_attn: Dict[str, Float[Tensor, "b f t d"]],
+    ) -> Dict[str, Float[Tensor, "b c h w d"]]:
+        """
+        Aggregate features in saved_post_attn across keyframe poses and render them for all poses
+        """
+
+        # if not doing post attn injection, skip
+        if not self.do_post_attn_injection:
+            return {}
+
+        all_feature_images = {}
+
+        for module, kf_post_attn_features in saved_post_attn.items():
+
+            # reshape features to square
+            feature_res = int(sqrt(kf_post_attn_features.shape[2]))
+            kf_post_attn_feature_maps = rearrange(
+                kf_post_attn_features,
+                "b f_kf (h w) d -> b f_kf d h w",
+                h=feature_res,
+                f_kf=len(kf_cameras),
+            )
+
+            renderer = make_feature_renderer(cameras, feature_res)
+
+            # aggregate and render for each batch
+            stacked_feature_images = []
+            for feature_maps in kf_post_attn_feature_maps:
+
+                # aggregate multi-pose features to 3D
+                vert_features = aggregate_3d_features(
+                    kf_cameras, kf_frames, feature_maps
+                )
+
+                # construct feature texture
+                vert_features_tex = TexturesVertex(
+                    vert_features.expand(len(frames), -1, -1).to(self.device)
+                )
+                frames.textures = vert_features_tex
+                feature_images = renderer(frames)
+                feature_images = rearrange(feature_images, "f h w d -> f d h w")
+                stacked_feature_images.append(feature_images)
+
+            # B, F, D, H, W
+            stacked_feature_images = torch.stack(stacked_feature_images)
+            all_feature_images[module] = stacked_feature_images
+
+        return all_feature_images
+
+    def update_params(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     @torch.no_grad()
     @typechecked
@@ -272,31 +427,39 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         cameras: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
-        res=512,
-        num_inference_steps=30,
-        guidance_scale=7.5,
-        controlnet_conditioning_scale=1.0,
-        num_keyframes=2,
-        do_uv_noise_init=True,
-        do_pre_attn_injection=True,
-        do_post_attn_injection=True,
-        chunk_size=10,
-        generator=None,
-        rerun=False,
+        res: int,
+        num_inference_steps: int,
+        do_uv_noise_init: bool,
+        do_pre_attn_injection: bool,
+        do_post_attn_injection: bool,
+        feature_blend_alpha: float,
+        num_keyframes: int,
+        guidance_scale: float,
+        controlnet_conditioning_scale: float,
+        chunk_size: int,
+        module_paths: List[str],
+        seed: int,
     ):
 
-        # setup rerun
-        ru.set_logging_state(rerun)
-        rr.init("generative_rendering")
-        rr.serve()
-        if rerun:
-            rr.send_blueprint(self.setup_rerun_blueprint(len(frames)))
-        ru.pt3d_setup()
-        seq = ru.TimeSequence("timesteps")
+        self.update_params(
+            feature_blend_alpha=feature_blend_alpha,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            controlnet_conditioning_scale=controlnet_conditioning_scale,
+            num_keyframes=num_keyframes,
+            do_uv_noise_init=do_uv_noise_init,
+            do_pre_attn_injection=do_pre_attn_injection,
+            do_post_attn_injection=do_post_attn_injection,
+            chunk_size=chunk_size,
+            module_paths=module_paths,
+            seed=seed,
+        )
 
-        # number of images being generated
+        # setup generator
+        generator = torch.Generator(device=self.device)
+        generator.manual_seed(seed)
+
         n_frames = len(frames)
-        prompts = [prompt] * n_frames
 
         # render depth maps
         depth_maps = render_depth_map(frames, cameras, res)
@@ -305,8 +468,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             rr.log(f"depth_map_{i}", rr.Image(depth_map))
 
         # Get prompt embeddings for guidance
-        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
-        # 2, F, T, D
+        cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
         stacked_text_embeddings = torch.stack([uncond_embeddings, cond_embeddings])
 
         # set timesteps
@@ -322,20 +484,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # setup attn processor
         attn_processor = GenerativeRenderingAttn(self.unet, unet_chunk_size=2)
+        attn_processor.module_paths = self.module_paths
         self.unet.set_attn_processor(attn_processor)
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-
-            if rerun:
-                for f_i, latent in enumerate(latents):
-                    rr.log(
-                        f"latent_{f_i}", rr.Tensor(rearrange(latent, "c w h -> c h w"))
-                    )
-
-                cur_images = self.latents_to_images(latents, generator)
-                for f_i, im in enumerate(cur_images):
-                    rr.log(f"frame_{f_i}", rr.Image(im))
 
             # duplicate latent, to feed to model with CFG
             # 2, F, C, H, W
@@ -343,7 +496,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             latents_stacked = self.scheduler.scale_model_input(latents_stacked, t)
 
             # sample keyframe indices
-            kf_indices = torch.randperm(n_frames)[:num_keyframes]
+            kf_indices = self.sample_keyframes(n_frames)
 
             # get keyframe inputs
             kf_latents = latents_stacked[:, kf_indices]
@@ -351,120 +504,53 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
 
             # Diffusion step #1 on keyframes, to extract features
-            # combine inputs to batch dim for model input
-            kf_latents_input = rearrange(kf_latents, "b f h w c -> (b f) h w c")
-            kf_embeddings_input = rearrange(kf_embeddings, "b f t d -> (b f) t d")
             attn_processor.do_extended_attention = True
-            self.controlnet_and_unet_forward(
-                kf_latents_input,
-                kf_embeddings_input,
+            attn_processor.save_pre_attn_features = do_pre_attn_injection
+            attn_processor.save_post_attn_features = do_post_attn_injection
+            self.model_forward(
+                kf_latents,
+                kf_embeddings,
                 kf_depth_maps,
                 t,
                 controlnet_conditioning_scale=controlnet_conditioning_scale,
             )
+            attn_processor.save_pre_attn_features = False
+            attn_processor.save_post_attn_features = False
             attn_processor.do_extended_attention = False
 
-            # Diffusion step #2 on all frames, with:
-            attn_processor.do_pre_attn_injection = do_pre_attn_injection
-            attn_processor.do_post_attn_injection = do_post_attn_injection
-
-            # rendered post attn features
-            all_feature_images = {}
-
-            if do_post_attn_injection:
-
-                for module in self.module_paths:
-
-                    kf_cameras = cameras[kf_indices]
-                    kf_frames = frames[kf_indices]
-
-                    # get module keyframe features
-                    features = attn_processor.saved_post_attn[module]
-
-                    # reshape features to square
-                    feature_res = int(sqrt(features.shape[1]))
-                    feature_maps = rearrange(
-                        features,
-                        "(b f) (h w) d -> b f d h w",
-                        h=feature_res,
-                        f=num_keyframes,
-                    )
-
-                    # split chunks
-                    feature_maps_cond, feature_maps_uncond = feature_maps
-
-                    # aggregate multi-pose features to 3D
-                    aggregated_cond = aggregate_3d_features(
-                        kf_cameras, kf_frames, feature_maps_cond
-                    )
-                    aggregated_uncond = aggregate_3d_features(
-                        kf_cameras, kf_frames, feature_maps_uncond
-                    )
-
-                    # render feature images
-                    renderer = make_feature_renderer(cameras, feature_res)
-
-                    batch_vert_tex_cond = aggregated_cond.expand(n_frames, -1, -1)
-                    batch_vert_tex_uncond = aggregated_uncond.expand(n_frames, -1, -1)
-                    vert_tex_cond = TexturesVertex(verts_features=batch_vert_tex_cond)
-                    vert_tex_uncond = TexturesVertex(
-                        verts_features=batch_vert_tex_uncond
-                    )
-
-                    kf_frames.textures = vert_tex_cond
-                    feature_images_cond = renderer(frames)
-                    feature_images_cond = rearrange(
-                        feature_images_cond, "f h w d -> f d h w"
-                    )
-
-                    kf_frames.textures = vert_tex_uncond
-                    feature_images_uncond = renderer(frames)
-                    feature_images_uncond = rearrange(
-                        feature_images_uncond, "f h w d -> f d h w"
-                    )
-
-                    feature_images = torch.stack(
-                        [feature_images_cond, feature_images_uncond]
-                    )
-
-                    all_feature_images[module] = feature_images
+            # aggregate keyframe features
+            aggregated_3d_features = self.aggregate_kf_features(
+                cameras[kf_indices], frames[kf_indices], attn_processor.saved_post_attn
+            )
 
             # do inference in chunks
             noise_preds = []
             chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
 
-            for chunk_indices in chunks_indices:
+            attn_processor.do_pre_attn_injection = do_pre_attn_injection
+            attn_processor.do_post_attn_injection = do_post_attn_injection
 
-                # set feature images for each module
-                for module in self.module_paths:
-                    chunk_module_feature_images = all_feature_images[module][
-                        :, chunk_indices
-                    ]
-                    attn_processor.feature_images[module] = chunk_module_feature_images
+            for chunk_indices in tqdm(chunks_indices, desc="Chunks"):
 
                 # get chunk inputs
                 chunk_latents = latents_stacked[:, chunk_indices]
                 chunk_embeddings = stacked_text_embeddings[:, chunk_indices]
                 chunk_depth_maps = [depth_maps[i] for i in chunk_indices.tolist()]
 
-                # stack inputs for model input
-                chunk_latents_input = rearrange(
-                    chunk_latents, "b f h w c -> (b f) h w c"
-                )
-                chunk_embeddings_input = rearrange(
-                    chunk_embeddings, "b f t d -> (b f) t d"
+                chunk_feature_images = self.render_aggregated_features(
+                    cameras[chunk_indices],
+                    frames[chunk_indices],
+                    aggregated_3d_features,
                 )
 
-                noise_pred = self.controlnet_and_unet_forward(
-                    chunk_latents_input,
-                    chunk_embeddings_input,
+                attn_processor.feature_images = chunk_feature_images
+                noise_pred = self.model_forward(
+                    chunk_latents,
+                    chunk_embeddings,
                     chunk_depth_maps,
                     t,
                     controlnet_conditioning_scale=controlnet_conditioning_scale,
-                ).sample
-
-                # unstack predictions
-                noise_pred = rearrange(noise_pred, "(b f) c h w -> b f c h w", b=2)
+                )
                 noise_preds.append(noise_pred)
 
             attn_processor.do_pre_attn_injection = False
@@ -480,10 +566,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
-            seq.step()
 
         # decode latents in chunks
         decoded_imgs = []
+        chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
         for chunk_indices in chunks_indices:
             chunk_latents = latents[chunk_indices]
             chunk_images = self.latents_to_images(chunk_latents, generator)

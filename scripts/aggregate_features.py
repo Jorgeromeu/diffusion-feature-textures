@@ -1,11 +1,11 @@
 import math
 from enum import Enum
-from typing import List
 
 import hydra
 import rerun as rr
 import torch
 from einops import rearrange
+from jaxtyping import Float
 from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
@@ -27,10 +27,10 @@ class AggregationType(Enum):
 def aggregate_3d_features(
     cameras: FoVPerspectiveCameras,
     meshes: Meshes,
-    feature_maps: List[torch.Tensor],
+    feature_maps: Float[torch.Tensor, "n c h w"],
     aggregation_type: int = AggregationType.MEAN,
     interpolation_mode: str = "bilinear",
-) -> torch.Tensor:
+) -> Float[torch.Tensor, "v c"]:
 
     assert len(feature_maps) == len(cameras) == len(meshes)
 
@@ -142,7 +142,7 @@ def run(cfg: DictConfig):
             all_vertex_features.add(feature_identifier, vertex_features)
 
     # save features as artifact
-    out_artifact.log()
+    out_artifact.log_if_enabled()
 
 
 if __name__ == "__main__":

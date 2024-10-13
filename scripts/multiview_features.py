@@ -179,7 +179,7 @@ def run(cfg: DictConfig):
     # save cameras and images
     out_artifact.save_views(cams, ims)
 
-    out_artifact.log()
+    out_artifact.log_if_enabled()
     wandb.finish()
 
 

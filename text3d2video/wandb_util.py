@@ -2,16 +2,41 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+import sys
 
+from omegaconf import DictConfig, OmegaConf
 import wandb
 from wandb import Artifact
 
 
-def init_run(dev_run: bool = False, job_type: str = None, tags: list = None):
+def setup_run(cfg: DictConfig):
+    """
+    Setup wandb run and log config
+    """
 
-    # init wand
-    mode = "disabled" if dev_run else "online"
-    wandb.init(project="diffusion-3d-features", job_type=job_type, mode=mode, tags=tags)
+    run_config = cfg.run
+    wandb_mode = "online" if run_config.wandb else "disabled"
+
+    wandb.init(
+        project="diffusion-3d-features",
+        job_type=run_config.job_type,
+        mode=wandb_mode,
+        tags=run_config.tags,
+    )
+
+    # add config
+    wandb.config.update(
+        OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    )
+
+    do_run = True
+
+    if run_config.instant_exit:
+        print("Instant exit enabled")
+        wandb.finish()
+        do_run = False
+
+    return do_run
 
 
 def api_artifact(artifact_tag: str):
@@ -23,7 +48,7 @@ def api_artifact(artifact_tag: str):
     return api.artifact(f"romeu/diffusion-3D-features/{artifact_tag}")
 
 
-def is_enabled():
+def wandb_is_enabled():
     return wandb.run is not None and not wandb.run.disabled
 
 
@@ -32,18 +57,10 @@ def get_artifact(artifact_tag: str):
     If in run, use the artifact from the run, otherwise use the api
     """
 
-    if is_enabled():
+    if wandb_is_enabled():
         return wandb.use_artifact(artifact_tag)
 
     return api_artifact(artifact_tag)
-
-
-def log_artifact_if_enabled(artifact: Artifact):
-    if is_enabled():
-        print("logging artifact")
-        wandb.log_artifact(artifact)
-
-    print("skipping logging artifact")
 
 
 def first_logged_artifact_of_type(run, artifact_type: str) -> Artifact:
@@ -154,10 +171,15 @@ class ArtifactWrapper:
         artifact = get_artifact(artifact_tag)
         return cls.from_wandb_artifact(artifact, download)
 
-    def log(self):
+    def log_if_enabled(self):
         self.wandb_artifact.add_dir(self.folder)
-        log_artifact_if_enabled(self.wandb_artifact)
-        self.delete_folder()
+
+        if wandb_is_enabled():
+            print(f"Logging artifact {self.wandb_artifact.name}")
+            self.wandb_artifact.log()
+            self.delete_folder()
+
+        print(f"Skipping logging artifact, result at {self.folder}")
 
     def logged_by(self):
         return self.wandb_artifact.logged_by()

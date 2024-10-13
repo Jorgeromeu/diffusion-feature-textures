@@ -177,3 +177,23 @@ def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
     R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
     cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
     return cameras
+
+
+def blend_features(
+    features_original: Tensor,
+    features_rendered: Tensor,
+    alpha: float,
+    channel_dim=0,
+):
+
+    # compute mask, where features_rendered is not zero
+    masks = torch.sum(features_rendered, dim=channel_dim, keepdim=True) > 0
+
+    # blend features
+    blended = alpha * features_rendered + (1 - alpha) * features_original
+
+    original_background = features_original * ~masks
+    blended_masked = blended * masks
+
+    # return blended features, where features_rendered is not zero
+    return original_background + blended_masked
