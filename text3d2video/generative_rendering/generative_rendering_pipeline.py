@@ -210,7 +210,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         text_embeddings: torch.Tensor,
         depth_maps: List[Image.Image],
         t: int,
-        controlnet_conditioning_scale: float = 1.0,
     ):
 
         # controlnet step
@@ -222,7 +221,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             t,
             encoder_hidden_states=controlnet_prompt_embeds,
             controlnet_cond=processed_control_image,
-            conditioning_scale=controlnet_conditioning_scale,
+            conditioning_scale=self.controlnet_conditioning_scale,
             guess_mode=False,
             return_dict=False,
         )
@@ -242,7 +241,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         text_embeddings: Float[Tensor, "b f t d"],
         depth_maps: List[Image.Image],
         t: int,
-        controlnet_conditioning_scale: float = 1.0,
     ) -> Float[Tensor, "b f c h w"]:
 
         chunk_size = latents.shape[0]
@@ -258,7 +256,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             t,
             encoder_hidden_states=controlnet_prompt_embeds,
             controlnet_cond=processed_control_image,
-            conditioning_scale=controlnet_conditioning_scale,
             guess_mode=False,
             return_dict=False,
         )
@@ -281,7 +278,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         text_embeddings: Float[Tensor, "b f t d"],
         depth_maps: List[Image.Image],
         t: int,
-        controlnet_conditioning_scale: float = 1.0,
     ) -> Float[Tensor, "b f c h w"]:
 
         # do extended attention and save features
@@ -289,9 +285,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         self.attn_processor.save_pre_attn_features = self.do_pre_attn_injection
         self.attn_processor.save_post_attn_features = self.do_post_attn_injection
 
-        self.model_forward(
-            latents, text_embeddings, depth_maps, t, controlnet_conditioning_scale
-        )
+        self.model_forward(latents, text_embeddings, depth_maps, t)
 
         self.attn_processor.save_pre_attn_features = False
         self.attn_processor.save_post_attn_features = False
@@ -307,7 +301,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         t: int,
         pre_attn_features: Dict[str, Float[Tensor, "b f t d"]],
         feature_images: Dict[str, Float[Tensor, "b f d h w"]],
-        controlnet_conditioning_scale: float = 1.0,
     ):
 
         # pass features to attn processor
@@ -316,10 +309,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         self.attn_processor.save_pre_attn_features = self.do_pre_attn_injection
         self.attn_processor.save_post_attn_features = self.do_post_attn_injection
+        self.attn_processor.feature_blend_alpha = self.feature_blend_alpha
 
-        noise_pred = self.model_forward(
-            latents, text_embeddings, depth_maps, t, controlnet_conditioning_scale
-        )
+        noise_pred = self.model_forward(latents, text_embeddings, depth_maps, t)
 
         self.attn_processor.do_pre_attn_injection = False
         self.attn_processor.do_post_attn_injection = False
@@ -562,7 +554,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     kf_embeddings,
                     kf_depth_maps,
                     t,
-                    controlnet_conditioning_scale=controlnet_conditioning_scale,
                 )
             )
 
@@ -599,7 +590,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     t,
                     pre_attn_features,
                     chunk_feature_images,
-                    controlnet_conditioning_scale=controlnet_conditioning_scale,
                 )
 
                 noise_preds.append(noise_pred)

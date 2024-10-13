@@ -1,0 +1,11 @@
+# @package _global_
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      generative_rendering.do_uv_noise_init: true,false
+      generative_rendering.do_pre_attn_injection: true,false
+      generative_rendering.do_post_attn_injection: true,false
+
+dev_run: true
