@@ -109,7 +109,7 @@ class GenerativeRenderingAttn:
 
             return ext_hidden_states
 
-        elif self.do_pre_attn_injection:
+        if self.do_pre_attn_injection:
 
             # get saved hidden states
             saved_hidden_states = self.saved_pre_attn.get(module_path)

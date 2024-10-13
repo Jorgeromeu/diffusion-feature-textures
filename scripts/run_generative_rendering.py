@@ -1,11 +1,7 @@
-from dataclasses import dataclass
 import hydra
-import omegaconf
 import torch
 from diffusers import ControlNetModel
 from omegaconf import DictConfig, OmegaConf
-
-from diffusers import StableDiffusionPipeline
 
 import text3d2video.wandb_util as wbu
 import wandb

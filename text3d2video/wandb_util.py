@@ -2,9 +2,9 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-import sys
 
 from omegaconf import DictConfig, OmegaConf
+
 import wandb
 from wandb import Artifact
 

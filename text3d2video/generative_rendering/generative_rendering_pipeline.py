@@ -1,10 +1,7 @@
 from math import sqrt
 from typing import Dict, List, Tuple
-from jaxtyping import Float
-from torch import Tensor
 
 import rerun as rr
-import rerun.blueprint as rrb
 import torch
 from diffusers import (
     AutoencoderKL,
@@ -15,14 +12,15 @@ from diffusers import (
 )
 from diffusers.image_processor import VaeImageProcessor
 from einops import rearrange
+from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import FoVPerspectiveCameras, TexturesUV, TexturesVertex
 from pytorch3d.structures import Meshes
+from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked
 
-import text3d2video.rerun_util as ru
 from scripts.aggregate_features import aggregate_3d_features
 from text3d2video.generative_rendering.generative_rendering_attn import (
     GenerativeRenderingAttn,
@@ -101,7 +99,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return cond_embeddings, uncond_embeddings
 
-    def prepare_latents(
+    def prepare_latents_random(
         self, batch_size: int, out_resolution: int, generator=None
     ) -> Float[Tensor, "b c h w"]:
         latent_res = out_resolution // 8
@@ -275,6 +273,57 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         ).sample
 
         noise_pred = rearrange(noise_pred, "(b f) c h w -> b f c h w", b=chunk_size)
+        return noise_pred
+
+    def model_forward_feature_extraction(
+        self,
+        latents: Float[Tensor, "b f c h w"],
+        text_embeddings: Float[Tensor, "b f t d"],
+        depth_maps: List[Image.Image],
+        t: int,
+        controlnet_conditioning_scale: float = 1.0,
+    ) -> Float[Tensor, "b f c h w"]:
+
+        # do extended attention and save features
+        self.attn_processor.do_extended_attention = True
+        self.attn_processor.save_pre_attn_features = self.do_pre_attn_injection
+        self.attn_processor.save_post_attn_features = self.do_post_attn_injection
+
+        self.model_forward(
+            latents, text_embeddings, depth_maps, t, controlnet_conditioning_scale
+        )
+
+        self.attn_processor.save_pre_attn_features = False
+        self.attn_processor.save_post_attn_features = False
+        self.attn_processor.do_extended_attention = False
+
+        return self.attn_processor.saved_pre_attn, self.attn_processor.saved_post_attn
+
+    def model_forward_feature_injection(
+        self,
+        latents: Float[Tensor, "b f c h w"],
+        text_embeddings: Float[Tensor, "b f t d"],
+        depth_maps: List[Image.Image],
+        t: int,
+        pre_attn_features: Dict[str, Float[Tensor, "b f t d"]],
+        feature_images: Dict[str, Float[Tensor, "b f d h w"]],
+        controlnet_conditioning_scale: float = 1.0,
+    ):
+
+        # pass features to attn processor
+        self.attn_processor.feature_images = feature_images
+        self.attn_processor.saved_pre_attn = pre_attn_features
+
+        self.attn_processor.save_pre_attn_features = self.do_pre_attn_injection
+        self.attn_processor.save_post_attn_features = self.do_post_attn_injection
+
+        noise_pred = self.model_forward(
+            latents, text_embeddings, depth_maps, t, controlnet_conditioning_scale
+        )
+
+        self.attn_processor.do_pre_attn_injection = False
+        self.attn_processor.do_post_attn_injection = False
+
         return noise_pred
 
     def sample_keyframes(self, n_frames: int):
@@ -480,12 +529,15 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 frames, cameras, verts_uvs, faces_uvs
             )
         else:
-            latents = self.prepare_latents(n_frames, res, generator=generator)
+            latents = self.prepare_latents_random(n_frames, res, generator=generator)
 
         # setup attn processor
-        attn_processor = GenerativeRenderingAttn(self.unet, unet_chunk_size=2)
-        attn_processor.module_paths = self.module_paths
-        self.unet.set_attn_processor(attn_processor)
+        self.attn_processor = GenerativeRenderingAttn(self.unet, unet_chunk_size=2)
+        self.attn_processor.module_paths = self.module_paths
+        self.unet.set_attn_processor(self.attn_processor)
+
+        # chunk indices to use
+        chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
@@ -504,31 +556,26 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
 
             # Diffusion step #1 on keyframes, to extract features
-            attn_processor.do_extended_attention = True
-            attn_processor.save_pre_attn_features = do_pre_attn_injection
-            attn_processor.save_post_attn_features = do_post_attn_injection
-            self.model_forward(
-                kf_latents,
-                kf_embeddings,
-                kf_depth_maps,
-                t,
-                controlnet_conditioning_scale=controlnet_conditioning_scale,
+            pre_attn_features, post_attn_features = (
+                self.model_forward_feature_extraction(
+                    kf_latents,
+                    kf_embeddings,
+                    kf_depth_maps,
+                    t,
+                    controlnet_conditioning_scale=controlnet_conditioning_scale,
+                )
             )
-            attn_processor.save_pre_attn_features = False
-            attn_processor.save_post_attn_features = False
-            attn_processor.do_extended_attention = False
 
             # aggregate keyframe features
             aggregated_3d_features = self.aggregate_kf_features(
-                cameras[kf_indices], frames[kf_indices], attn_processor.saved_post_attn
+                cameras[kf_indices], frames[kf_indices], post_attn_features
             )
 
             # do inference in chunks
             noise_preds = []
-            chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
 
-            attn_processor.do_pre_attn_injection = do_pre_attn_injection
-            attn_processor.do_post_attn_injection = do_post_attn_injection
+            self.attn_processor.do_pre_attn_injection = do_pre_attn_injection
+            self.attn_processor.do_post_attn_injection = do_post_attn_injection
 
             for chunk_indices in tqdm(chunks_indices, desc="Chunks"):
 
@@ -537,24 +584,25 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 chunk_embeddings = stacked_text_embeddings[:, chunk_indices]
                 chunk_depth_maps = [depth_maps[i] for i in chunk_indices.tolist()]
 
+                # render chunk feature images
                 chunk_feature_images = self.render_aggregated_features(
                     cameras[chunk_indices],
                     frames[chunk_indices],
                     aggregated_3d_features,
                 )
 
-                attn_processor.feature_images = chunk_feature_images
-                noise_pred = self.model_forward(
+                # Diffusion step 2 with feature injection
+                noise_pred = self.model_forward_feature_injection(
                     chunk_latents,
                     chunk_embeddings,
                     chunk_depth_maps,
                     t,
+                    pre_attn_features,
+                    chunk_feature_images,
                     controlnet_conditioning_scale=controlnet_conditioning_scale,
                 )
-                noise_preds.append(noise_pred)
 
-            attn_processor.do_pre_attn_injection = False
-            attn_processor.do_post_attn_injection = False
+                noise_preds.append(noise_pred)
 
             # concatenate predictions
             noise_pred_all = torch.cat(noise_preds, dim=1)
@@ -569,7 +617,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # decode latents in chunks
         decoded_imgs = []
-        chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
         for chunk_indices in chunks_indices:
             chunk_latents = latents[chunk_indices]
             chunk_images = self.latents_to_images(chunk_latents, generator)
