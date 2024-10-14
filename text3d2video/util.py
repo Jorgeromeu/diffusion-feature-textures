@@ -1,8 +1,10 @@
 import math
+from typing import List
 
 import torch
 import torch.nn.functional as F
 from einops import rearrange
+from jaxtyping import Float
 from pytorch3d.renderer import (
     CamerasBase,
     FoVPerspectiveCameras,
@@ -117,6 +119,70 @@ def project_vertices_to_features(
     # construct vertex features tensor
     vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim).to(verts)
     vert_features[visible_vert_indices] = visible_point_features
+
+    return vert_features
+
+
+def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
+
+    # rasterize mesh, to get visible verts
+    raster_settings = RasterizationSettings(
+        image_size=600,
+        blur_radius=0.0,
+        faces_per_pixel=1,
+    )
+    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
+    fragments = rasterizer(meshes)
+
+    vert_xys = []
+    vert_indices = []
+
+    packed_vert_cnt = 0
+
+    for view in range(len(meshes)):
+
+        pix_to_face = fragments.pix_to_face[view]
+        mask = pix_to_face > 0
+
+        visible_face_indices = pix_to_face[mask]
+        visible_face_indices = visible_face_indices.unique()
+
+        visible_faces = meshes.faces_packed()[visible_face_indices]
+
+        visible_vert_indices = torch.unique(visible_faces)
+        visible_verts = meshes.verts_packed()[visible_vert_indices]
+
+        visible_verts_ndc = cameras[view].transform_points_ndc(visible_verts)
+        visible_verts_xy = visible_verts_ndc[:, 0:2]
+
+        packed_vert_cnt += meshes.num_verts_per_mesh()[view]
+
+        vert_indices.append(visible_vert_indices - packed_vert_cnt)
+        vert_xys.append(visible_verts_xy)
+
+    return vert_xys, vert_indices
+
+
+def aggregate_features_precomputed_vertex_positions(
+    feature_maps: Float[Tensor, "n c h w"],
+    n_verts: int,
+    vertex_positions: List[Float[Tensor, "v 3"]],
+    vertex_indices: List[Float[Tensor, "v"]],
+):
+
+    # initialize empty vertex features
+    feature_dim = feature_maps.shape[1]
+    vert_features = torch.zeros(n_verts, feature_dim).cuda()
+
+    for view, feature_map in enumerate(feature_maps):
+        vert_xys = vertex_positions[view]
+        vert_indices = vertex_indices[view]
+
+        view_vert_features = sample_feature_map(
+            feature_map.cpu(), vert_xys.cpu(), mode="bilinear"
+        ).to(vert_features)
+
+        vert_features[vert_indices] = view_vert_features
 
     return vert_features
 

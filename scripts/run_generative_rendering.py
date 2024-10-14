@@ -45,7 +45,7 @@ def run(cfg: DictConfig):
 
     pipe.module_paths = cfg.generative_rendering.module_paths
 
-    frames = pipe(
+    video_frames = pipe(
         cfg.inputs.prompt,
         mesh_frames,
         cameras,
@@ -57,7 +57,7 @@ def run(cfg: DictConfig):
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact(cfg.inputs.out_artifact)
-    video_artifact.write_frames(frames, fps=10)
+    video_artifact.write_frames(video_frames, fps=10)
 
     # log video to run
     wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})

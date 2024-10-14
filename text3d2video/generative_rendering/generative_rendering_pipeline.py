@@ -28,7 +28,11 @@ from text3d2video.generative_rendering.generative_rendering_attn import (
     GenerativeRenderingAttn,
 )
 from text3d2video.rendering import make_feature_renderer, render_depth_map
-from text3d2video.util import ordered_sample
+from text3d2video.util import (
+    aggregate_features_precomputed_vertex_positions,
+    ordered_sample,
+    project_vertices_to_cameras,
+)
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -369,6 +373,51 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return all_aggregated_features
 
+    def aggregate_kf_features_optimized(
+        self,
+        n_vertices: int,
+        kf_vert_xys: List[Tensor],
+        kf_vert_indices: List[Tensor],
+        saved_post_attn: Dict[str, Float[Tensor, "b f t d"]],
+    ) -> Dict[str, Tuple[Float[Tensor, "b v d"], int]]:
+        """
+        Aggregate features in saved_post_attn across keyframe poses and render them for all poses
+        """
+
+        # if not doing post attn injection, skip
+        if not self.do_post_attn_injection:
+            return {}
+
+        all_aggregated_features = {}
+
+        for module, kf_post_attn_features in saved_post_attn.items():
+
+            # reshape features to square
+            feature_res = int(sqrt(kf_post_attn_features.shape[2]))
+            kf_post_attn_feature_maps = rearrange(
+                kf_post_attn_features,
+                "b f (h w) d -> b f d h w",
+                h=feature_res,
+            )
+
+            stacked_vert_features = []
+            for feature_maps in kf_post_attn_feature_maps:
+                # aggregate multi-pose features to 3D
+
+                vert_features = aggregate_features_precomputed_vertex_positions(
+                    feature_maps,
+                    n_vertices,
+                    kf_vert_xys,
+                    kf_vert_indices,
+                )
+
+                stacked_vert_features.append(vert_features)
+
+            stacked_vert_features = torch.stack(stacked_vert_features)
+            all_aggregated_features[module] = (stacked_vert_features, feature_res)
+
+        return all_aggregated_features
+
     def render_aggregated_features(
         self,
         cameras: FoVPerspectiveCameras,
@@ -477,6 +526,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     @typechecked
     def __call__(
         self,
+        # inputs
         prompt: str,
         frames: Meshes,
         cameras: FoVPerspectiveCameras,
@@ -551,6 +601,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # chunk indices to use in inference loop
         chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
 
+        # get 2D vertex positions for each frame
+        vert_xys, vert_indices = project_vertices_to_cameras(frames, cameras)
+
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
 
@@ -585,9 +638,14 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 )
             )
 
-            # aggregate keyframe features to 3D
-            aggregated_3d_features = self.aggregate_kf_features(
-                cameras[kf_indices], frames[kf_indices], post_attn_features
+            # Unify features across keyframes as vertex features
+            kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
+            kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
+            aggregated_3d_features = self.aggregate_kf_features_optimized(
+                frames.num_verts_per_mesh()[0],
+                kf_vert_xys,
+                kf_vert_indices,
+                post_attn_features,
             )
 
             # do inference in chunks
