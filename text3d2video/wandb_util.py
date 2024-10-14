@@ -1,18 +1,42 @@
+import logging
 import shutil
 import tempfile
 from pathlib import Path
 
-from wandb.apis.public import Run
+from omegaconf import DictConfig, OmegaConf
 
 import wandb
 from wandb import Artifact
 
 
-def init_run(dev_run: bool = False, job_type: str = None):
+def setup_run(cfg: DictConfig):
+    """
+    Setup wandb run and log config
+    """
 
-    # init wand
-    mode = "disabled" if dev_run else "online"
-    wandb.init(project="diffusion-3d-features", job_type=job_type, mode=mode)
+    run_config = cfg.run
+    wandb_mode = "online" if run_config.wandb else "disabled"
+
+    wandb.init(
+        project="diffusion-3d-features",
+        job_type=run_config.job_type,
+        mode=wandb_mode,
+        tags=run_config.tags,
+    )
+
+    # add config
+    wandb.config.update(
+        OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    )
+
+    do_run = True
+
+    if run_config.instant_exit:
+        print("Instant exit enabled")
+        wandb.finish()
+        do_run = False
+
+    return do_run
 
 
 def api_artifact(artifact_tag: str):
@@ -24,7 +48,7 @@ def api_artifact(artifact_tag: str):
     return api.artifact(f"romeu/diffusion-3D-features/{artifact_tag}")
 
 
-def is_enabled():
+def wandb_is_enabled():
     return wandb.run is not None and not wandb.run.disabled
 
 
@@ -33,25 +57,20 @@ def get_artifact(artifact_tag: str):
     If in run, use the artifact from the run, otherwise use the api
     """
 
-    if is_enabled():
+    if wandb_is_enabled():
         return wandb.use_artifact(artifact_tag)
-    else:
-        return api_artifact(artifact_tag)
+
+    return api_artifact(artifact_tag)
 
 
-def log_artifact_if_enabled(artifact: Artifact):
-    if is_enabled():
-        wandb.log_artifact(artifact)
-
-
-def first_logged_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
+def first_logged_artifact_of_type(run, artifact_type: str) -> Artifact:
     for artifact in run.logged_artifacts():
         if artifact.type == artifact_type:
             return artifact
     return None
 
 
-def first_used_artifact_of_type(run: Run, artifact_type: str) -> Artifact:
+def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
     for artifact in run.used_artifacts():
         if artifact.type == artifact_type:
             return artifact
@@ -104,51 +123,64 @@ def delete_artifact_collection(
         print(f"{artifact_name}: No artifacts found")
         return
 
-    else:
-        print(f"{artifact_name}: Deleting artifacts")
-        collection.delete()
+    print(f"{artifact_name}: Deleting artifacts")
+    collection.delete()
 
 
 class ArtifactWrapper:
     """
-    Abstract base class for reading and writing artifacts to/from disk.
+    Wrapper over wandb artifact to ease reading/writing from artifacts
     """
 
     # the type id of the wandb artifact class
     wandb_artifact_type: str
     wandb_artifact: Artifact = None
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path = None, artifact: Artifact = None):
         self.folder = folder
+        self.wandb_artifact = artifact
+
+    def setup_tempdir(self):
+        self.folder = Path(tempfile.mkdtemp())
+        logging.info("Created artifact tempdir at %s", str(self.folder.absolute()))
+
+    def delete_folder(self):
+        shutil.rmtree(self.folder)
+        logging.info("Deleted artifact tempdir at %s", str(self.folder.absolute()))
 
     @classmethod
-    def from_path(cls, path: Path):
-        return cls(path)
-
-    @classmethod
-    def from_wandb_artifact(cls, artifact: Artifact):
-        folder = Path(artifact.download())
-        wrapper = cls(folder)
-        # when reading from an artifact, additionally store the artifact
-        wrapper.wandb_artifact = artifact
+    def create_empty_artifact(cls, name: str):
+        artifact = Artifact(name, type=cls.wandb_artifact_type)
+        wrapper = cls(artifact=artifact)
+        wrapper.setup_tempdir()
         return wrapper
 
-    @staticmethod
-    def write_to_path(folder: Path, **kwargs):
-        pass
+    @classmethod
+    def from_wandb_artifact(cls, artifact: Artifact, download=False):
+
+        if download:
+            artifact.download()
+
+        # pylint: disable=protected-access
+        folder = Path(artifact._default_root())
+        wrapper = cls(folder=folder, artifact=artifact)
+        return wrapper
 
     @classmethod
-    def create_wandb_artifact(cls, name: str, **kwargs) -> Artifact:
+    def from_wandb_artifact_tag(cls, artifact_tag: str, download=False):
+        artifact = get_artifact(artifact_tag)
+        return cls.from_wandb_artifact(artifact, download)
 
-        # create temporary directory and write the data to it
-        tempdir = tempfile.mkdtemp()
-        cls.write_to_path(Path(tempdir), **kwargs)
+    def log_if_enabled(self):
+        self.wandb_artifact.add_dir(self.folder)
 
-        # create artifact with the folder
-        artifact = Artifact(name, type=cls.wandb_artifact_type)
-        artifact.add_dir(tempdir)
+        if wandb_is_enabled():
+            print(f"Logging artifact {self.wandb_artifact.name}")
+            wandb.log_artifact(self.wandb_artifact)
+            self.delete_folder()
+            return
 
-        # remove temporary directory
-        shutil.rmtree(tempdir)
+        print(f"Skipping logging artifact, result at {self.folder}")
 
-        return artifact
+    def logged_by(self):
+        return self.wandb_artifact.logged_by()

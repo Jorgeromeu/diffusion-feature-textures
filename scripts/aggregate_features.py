@@ -1,24 +1,21 @@
+import math
 from enum import Enum
-from typing import List
 
 import hydra
 import rerun as rr
 import torch
-import torchvision.transforms.functional as TF
 from einops import rearrange
+from jaxtyping import Float
 from omegaconf import DictConfig
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
+from tqdm import tqdm
 
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
-import wandb
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.util import project_vertices_to_features
-from text3d2video.visualization import RgbPcaUtil
-from text3d2video.wandb_util import first_used_artifact_of_type
 
 
 class AggregationType(Enum):
@@ -28,41 +25,29 @@ class AggregationType(Enum):
 
 def aggregate_3d_features(
     cameras: FoVPerspectiveCameras,
-    feature_maps: List[torch.Tensor],
-    mesh: Meshes,
-    log_pca_features: bool = True,
+    meshes: Meshes,
+    feature_maps: Float[torch.Tensor, "n c h w"],
     aggregation_type: int = AggregationType.MEAN,
     interpolation_mode: str = "bilinear",
-) -> torch.Tensor:
+) -> Float[torch.Tensor, "v c"]:
 
-    rr_seq = ru.TimeSequence("steps")
-    rr.log("mesh", ru.pt3d_mesh(mesh))
-
-    if log_pca_features:
-        # fit PCA matrix
-        feature_dim = feature_maps[0].shape[0]
-        pca = RgbPcaUtil(feature_dim)
-        features_all = torch.stack(feature_maps)
-        features_all = rearrange(features_all, "v c h w -> (v h w) c")
-        pca.fit(features_all)
-
-        # PCA the feature maps
-        rgb_feature_maps = [pca.feature_map_to_rgb(f) for f in feature_maps]
+    assert len(feature_maps) == len(cameras) == len(meshes)
 
     # initialize empty D-dimensional vertex features
     feature_dim = feature_maps[0].shape[0]
-    vert_features = torch.zeros(mesh.num_verts_per_mesh()[0], feature_dim)
-    vert_feature_cnt = torch.zeros(mesh.num_verts_per_mesh()[0])
+    vert_features = torch.zeros(meshes.num_verts_per_mesh()[0], feature_dim)
+    vert_feature_cnt = torch.zeros(meshes.num_verts_per_mesh()[0])
 
     # for each view
-    for view_i, _ in enumerate(cameras):
+    for i, _ in enumerate(cameras):
 
-        rr_seq.step()
+        feature_map = feature_maps[i]
+        camera = cameras[i]
+        mesh = meshes[i]
 
         # project view features to vertices
-        feature_map = feature_maps[view_i]
         view_vert_features = project_vertices_to_features(
-            mesh, cameras, feature_map, batch_idx=view_i, mode=interpolation_mode
+            mesh, camera, feature_map, mode=interpolation_mode
         ).cpu()
 
         if aggregation_type == AggregationType.FIRST:
@@ -76,28 +61,11 @@ def aggregate_3d_features(
         vert_feature_cnt[nonzero_view_idxs] += 1
 
         if aggregation_type == AggregationType.MEAN:
-            # update vertex features
-
             # get indices of vertices with nonzero features
             vert_features += view_vert_features
             aggr_vert_features = vert_features / torch.clamp(
                 vert_feature_cnt, min=1
             ).unsqueeze(1)
-
-        if log_pca_features:
-
-            res = rgb_feature_maps[view_i].shape[-1]
-            ru.log_pt3d_FovCamrea(f"cam_{view_i}", cameras, batch_idx=view_i, res=res)
-            rr.log(f"cam_{view_i}", rr.Image(TF.to_pil_image(rgb_feature_maps[view_i])))
-
-            vert_features_rgb = pca.features_to_rgb(aggr_vert_features)
-            rr.log("mesh", ru.pt3d_mesh(mesh, vertex_colors=vert_features_rgb))
-
-    if log_pca_features:
-        # recompute PCA on final features
-        rr_seq.step()
-        rgb_vert_features = pca.fit(aggr_vert_features)
-        rr.log("mesh", ru.pt3d_mesh(mesh, vertex_colors=rgb_vert_features))
 
     return aggr_vert_features
 
@@ -105,11 +73,12 @@ def aggregate_3d_features(
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def run(cfg: DictConfig):
 
-    aggr_cfg = cfg.aggregate_3d_features
-
     # init run
-    wu.init_run(job_type="aggregate_3d_features", dev_run=cfg.dev_run)
-    wandb.config.update(dict(aggr_cfg))
+    do_run = wu.setup_run(cfg)
+    if not do_run:
+        return
+
+    aggr_cfg = cfg.aggregate_3d_features
 
     # init 3D logging
     ru.set_logging_state(cfg.rerun_enabled)
@@ -118,46 +87,62 @@ def run(cfg: DictConfig):
     ru.pt3d_setup()
 
     # get multiview features artifact
-    mv_features_artifact = wu.get_artifact(aggr_cfg.mv_features_artifact_tag)
-    mv_features_artifact = MVFeaturesArtifact.from_wandb_artifact(mv_features_artifact)
-
-    # get feature map per view
-    cameras = mv_features_artifact.get_cameras()
-    feature_identifier = {
-        "layer": aggr_cfg.feature_layer,
-        "timestep": aggr_cfg.feature_timestep,
-    }
-    features = [
-        mv_features_artifact.get_feature(i, feature_identifier)
-        for i in mv_features_artifact.view_indices()
-    ]
-
-    # get unposed mesh
-    mv_features_run = mv_features_artifact.wandb_artifact.logged_by()
-    anim_artifact = first_used_artifact_of_type(
-        mv_features_run, AnimationArtifact.wandb_artifact_type
+    mv_features = MVFeaturesArtifact.from_wandb_artifact_tag(
+        aggr_cfg.mv_features_artifact_tag, download=True
     )
-    anim_artifact = AnimationArtifact.from_wandb_artifact(anim_artifact)
-    mesh = anim_artifact.load_static_mesh("cuda:0")
 
-    # aggregate features to 3D
-    aggregation_type = AggregationType[str(aggr_cfg.aggregation_method).upper()]
-    vertex_features = aggregate_3d_features(
-        cameras,
-        features,
-        mesh,
-        aggregation_type=aggregation_type,
-        interpolation_mode=aggr_cfg.projection_interp_method,
-        log_pca_features=cfg.rerun_enabled,
+    # get original mesh from lineage
+    animation = mv_features.get_animation_from_lineage()
+    mesh = animation.load_unposed_mesh("cuda:0")
+
+    # get views
+    cameras = mv_features.get_cameras()
+
+    # create empty out artifact
+    out_artifact = VertAttributesArtifact.create_empty_artifact(
+        aggr_cfg.out_artifact_name
     )
+
+    # store all aggregated 3D features
+    all_vertex_features = out_artifact.get_features_disk_dict()
+
+    # iterate over saved layers and timesteps
+    layers = mv_features.get_key_values("layer")
+    timesteps = mv_features.get_key_values("timestep")
+
+    for layer in tqdm(layers, "layers"):
+        for timestep in tqdm(timesteps, "timesteps"):
+
+            # get feature map per view
+            feature_identifier = {"layer": layer, "timestep": timestep}
+            features = [
+                mv_features.get_feature(i, feature_identifier)
+                for i in mv_features.view_indices()
+            ]
+
+            # reshape features to square
+            feature_maps = []
+            for feature in features:
+                seq_len, _ = feature.shape
+                feature_map_size = int(math.sqrt(seq_len))
+                feature_map = rearrange(feature, "(h w) d -> d h w", h=feature_map_size)
+                feature_maps.append(feature_map)
+
+            # aggregate features to 3D
+            aggregation_type = AggregationType[str(aggr_cfg.aggregation_method).upper()]
+            vertex_features = aggregate_3d_features(
+                cameras,
+                feature_maps,
+                mesh,
+                aggregation_type=aggregation_type,
+                interpolation_mode=aggr_cfg.projection_interp_method,
+            )
+
+            # save 3D features
+            all_vertex_features.add(feature_identifier, vertex_features)
 
     # save features as artifact
-    artifact = VertAttributesArtifact.create_wandb_artifact(
-        aggr_cfg.out_artifact_name,
-        features=vertex_features,
-    )
-
-    wu.log_artifact_if_enabled(artifact)
+    out_artifact.log_if_enabled()
 
 
 if __name__ == "__main__":

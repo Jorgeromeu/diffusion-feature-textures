@@ -1,0 +1,3 @@
+torch_dtype: torch.float16
+sd_repo: runwayml/stable-diffusion-v1-5
+controlnet_repo: lllyasviel/control_v11f1p_sd15_depth

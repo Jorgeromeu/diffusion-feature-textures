@@ -1,7 +1,6 @@
 [MESSAGES CONTROL]
 
 confidence=HIGH,
-           CONTROL_FLOW,
            INFERENCE,
            INFERENCE_FAILURE,
            UNDEFINED
@@ -20,6 +19,12 @@ disable=raw-checker-failed,
         missing-module-docstring,
         missing-class-docstring,
         redefined-outer-name,
-        too-many-arguments
+        too-many-arguments,
+        too-few-public-methods,
+        duplicate-code,
+        too-many-locals,
+        too-many-positional-arguments,
+        invalid-name,
+        fixme
 
 enable=

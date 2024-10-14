@@ -2,7 +2,7 @@ import math
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange, repeat
+from einops import rearrange
 from pytorch3d.renderer import (
     CamerasBase,
     FoVPerspectiveCameras,
@@ -14,14 +14,14 @@ from pytorch3d.structures import Meshes
 from torch import Tensor
 
 
-def ordered_sample(lst, N):
+def ordered_sample(lst, n):
     """
-    Sample N elements from a list in order.
+    Sample n elements from a list in order.
     """
 
-    step_size = len(lst) // (N - 1)
+    step_size = len(lst) // (n - 1)
     # Get the sample by slicing the list
-    sample = [lst[i * step_size] for i in range(N - 1)]
+    sample = [lst[i * step_size] for i in range(n - 1)]
     sample.append(lst[-1])  # Add the last element
     return sample
 
@@ -29,8 +29,6 @@ def ordered_sample(lst, N):
 def pixel_coords_uv(
     res=100,
 ):
-    pixel_w = (1 / res) / 2
-
     xs = torch.linspace(0, 1, res)
     ys = torch.linspace(1, 0, res)
     x, y = torch.meshgrid(xs, ys, indexing="xy")
@@ -60,7 +58,7 @@ def ndc_grid(resolution=100, corner_aligned=False):
 
 def reproject_features(cameras: CamerasBase, depth: Tensor, feature_map: Tensor):
 
-    H, W = depth.shape
+    H, _ = depth.shape
 
     # 2D grid with ndc coordinate at each pixel
     xy_ndc = ndc_grid(H).to(feature_map)
@@ -84,41 +82,8 @@ def reproject_features(cameras: CamerasBase, depth: Tensor, feature_map: Tensor)
     return world_coords, point_features
 
 
-def project_feature_map_to_vertices(
-    mesh: Meshes,
-    cam: CamerasBase,
-    depth: Tensor,
-    feature_map: Tensor,
-    vertex_features: Tensor = None,
-    distance_epsilon=0.1,
-):
-    # extract resolution from depth map
-    F = feature_map.shape[0]
-
-    # if no initial features provided, initialize to zeros
-    if vertex_features is None:
-        vertex_features = torch.zeros(mesh.num_verts_per_mesh()[0], 3).to(feature_map)
-
-    world_coords, point_features = reproject_features(cam, depth, feature_map)
-
-    # for each vertex, find the closest reprojected point
-    # TODO replace with ball_query or KDTree
-
-    verts = mesh.verts_list()[0]
-
-    distances = torch.cdist(world_coords.to(verts), verts, p=2)
-    vertex_closest_point_distances, vertex_closest_point = torch.min(distances, dim=0)
-    close_vertex_indices = vertex_closest_point_distances < distance_epsilon
-
-    # for each vertex that has a projected point close to it, assign the nearest point feature
-    vertex_features[close_vertex_indices] = point_features[
-        vertex_closest_point[close_vertex_indices]
-    ]
-    return vertex_features
-
-
 def project_vertices_to_features(
-    mesh: Meshes, cam: CamerasBase, feature_map: Tensor, batch_idx=0, mode="nearest"
+    mesh: Meshes, cam: CamerasBase, feature_map: Tensor, mode="nearest"
 ):
 
     feature_dim, _, _ = feature_map.shape
@@ -129,7 +94,7 @@ def project_vertices_to_features(
         blur_radius=0.0,
         faces_per_pixel=1,
     )
-    rasterizer = MeshRasterizer(cameras=cam[batch_idx], raster_settings=raster_settings)
+    rasterizer = MeshRasterizer(cameras=cam, raster_settings=raster_settings)
     fragments = rasterizer(mesh)
 
     # get visible faces
@@ -142,7 +107,7 @@ def project_vertices_to_features(
 
     # TODO extract projected points from rasterization pass output, no need to do it again
     # project points to NDC
-    visible_points_ndc = cam[batch_idx].transform_points_ndc(visible_verts).cpu()
+    visible_points_ndc = cam.transform_points_ndc(visible_verts).cpu()
 
     # extract features for each projected vertex
     visible_point_features = sample_feature_map(
@@ -157,7 +122,6 @@ def project_vertices_to_features(
 
 
 def sample_feature_map(feature_map: Tensor, coords: Tensor, mode="nearest"):
-
     batched_feature_map = rearrange(feature_map, "c h w -> 1 c h w").to(torch.float32)
     coords[:, 0] *= -1
     coords[:, 1] *= -1
@@ -208,11 +172,28 @@ def multiview_cameras(
     return cameras
 
 
-def random_solid_color_img(res=100):
-    return repeat(torch.randn(3), "c -> c h w", h=res, w=res)
+def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
 
-
-def front_camera(device="cuda") -> FoVPerspectiveCameras:
-    R, T = look_at_view_transform(dist=2, azim=0, elev=0)
+    R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
     cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
     return cameras
+
+
+def blend_features(
+    features_original: Tensor,
+    features_rendered: Tensor,
+    alpha: float,
+    channel_dim=0,
+):
+
+    # compute mask, where features_rendered is not zero
+    masks = torch.sum(features_rendered, dim=channel_dim, keepdim=True) != 0
+
+    # blend features
+    blended = alpha * features_rendered + (1 - alpha) * features_original
+
+    original_background = features_original * ~masks
+    blended_masked = blended * masks
+
+    # return blended features, where features_rendered is not zero
+    return original_background + blended_masked

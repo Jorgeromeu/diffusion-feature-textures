@@ -10,3 +10,7 @@ transformers
 rerun-sdk
 codetiming
 scikit-learn
+wandb
+hydra-core
+moviepy
+typeguard

@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Diff3F",
+            "name": "Multiview Features",
             "type": "debugpy",
             "request": "launch",
-            "program": "scripts/diff3f.py",
+            "program": "scripts/multiview_features.py",
             "cwd": "${cwd}",
             "justMyCode": true,
             "console": "integratedTerminal",
@@ -21,6 +21,30 @@
             "type": "debugpy",
             "request": "launch",
             "program": "scripts/aggregate_features.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Generate Video",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/generate_video.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Generative Rendering",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/run_generative_rendering.py",
             "cwd": "${cwd}",
             "justMyCode": true,
             "console": "integratedTerminal",
