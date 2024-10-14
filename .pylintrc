@@ -24,6 +24,7 @@ disable=raw-checker-failed,
         duplicate-code,
         too-many-locals,
         too-many-positional-arguments,
-        invalid-name
+        invalid-name,
+        fixme
 
 enable=

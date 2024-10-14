@@ -122,12 +122,12 @@ def extract_multiview_features(
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def run(cfg: DictConfig):
 
+    do_run = wu.setup_run(cfg)
+    if not do_run:
+        return
+
     # read config
     mv_cfg = cfg.multiview_feature_extraction
-
-    # init wandb
-    wu.init_run(dev_run=cfg.dev_run, job_type="multiview_features")
-    wandb.config.update(dict(mv_cfg))
 
     # init 3D logging
     ru.set_logging_state(cfg.rerun_enabled)

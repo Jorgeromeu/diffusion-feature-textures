@@ -13,7 +13,6 @@ from tqdm import tqdm
 
 import text3d2video.rerun_util as ru
 import text3d2video.wandb_util as wu
-import wandb
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.util import project_vertices_to_features
@@ -74,11 +73,12 @@ def aggregate_3d_features(
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def run(cfg: DictConfig):
 
-    aggr_cfg = cfg.aggregate_3d_features
-
     # init run
-    wu.init_run(job_type="aggregate_3d_features", dev_run=cfg.dev_run)
-    wandb.config.update(dict(aggr_cfg))
+    do_run = wu.setup_run(cfg)
+    if not do_run:
+        return
+
+    aggr_cfg = cfg.aggregate_3d_features
 
     # init 3D logging
     ru.set_logging_state(cfg.rerun_enabled)

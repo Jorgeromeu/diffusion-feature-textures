@@ -72,8 +72,9 @@ def run(cfg: DictConfig):
     video_cfg = cfg.generate_video
 
     # init wandb
-    wu.init_run(dev_run=cfg.dev_run, job_type="generate_video", tags=cfg.wandb.tags)
-    wandb.config.update(dict(video_cfg))
+    do_run = wu.setup_run(cfg)
+    if not do_run:
+        return
 
     # setup pipeline
     dtype = torch.float16
