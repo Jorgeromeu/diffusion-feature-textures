@@ -53,7 +53,7 @@ class TestGenerativeRendering(unittest.TestCase):
         frames = self.animation.load_frames(frame_nums)
         cameras = self.animation.cameras(frame_nums)
         verts_uv, faces_uv = self.animation.texture_data()
-        latents_random = self.pipe.prepare_latents_random(len(frame_nums), 512)
+        latents_random = self.pipe.prepare_random_latents(len(frame_nums))
         latents_uv = self.pipe.prepare_uv_initialized_latents(
             frames, cameras, verts_uv, faces_uv
         )
@@ -67,7 +67,7 @@ class TestGenerativeRendering(unittest.TestCase):
         n_batches = 2
         prompt = "lol"
 
-        latents = self.pipe.prepare_latents_random(n_frames, 512)
+        latents = self.pipe.prepare_random_latents(n_frames)
         cond_emb, uncond_emb = self.pipe.encode_prompt([prompt] * n_frames)
 
         # stack

@@ -51,6 +51,7 @@ def run(cfg: DictConfig):
         cameras,
         uv_verts,
         uv_faces,
+        rerun=cfg.run.rerun_enabled,
         **OmegaConf.to_container(cfg.generative_rendering),
     )
 

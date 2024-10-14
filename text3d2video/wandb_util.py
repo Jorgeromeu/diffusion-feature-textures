@@ -176,8 +176,9 @@ class ArtifactWrapper:
 
         if wandb_is_enabled():
             print(f"Logging artifact {self.wandb_artifact.name}")
-            self.wandb_artifact.log()
+            wandb.log_artifact(self.wandb_artifact)
             self.delete_folder()
+            return
 
         print(f"Skipping logging artifact, result at {self.folder}")
 

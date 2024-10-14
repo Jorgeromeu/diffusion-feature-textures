@@ -1,32 +1,40 @@
 from math import sqrt
 from typing import Dict, Optional
 
+import rerun as rr
 import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
 
+from text3d2video.feature_visualization import RgbPcaUtil
 from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.util import blend_features
 
 
 class GenerativeRenderingAttn:
 
+    # rerun
+    rerun: bool = False
+    rerun_module_paths = []
+
+    # modules to save/inject features
+    module_paths = []
+
     # types of attention
     do_extended_attention: bool = False
     do_pre_attn_injection: bool = False
 
     # wether or not to save features
-    module_paths = []
     save_pre_attn_features = False
     save_post_attn_features = False
-
     saved_pre_attn: Dict[str, Float[torch.Tensor, "b t c"]] = {}
     saved_post_attn: Dict[str, Float[torch.Tensor, "b f t c"]] = {}
 
-    feature_blend_alpha: float = 1
+    # post attention
     do_post_attn_injection: bool = False
+    feature_blend_alpha: float = 1
     feature_images: Dict[str, Float[torch.Tensor, "b d h w"]] = {}
 
     def __init__(self, unet, unet_chunk_size=2):
@@ -178,6 +186,7 @@ class GenerativeRenderingAttn:
             self.saved_post_attn[module_path] = post_attn_features
 
         if self.do_post_attn_injection:
+
             feature_images = self.feature_images.get(module_path)
             if feature_images is not None:
 
@@ -195,6 +204,30 @@ class GenerativeRenderingAttn:
                     self.feature_blend_alpha,
                     channel_dim=2,
                 )
+
+                if module_path in self.rerun_module_paths and self.rerun:
+
+                    attn_out_frame = attn_out_square[0, 0, :, :, :]
+                    rendered_frame = feature_images[0, 0, :, :, :]
+                    blended_frame = blended[0, 0, :, :, :]
+
+                    features = rearrange(attn_out_frame, "d h w -> (h w) d")
+                    pca = RgbPcaUtil.init_from_features(features.cpu())
+
+                    rr.log(
+                        "attn_out",
+                        rr.Image(pca.feature_map_to_rgb_pil(attn_out_frame.cpu())),
+                    )
+
+                    rr.log(
+                        "rendered",
+                        rr.Image(pca.feature_map_to_rgb_pil(rendered_frame.cpu())),
+                    )
+
+                    rr.log(
+                        "blended",
+                        rr.Image(pca.feature_map_to_rgb_pil(blended_frame.cpu())),
+                    )
 
                 attn_out = rearrange(blended, "b f d h w -> (b f) (h w) d")
 

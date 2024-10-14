@@ -187,7 +187,7 @@ def blend_features(
 ):
 
     # compute mask, where features_rendered is not zero
-    masks = torch.sum(features_rendered, dim=channel_dim, keepdim=True) > 0
+    masks = torch.sum(features_rendered, dim=channel_dim, keepdim=True) != 0
 
     # blend features
     blended = alpha * features_rendered + (1 - alpha) * features_original

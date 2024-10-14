@@ -5,26 +5,37 @@ from hydra import compose, initialize
 
 class TestScripts(unittest.TestCase):
 
-    common_overrides = ["run.wandb=False"]
-
     def test_generative_rendering_script(self):
 
-        with initialize(config_path="../config"):
+        module = "down_blocks.0.attentions.0.transformer_blocks.0.attn1"
 
-            layer_name = "down_blocks.0.attentions.0.transformer_blocks.0.attn1"
+        overrides = [
+            'run.tags=["testing"]',
+            f"generative_rendering.module_paths=['{module}']",
+            "generative_rendering.num_inference_steps=1",
+            "generative_rendering.num_keyframes=2",
+            "inputs.animation_n_frames=2",
+        ]
 
-            cfg = compose(
-                config_name="generative_rendering",
-                overrides=self.common_overrides
-                + [
-                    "generative_rendering.num_inference_steps=1",
-                    f"generative_rendering.module_paths=[{layer_name}]",
-                    "inputs.animation_n_frames=2",
-                    "generative_rendering.chunk_size=2",
-                ],
-            )
+        for do_uv_init in [True, False]:
+            for do_pre_attn in [True, False]:
+                for do_post_attn in [True, False]:
 
-            # pylint: disable=import-outside-toplevel
-            from scripts.run_generative_rendering import run
+                    local_overrides = [
+                        f"generative_rendering.do_uv_noise_init={do_uv_init}",
+                        f"generative_rendering.do_pre_attn_injection={do_pre_attn}",
+                        f"generative_rendering.do_post_attn_injection={do_post_attn}",
+                        "run.wandb=False",
+                    ]
 
-            run(cfg)
+                    with initialize(version_base="1.2", config_path="../config"):
+
+                        cfg = compose(
+                            config_name="generative_rendering",
+                            overrides=overrides + local_overrides,
+                        )
+
+                        # pylint: disable=import-outside-toplevel
+                        from scripts.run_generative_rendering import run
+
+                        run(cfg)

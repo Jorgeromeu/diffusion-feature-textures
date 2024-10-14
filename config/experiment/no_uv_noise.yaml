@@ -1,0 +1,4 @@
+# @package _global_
+
+generative_rendering:
+  do_uv_noise_init: false
