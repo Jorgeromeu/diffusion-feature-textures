@@ -1,6 +1,7 @@
 import hydra
 import torch
 from diffusers import ControlNetModel
+from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
 import text3d2video.wandb_util as wbu
@@ -21,9 +22,9 @@ def run(cfg: DictConfig):
 
     # read animation
     animation = AnimationArtifact.from_wandb_artifact_tag(
-        cfg.inputs.animation_artifact_tag, download=False
+        cfg.animation.artifact_tag, download=cfg.run.download_artifacts
     )
-    frame_nums = animation.frame_nums(cfg.inputs.animation_n_frames)
+    frame_nums = animation.frame_nums(cfg.animation.n_frames)
     mesh_frames = animation.load_frames(frame_nums)
     cameras = animation.cameras(frame_nums)
     uv_verts, uv_faces = animation.texture_data()
@@ -43,10 +44,14 @@ def run(cfg: DictConfig):
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 
+    pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
+        pipe.scheduler.config
+    )
+
     pipe.module_paths = cfg.generative_rendering.module_paths
 
-    frames = pipe(
-        cfg.inputs.prompt,
+    video_frames = pipe(
+        cfg.prompt,
         mesh_frames,
         cameras,
         uv_verts,
@@ -56,8 +61,8 @@ def run(cfg: DictConfig):
     )
 
     # save video
-    video_artifact = VideoArtifact.create_empty_artifact(cfg.inputs.out_artifact)
-    video_artifact.write_frames(frames, fps=10)
+    video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
+    video_artifact.write_frames(video_frames, fps=10)
 
     # log video to run
     wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})

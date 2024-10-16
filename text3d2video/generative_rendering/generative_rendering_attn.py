@@ -1,5 +1,5 @@
 from math import sqrt
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import rerun as rr
 import torch
@@ -8,7 +8,6 @@ from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
 
-from text3d2video.feature_visualization import RgbPcaUtil
 from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.util import blend_features
 
@@ -29,6 +28,8 @@ class GenerativeRenderingAttn:
     # wether or not to save features
     save_pre_attn_features = False
     save_post_attn_features = False
+    save_blended_features = False
+
     saved_pre_attn: Dict[str, Float[torch.Tensor, "b t c"]] = {}
     saved_post_attn: Dict[str, Float[torch.Tensor, "b f t c"]] = {}
 
@@ -36,6 +37,8 @@ class GenerativeRenderingAttn:
     do_post_attn_injection: bool = False
     feature_blend_alpha: float = 1
     feature_images: Dict[str, Float[torch.Tensor, "b d h w"]] = {}
+
+    chunk_indices: List[int] = []
 
     def __init__(self, unet, unet_chunk_size=2):
         """
@@ -178,58 +181,52 @@ class GenerativeRenderingAttn:
             attn, key, query, value, attention_mask
         )
 
-        # save post attn
+        # reshape to square
+        attn_out_square = rearrange(
+            attn_out,
+            "(b f) (h w) d -> b f d h w",
+            h=int(sqrt(attn_out.shape[1])),
+            b=self.unet_chunk_size,
+        )
+
+        # save post attention features
         if self.save_post_attn_features and module_path in self.module_paths:
-            post_attn_features = rearrange(
-                attn_out, "(b f) t c -> b f t c", b=self.unet_chunk_size
+            self.saved_post_attn[module_path] = attn_out_square
+
+        # inject features
+        feature_images = self.feature_images.get(module_path)
+        if self.do_post_attn_injection and feature_images is not None:
+            # blend rendered and current features
+            blended = blend_features(
+                attn_out_square,
+                feature_images.to(attn_out),
+                self.feature_blend_alpha,
+                channel_dim=2,
             )
-            self.saved_post_attn[module_path] = post_attn_features
 
-        if self.do_post_attn_injection:
+        # log features
+        if module_path in self.rerun_module_paths and self.rerun:
 
-            feature_images = self.feature_images.get(module_path)
-            if feature_images is not None:
+            attn_out_frame = attn_out_square[0, 0, :, :, :]
+            rendered_frame = feature_images[0, 0, :, :, :]
+            blended_frame = blended[0, 0, :, :, :]
 
-                # reshape attn_out to square
-                attn_out_square = rearrange(
-                    attn_out,
-                    "(b f) (h w) d -> b f d h w",
-                    h=int(sqrt(attn_out.shape[1])),
-                    b=self.unet_chunk_size,
-                )
+            rr.log(
+                f"attn_out",
+                rr.Image(self.pca.feature_map_to_rgb_pil(attn_out_frame.cpu())),
+            )
 
-                blended = blend_features(
-                    attn_out_square,
-                    feature_images.to(attn_out),
-                    self.feature_blend_alpha,
-                    channel_dim=2,
-                )
+            rr.log(
+                f"rendered",
+                rr.Image(self.pca.feature_map_to_rgb_pil(rendered_frame.cpu())),
+            )
 
-                if module_path in self.rerun_module_paths and self.rerun:
+            rr.log(
+                f"blended",
+                rr.Image(self.pca.feature_map_to_rgb_pil(blended_frame.cpu())),
+            )
 
-                    attn_out_frame = attn_out_square[0, 0, :, :, :]
-                    rendered_frame = feature_images[0, 0, :, :, :]
-                    blended_frame = blended[0, 0, :, :, :]
-
-                    features = rearrange(attn_out_frame, "d h w -> (h w) d")
-                    pca = RgbPcaUtil.init_from_features(features.cpu())
-
-                    rr.log(
-                        "attn_out",
-                        rr.Image(pca.feature_map_to_rgb_pil(attn_out_frame.cpu())),
-                    )
-
-                    rr.log(
-                        "rendered",
-                        rr.Image(pca.feature_map_to_rgb_pil(rendered_frame.cpu())),
-                    )
-
-                    rr.log(
-                        "blended",
-                        rr.Image(pca.feature_map_to_rgb_pil(blended_frame.cpu())),
-                    )
-
-                attn_out = rearrange(blended, "b f d h w -> (b f) (h w) d")
+            attn_out = rearrange(blended, "b f d h w -> (b f) (h w) d")
 
         # linear proj to output dim
         attn_out = attn.to_out[0](attn_out)

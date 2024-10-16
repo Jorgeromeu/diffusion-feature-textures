@@ -1,4 +1,3 @@
-from math import sqrt
 from typing import Dict, List, Tuple
 
 import rerun as rr
@@ -23,18 +22,27 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked
 
 import text3d2video.rerun_util as ru
-from scripts.aggregate_features import aggregate_3d_features
+from text3d2video.artifacts.tensors_artifact import TensorsArtifact
+from text3d2video.feature_visualization import RgbPcaUtil
 from text3d2video.generative_rendering.generative_rendering_attn import (
     GenerativeRenderingAttn,
 )
 from text3d2video.rendering import make_feature_renderer, render_depth_map
-from text3d2video.util import ordered_sample
+from text3d2video.util import (
+    aggregate_features_precomputed_vertex_positions,
+    ordered_sample,
+    project_vertices_to_cameras,
+)
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
 
+    # rerun settings
     rerun: bool
     rerun_module_paths: List[str]
+    rerun_frame_indices: List[int]
+
+    # model settings
     res: int = 512
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
@@ -45,6 +53,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     do_post_attn_injection: bool = True
     chunk_size: int = 10
     module_paths: list[str]
+    mean_features_weight: float = 0.5
 
     def __init__(
         self,
@@ -165,9 +174,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         noise_renders = noise_renders.to(device=self.device, dtype=self.dtype)
 
         background_noise = torch.randn(
-            in_channels,
-            latent_res,
-            latent_res,
+            in_channels, latent_res, latent_res, generator=generator, device=self.device
         ).expand(n_frames, -1, -1, -1)
         background_noise = background_noise.to(self.device, dtype=self.dtype)
 
@@ -224,6 +231,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         Forward pass of the controlnet and unet
         """
 
+        # batch across time dimension
         chunk_size = latents.shape[0]
         batched_latents = rearrange(latents, "b f c h w -> (b f) c h w")
         batched_embeddings = rearrange(text_embeddings, "b f t d -> (b f) t d")
@@ -250,7 +258,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             encoder_hidden_states=batched_embeddings,
         ).sample
 
+        # unbatch
         noise_pred = rearrange(noise_pred, "(b f) c h w -> b f c h w", b=chunk_size)
+
         return noise_pred
 
     def model_forward_feature_extraction(
@@ -331,9 +341,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
     def aggregate_kf_features(
         self,
-        kf_cameras: FoVPerspectiveCameras,
-        kf_frames: Meshes,
-        saved_post_attn: Dict[str, Float[Tensor, "b f t d"]],
+        n_vertices: int,
+        kf_vert_xys: List[Tensor],
+        kf_vert_indices: List[Tensor],
+        saved_post_attn: Dict[str, Float[Tensor, "b f d h w"]],
     ) -> Dict[str, Tuple[Float[Tensor, "b v d"], int]]:
         """
         Aggregate features in saved_post_attn across keyframe poses and render them for all poses
@@ -347,29 +358,40 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         for module, kf_post_attn_features in saved_post_attn.items():
 
-            # reshape features to square
-            feature_res = int(sqrt(kf_post_attn_features.shape[2]))
-            kf_post_attn_feature_maps = rearrange(
-                kf_post_attn_features,
-                "b f_kf (h w) d -> b f_kf d h w",
-                h=feature_res,
-                f_kf=len(kf_cameras),
-            )
+            feature_map_res = kf_post_attn_features.shape[-1]
 
             stacked_vert_features = []
-            for feature_maps in kf_post_attn_feature_maps:
+            for feature_maps in kf_post_attn_features:
+
                 # aggregate multi-pose features to 3D
-                vert_features = aggregate_3d_features(
-                    kf_cameras, kf_frames, feature_maps
+                vert_ft_mean = aggregate_features_precomputed_vertex_positions(
+                    feature_maps,
+                    n_vertices,
+                    kf_vert_xys,
+                    kf_vert_indices,
+                    aggregation_type="mean",
                 )
+
+                vert_ft_inpainted = aggregate_features_precomputed_vertex_positions(
+                    feature_maps,
+                    n_vertices,
+                    kf_vert_xys,
+                    kf_vert_indices,
+                    aggregation_type="first",
+                )
+
+                w_mean = self.mean_features_weight
+                w_inpainted = 1 - self.mean_features_weight
+                vert_features = w_mean * vert_ft_mean + w_inpainted * vert_ft_inpainted
+
                 stacked_vert_features.append(vert_features)
 
             stacked_vert_features = torch.stack(stacked_vert_features)
-            all_aggregated_features[module] = (stacked_vert_features, feature_res)
+            all_aggregated_features[module] = (stacked_vert_features, feature_map_res)
 
         return all_aggregated_features
 
-    def render_aggregated_features(
+    def render_feature_images(
         self,
         cameras: FoVPerspectiveCameras,
         frames: Meshes,
@@ -414,15 +436,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
     def setup_rerun_blueprint(self, n_frames: int):
 
-        frame_indices = list(range(n_frames))
-        if n_frames > 5:
-            frame_indices = ordered_sample(frame_indices, 5)
-
         frame_views = []
         latent_views = []
         depth_map_views = []
 
-        for frame_i in frame_indices:
+        for frame_i in self.rerun_frame_indices:
             frame_views.append(rrb.Spatial2DView(contents=[f"+/frame_{frame_i}"]))
             latent_views.append(rrb.TensorView(contents=[f"+/latent_{frame_i}"]))
             depth_map_views.append(
@@ -436,14 +454,28 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             name="Generated Images",
         )
 
-        tensor_views = [
-            rrb.Spatial2DView(contents=["+/attn_out"], name="Attn Out"),
-            rrb.Spatial2DView(contents=["+/rendered"], name="Rendered"),
-            rrb.Spatial2DView(contents=["+/blended"], name="Blended"),
-        ]
+        attn_out_views = []
+        rendered_views = []
+        blended_views = []
+
+        for frame_i in self.rerun_frame_indices:
+            attn_out_views.append(
+                rrb.Spatial2DView(contents=[f"+/attn_out_{frame_i}"], name="Attn Out"),
+            )
+            rendered_views.append(
+                rrb.Spatial2DView(contents=[f"+/rendered_{frame_i}"], name="Rendered")
+            )
+            blended_views.append(
+                rrb.Spatial2DView(contents=[f"+/blended_{frame_i}"], name="Blended")
+            )
 
         rendered_features_tab = rrb.Horizontal(
-            rrb.Horizontal(*tensor_views, name="Poses"),
+            rrb.Spatial3DView(name="3D", contents=["+/mesh"]),
+            rrb.Vertical(
+                rrb.Horizontal(*attn_out_views, name="Attn Out"),
+                rrb.Horizontal(*rendered_views, name="Rendered"),
+                rrb.Horizontal(*blended_views, name="Blended"),
+            ),
         )
 
         return rrb.Blueprint(
@@ -458,6 +490,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         rr.init("Generative Rendering")
         rr.serve()
 
+        # log a maximum of 5 frames
+        self.rerun_frame_indices = list(range(n_frames))
+        if n_frames > 5:
+            self.rerun_frame_indices = ordered_sample(self.rerun_frame_indices, 5)
+
         # setup blueprint
         if self.rerun:
             rr.send_blueprint(self.setup_rerun_blueprint(n_frames))
@@ -468,15 +505,27 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # configure attn processor for rerun
         self.attn_processor.rerun_module_paths = self.rerun_module_paths
         self.attn_processor.rerun = self.rerun
+        self.attn_processor.rerun_frame_indices = self.rerun_frame_indices
 
         # return custom timesequence
         seq = ru.TimeSequence("timesteps")
         return seq
 
+    def log_latents(self, latents, generator=None):
+
+        if self.rerun:
+
+            for f_i in self.rerun_frame_indices:
+                latent = latents[f_i]
+                rr.log(f"latent_{f_i}", rr.Tensor(rearrange(latent, "c w h -> c h w")))
+                cur_img = self.latents_to_images(latent.unsqueeze(0), generator)[0]
+                rr.log(f"frame_{f_i}", rr.Image(cur_img))
+
     @torch.no_grad()
     @typechecked
     def __call__(
         self,
+        # inputs
         prompt: str,
         frames: Meshes,
         cameras: FoVPerspectiveCameras,
@@ -490,17 +539,21 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         do_pre_attn_injection: bool,
         do_post_attn_injection: bool,
         feature_blend_alpha: float,
+        mean_features_weight: float,
         num_keyframes: int,
         guidance_scale: float,
         controlnet_conditioning_scale: float,
         chunk_size: int,
         module_paths: List[str],
         seed: int,
+        # logging config
         rerun: bool,
         rerun_module_paths: List[str],
+        save_tensors: bool,
     ):
 
         self.update_params(
+            save_tensors=save_tensors,
             rerun_module_paths=rerun_module_paths,
             rerun=rerun,
             res=res,
@@ -516,7 +569,12 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             chunk_size=chunk_size,
             module_paths=module_paths,
             seed=seed,
+            mean_features_weight=mean_features_weight,
         )
+
+        if self.save_tensors:
+            tensors = TensorsArtifact.create_empty_artifact("tensors")
+            tensors.open_h5_file()
 
         n_frames = len(frames)
 
@@ -543,7 +601,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # initial latent noise
         if self.do_uv_noise_init:
             latents = self.prepare_uv_initialized_latents(
-                frames, cameras, verts_uvs, faces_uvs
+                frames, cameras, verts_uvs, faces_uvs, generator=generator
             )
         else:
             latents = self.prepare_random_latents(n_frames, generator=generator)
@@ -551,18 +609,13 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # chunk indices to use in inference loop
         chunks_indices = torch.split(torch.arange(0, n_frames), chunk_size)
 
+        # get 2D vertex positions for each frame
+        vert_xys, vert_indices = project_vertices_to_cameras(frames, cameras)
+
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
 
-            if rerun:
-                for f_i, latent in enumerate(latents):
-                    rr.log(
-                        f"latent_{f_i}", rr.Tensor(rearrange(latent, "c w h -> c h w"))
-                    )
-
-                cur_images = self.latents_to_images(latents, generator)
-                for f_i, im in enumerate(cur_images):
-                    rr.log(f"frame_{f_i}", rr.Image(im))
+            self.log_latents(latents, generator)
 
             # duplicate latent, to feed to model with CFG
             latents_stacked = torch.stack([latents] * 2)
@@ -585,10 +638,27 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 )
             )
 
-            # aggregate keyframe features to 3D
+            # Unify features across keyframes as vertex features
+            kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
+            kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
             aggregated_3d_features = self.aggregate_kf_features(
-                cameras[kf_indices], frames[kf_indices], post_attn_features
+                frames.num_verts_per_mesh()[0],
+                kf_vert_xys,
+                kf_vert_indices,
+                post_attn_features,
             )
+
+            if self.rerun:
+                rr_module_path = self.rerun_module_paths[0]
+                rr_vert_features = aggregated_3d_features[rr_module_path][0][0]
+                pca = RgbPcaUtil.init_from_features(rr_vert_features.cpu())
+                self.attn_processor.pca = pca
+                rr_vert_features_rgb = pca.features_to_rgb(rr_vert_features.cpu())
+
+                rr.log(
+                    "mesh",
+                    ru.pt3d_mesh(frames[0], vertex_colors=rr_vert_features_rgb),
+                )
 
             # do inference in chunks
             noise_preds = []
@@ -601,13 +671,14 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 chunk_depth_maps = [depth_maps[i] for i in chunk_indices.tolist()]
 
                 # render chunk feature images
-                chunk_feature_images = self.render_aggregated_features(
+                chunk_feature_images = self.render_feature_images(
                     cameras[chunk_indices],
                     frames[chunk_indices],
                     aggregated_3d_features,
                 )
 
                 # Diffusion step #2 with pre and post attn feature injection
+                self.attn_processor.chunk_indices = chunk_indices
                 noise_pred = self.model_forward_feature_injection(
                     chunk_latents,
                     chunk_embeddings,
@@ -631,6 +702,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
             rerun_seq.step()
+
+        self.log_latents(latents, generator)
 
         # decode latents in chunks
         decoded_imgs = []

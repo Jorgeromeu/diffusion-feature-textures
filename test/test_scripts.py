@@ -14,7 +14,8 @@ class TestScripts(unittest.TestCase):
             f"generative_rendering.module_paths=['{module}']",
             "generative_rendering.num_inference_steps=1",
             "generative_rendering.num_keyframes=2",
-            "inputs.animation_n_frames=2",
+            "animation.n_frames=2",
+            "run.wandb=False",
         ]
 
         for do_uv_init in [True, False]:
@@ -25,7 +26,6 @@ class TestScripts(unittest.TestCase):
                         f"generative_rendering.do_uv_noise_init={do_uv_init}",
                         f"generative_rendering.do_pre_attn_injection={do_pre_attn}",
                         f"generative_rendering.do_post_attn_injection={do_post_attn}",
-                        "run.wandb=False",
                     ]
 
                     with initialize(version_base="1.2", config_path="../config"):
