@@ -155,10 +155,10 @@ def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
         visible_verts_ndc = cameras[view].transform_points_ndc(visible_verts)
         visible_verts_xy = visible_verts_ndc[:, 0:2]
 
-        packed_vert_cnt += meshes.num_verts_per_mesh()[view]
-
         vert_indices.append(visible_vert_indices - packed_vert_cnt)
         vert_xys.append(visible_verts_xy)
+
+        packed_vert_cnt += meshes.num_verts_per_mesh()[view]
 
     return vert_xys, vert_indices
 
@@ -168,22 +168,43 @@ def aggregate_features_precomputed_vertex_positions(
     n_verts: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
     vertex_indices: List[Float[Tensor, "v"]],
+    mode="nearest",
+    aggregation_type="first",
 ):
 
     # initialize empty vertex features
     feature_dim = feature_maps.shape[1]
     vert_features = torch.zeros(n_verts, feature_dim).cuda()
+    vert_features_cnt = torch.zeros(n_verts).cuda()
 
-    for view, feature_map in enumerate(feature_maps):
-        vert_xys = vertex_positions[view]
-        vert_indices = vertex_indices[view]
+    for frame, feature_map in enumerate(feature_maps):
 
-        view_vert_features = sample_feature_map(
-            feature_map.cpu(), vert_xys.cpu(), mode="bilinear"
+        # get features for each vertex, for given view
+        frame_vert_xys = vertex_positions[frame]
+        frame_vert_indices = vertex_indices[frame]
+        frame_vert_features = sample_feature_map(
+            feature_map.cpu(),
+            frame_vert_xys.cpu(),
+            mode=mode,
         ).to(vert_features)
 
-        vert_features[vert_indices] = view_vert_features
+        if aggregation_type == "mean":
+            vert_features[frame_vert_indices] += frame_vert_features
 
+        elif aggregation_type == "first":
+            # update empty entries in vert_features
+            mask = torch.all(vert_features[frame_vert_indices] == 0, dim=1)
+            vert_features[frame_vert_indices[mask]] = frame_vert_features[mask]
+
+        # count number of features per vertex
+        frame_nonzero_features = torch.all(frame_vert_features != 0, dim=1)
+        frame_nonzero_indices = frame_vert_indices[frame_nonzero_features]
+        vert_features_cnt[frame_nonzero_indices] += 1
+
+    if aggregation_type == "mean":
+        vert_features /= torch.clamp(vert_features_cnt, min=1).unsqueeze(1)
+
+    # average features
     return vert_features
 
 

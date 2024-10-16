@@ -4,6 +4,10 @@ hydra:
   job:
     chdir: false
 
+defaults:
+  - model: stable_diffusion_v1_5
+  - animation: backflip
+
 run:
   job_type: "generate_video"
   wandb: true
@@ -12,30 +16,25 @@ run:
   download_artifacts: false
   tags: []
 
-model:
-  sd_repo: "runwayml/stable-diffusion-v1-5"
-  controlnet_repo: "lllyasviel/control_v11f1p_sd15_depth"
-
-inputs:
-  animation_artifact_tag: "backflip:latest"
-  animation_n_frames: 30
-  prompt: "Deadpool doing a backflip"
-  out_artifact: "deadpool-backflip"
+prompt: "Deadpool"
+out_artifact: "video"
 
 generative_rendering:
+  save_tensors: true
   rerun_module_paths: ["down_blocks.0.attentions.0.transformer_blocks.0.attn1"]
   res: 512
   seed: 0
   uv_texture_res: 64
-  num_inference_steps: 35
   do_uv_noise_init: true
   do_pre_attn_injection: true
   do_post_attn_injection: true
   feature_blend_alpha: 1.0
+  mean_features_weight: 0.5
+  chunk_size: 10
   num_keyframes: 4
+  num_inference_steps: 10
   guidance_scale: 7.5
   controlnet_conditioning_scale: 1.0
-  chunk_size: 10
   module_paths:
     [
       "down_blocks.0.attentions.0.transformer_blocks.0.attn1",

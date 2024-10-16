@@ -142,11 +142,19 @@ class ArtifactWrapper:
 
     def setup_tempdir(self):
         self.folder = Path(tempfile.mkdtemp())
-        logging.info("Created artifact tempdir at %s", str(self.folder.absolute()))
+        logging.info(
+            "Created %s artifact at %s",
+            self.wandb_artifact.name,
+            str(self.folder.absolute()),
+        )
 
     def delete_folder(self):
         shutil.rmtree(self.folder)
-        logging.info("Deleted artifact tempdir at %s", str(self.folder.absolute()))
+        logging.info(
+            "Deleted %s artifact at %s",
+            self.wandb_artifact.name,
+            str(self.folder.absolute()),
+        )
 
     @classmethod
     def create_empty_artifact(cls, name: str):
@@ -175,12 +183,16 @@ class ArtifactWrapper:
         self.wandb_artifact.add_dir(self.folder)
 
         if wandb_is_enabled():
-            print(f"Logging artifact {self.wandb_artifact.name}")
+            logging.info("Logging artifact %s", self.wandb_artifact.name)
             wandb.log_artifact(self.wandb_artifact)
             self.delete_folder()
             return
 
-        print(f"Skipping logging artifact, result at {self.folder}")
+        logging.info(
+            "Skippinglogging %s artifact at %s",
+            self.wandb_artifact.name,
+            str(self.folder.absolute()),
+        )
 
     def logged_by(self):
         return self.wandb_artifact.logged_by()
