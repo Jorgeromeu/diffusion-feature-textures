@@ -615,6 +615,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
 
+            tensors.h5_file.create_group(f"timestep_{t}")
+
             self.log_latents(latents, generator)
 
             # duplicate latent, to feed to model with CFG

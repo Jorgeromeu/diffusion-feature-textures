@@ -204,6 +204,8 @@ class GenerativeRenderingAttn:
                 channel_dim=2,
             )
 
+            attn_out_square = blended
+
         # log features
         if module_path in self.rerun_module_paths and self.rerun:
 
@@ -226,7 +228,7 @@ class GenerativeRenderingAttn:
                 rr.Image(self.pca.feature_map_to_rgb_pil(blended_frame.cpu())),
             )
 
-            attn_out = rearrange(blended, "b f d h w -> (b f) (h w) d")
+        attn_out = rearrange(attn_out_square, "b f d h w -> (b f) (h w) d")
 
         # linear proj to output dim
         attn_out = attn.to_out[0](attn_out)

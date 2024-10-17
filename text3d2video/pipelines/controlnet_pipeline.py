@@ -137,8 +137,6 @@ class ControlNetPipeline(DiffusionPipeline):
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         generator=None,
-        before_step_callback: Optional[Callable[[int], None]] = None,
-        after_step_callback: Optional[Callable[[int], None]] = None,
     ):
 
         # number of images being generated
@@ -152,14 +150,10 @@ class ControlNetPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, res)
+        latents = self.prepare_latents(batch_size, res, generator=generator)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
-
-            # run before step callback
-            if before_step_callback is not None:
-                before_step_callback(t)
 
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
