@@ -5,7 +5,6 @@ from text3d2video.wandb_util import ArtifactWrapper
 
 
 class VertAttributesArtifact(ArtifactWrapper):
-
     wandb_artifact_type = "vertex_atributes"
 
     def get_features_disk_dict(self) -> TensorDiskMultiDict:

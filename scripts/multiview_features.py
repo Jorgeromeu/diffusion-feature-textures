@@ -107,12 +107,10 @@ def extract_multiview_features(
     with Timer(initial_text="Saving Features to disk"):
         for name in extractor.hook_manager.named_hooks():
             for timestep in extractor.save_steps:
-
                 # get all features for name and timestep
                 extracted_features = extractor.get_feature(name, timestep=timestep)
 
                 for view_i in range(n_views):
-
                     key = {"view": view_i, "timestep": timestep, "layer": name}
                     features_multidict[key] = torch.Tensor(extracted_features[view_i])
 
@@ -121,7 +119,6 @@ def extract_multiview_features(
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def run(cfg: DictConfig):
-
     do_run = wu.setup_run(cfg)
     if not do_run:
         return

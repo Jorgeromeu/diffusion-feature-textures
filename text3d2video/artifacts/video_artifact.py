@@ -11,11 +11,9 @@ from text3d2video.artifacts.animation_artifact import AnimationArtifact
 
 
 class VideoArtifact(wu.ArtifactWrapper):
-
     wandb_artifact_type = "video"
 
     def write_frames(self, frames: List, fps=10):
-
         # convert PIL images to numpy arrays
         frames_np = [np.asarray(im) for im in frames]
 

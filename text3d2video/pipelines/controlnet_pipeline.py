@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional
+from typing import List
 
 import torch
 from diffusers import (
@@ -16,7 +16,6 @@ from typeguard import typechecked
 
 
 class ControlNetPipeline(DiffusionPipeline):
-
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -26,7 +25,6 @@ class ControlNetPipeline(DiffusionPipeline):
         scheduler: UniPCMultistepScheduler,
         controlnet: ControlNetModel,
     ):
-
         super().__init__()
 
         # register modules
@@ -51,7 +49,6 @@ class ControlNetPipeline(DiffusionPipeline):
         )
 
     def encode_prompt(self, prompts: List[str]):
-
         # tokenize prompts
         text_input = self.tokenizer(
             prompts,
@@ -92,7 +89,6 @@ class ControlNetPipeline(DiffusionPipeline):
         return latents
 
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
-
         # scale latents
         latents_scaled = latents / self.vae.config.scaling_factor
 
@@ -113,7 +109,6 @@ class ControlNetPipeline(DiffusionPipeline):
     def prepare_controlnet_image(
         self, images: List[Image.Image], do_classifier_free_guidance=True
     ):
-
         height = images[0].height
         width = images[0].width
 
@@ -138,7 +133,6 @@ class ControlNetPipeline(DiffusionPipeline):
         controlnet_conditioning_scale=1.0,
         generator=None,
     ):
-
         # number of images being generated
         batch_size = len(prompts)
 
@@ -154,7 +148,6 @@ class ControlNetPipeline(DiffusionPipeline):
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
-
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)

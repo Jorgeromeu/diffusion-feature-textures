@@ -1,15 +1,13 @@
 from math import sqrt
-from typing import Dict, List, Optional
+from typing import Optional
 
-import rerun as rr
 import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
-
+from pytorch3d.renderer import FoVPerspectiveCameras, TexturesVertex
 from pytorch3d.structures import Meshes
-from pytorch3d.renderer import FoVPerspectiveCameras
 
 from text3d2video.rendering import make_feature_renderer
 from text3d2video.util import (
@@ -18,11 +16,8 @@ from text3d2video.util import (
     project_vertices_to_cameras,
 )
 
-from pytorch3d.renderer import TexturesVertex
-
 
 class IdentityPostAttnInjectionProcessor:
-
     mesh: Meshes
     camera: FoVPerspectiveCameras
 
@@ -30,7 +25,6 @@ class IdentityPostAttnInjectionProcessor:
         self.unet_chunk_size = unet_chunk_size
 
     def memory_efficient_attention(self, attn, key, query, value, attention_mask):
-
         batch_size = query.shape[0]
 
         inner_dim = key.shape[-1]
@@ -64,7 +58,6 @@ class IdentityPostAttnInjectionProcessor:
         hidden_states: Float[torch.Tensor, "b t d"],
         encoder_hidden_states: Float[torch.Tensor, "b t d"],
     ) -> Float[torch.Tensor, "b t d"]:
-
         # if encoder hidden states are provided use them for cross attention
         if encoder_hidden_states is not None:
             hidden_states = encoder_hidden_states
@@ -118,10 +111,8 @@ class IdentityPostAttnInjectionProcessor:
         vert_xys, vert_indices = project_vertices_to_cameras(self.mesh, self.camera)
 
         if self.do_identity_post_attn:
-
             all_feature_images = []
             for batch_attn_out_square in attn_out_square:
-
                 # project features to mesh
                 vert_features = aggregate_features_precomputed_vertex_positions(
                     batch_attn_out_square,

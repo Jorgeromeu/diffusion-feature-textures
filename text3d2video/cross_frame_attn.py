@@ -10,7 +10,6 @@ from text3d2video.sd_feature_extraction import get_module_path
 
 
 class CrossFrameAttnProcessor:
-
     feature_images_multidict: MultiDict
     do_feature_injection: bool = False
     feature_blend_alpha = 1
@@ -31,7 +30,6 @@ class CrossFrameAttnProcessor:
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
     ):
-
         # hidden_states: (batch_size, sequence_length, c)
         batch_size, sequence_length, _ = hidden_states.shape
 
@@ -59,7 +57,6 @@ class CrossFrameAttnProcessor:
         value = attn.to_v(encoder_hidden_states)
 
         if not is_cross_attention and self.do_cross_frame_attn:
-
             # number of frames
             video_length = key.size()[0] // self.unet_chunk_size
             former_frame_index = [0] * video_length
@@ -95,7 +92,6 @@ class CrossFrameAttnProcessor:
         feature_images = self.feature_images_multidict.get(identifier)
 
         if feature_images is not None and self.do_feature_injection:
-
             # reshape hidden states to square
             feature_map_size = int(sqrt(sequence_length))
             hidden_states_square = rearrange(

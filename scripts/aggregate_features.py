@@ -30,7 +30,6 @@ def aggregate_3d_features(
     aggregation_type: int = AggregationType.MEAN,
     interpolation_mode: str = "bilinear",
 ) -> Float[torch.Tensor, "v c"]:
-
     assert len(feature_maps) == len(cameras) == len(meshes)
 
     # initialize empty D-dimensional vertex features
@@ -40,7 +39,6 @@ def aggregate_3d_features(
 
     # for each view
     for i, _ in enumerate(cameras):
-
         feature_map = feature_maps[i]
         camera = cameras[i]
         mesh = meshes[i]
@@ -72,7 +70,6 @@ def aggregate_3d_features(
 
 @hydra.main(version_base=None, config_path="../config", config_name="config")
 def run(cfg: DictConfig):
-
     # init run
     do_run = wu.setup_run(cfg)
     if not do_run:
@@ -112,7 +109,6 @@ def run(cfg: DictConfig):
 
     for layer in tqdm(layers, "layers"):
         for timestep in tqdm(timesteps, "timesteps"):
-
             # get feature map per view
             feature_identifier = {"layer": layer, "timestep": timestep}
             features = [

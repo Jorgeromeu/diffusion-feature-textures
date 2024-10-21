@@ -32,7 +32,6 @@ def render_feature_images(
     timesteps: List[int],
     layers: List[str],
 ) -> MultiDict:
-
     # read vertex features to multidict
     vert_features_multidict = vert_features.get_features_disk_dict()
 
@@ -44,7 +43,6 @@ def render_feature_images(
     frames = animation.load_frames(frame_indices)
 
     for layer, timestep in tqdm(itertools.product(layers, timesteps)):
-
         identifier = {"layer": layer, "timestep": timestep}
 
         vert_features = vert_features_multidict[identifier].cuda()
@@ -68,7 +66,6 @@ def render_feature_images(
 
 @hydra.main(config_path="../config", config_name="config")
 def run(cfg: DictConfig):
-
     video_cfg = cfg.generate_video
 
     # init wandb

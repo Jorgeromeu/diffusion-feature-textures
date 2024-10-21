@@ -14,7 +14,6 @@ from typeguard import typechecked
 
 
 class SDPipeline(DiffusionPipeline):
-
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -23,7 +22,6 @@ class SDPipeline(DiffusionPipeline):
         unet: UNet2DConditionModel,
         scheduler: UniPCMultistepScheduler,
     ):
-
         super().__init__()
 
         # register modules
@@ -47,7 +45,6 @@ class SDPipeline(DiffusionPipeline):
         )
 
     def encode_prompt(self, prompts: List[str]):
-
         # tokenize prompts
         text_input = self.tokenizer(
             prompts,
@@ -88,7 +85,6 @@ class SDPipeline(DiffusionPipeline):
         return latents
 
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
-
         # scale latents
         latents_scaled = latents / self.vae.config.scaling_factor
 
@@ -116,7 +112,6 @@ class SDPipeline(DiffusionPipeline):
         guidance_scale=7.5,
         generator=None,
     ):
-
         # number of images being generated
         batch_size = len(prompts)
 
@@ -132,7 +127,6 @@ class SDPipeline(DiffusionPipeline):
 
         # denoising loop
         for _, t in enumerate(tqdm(self.scheduler.timesteps)):
-
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)

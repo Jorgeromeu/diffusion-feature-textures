@@ -59,7 +59,6 @@ def ndc_grid(resolution=100, corner_aligned=False):
 
 
 def reproject_features(cameras: CamerasBase, depth: Tensor, feature_map: Tensor):
-
     H, _ = depth.shape
 
     # 2D grid with ndc coordinate at each pixel
@@ -87,7 +86,6 @@ def reproject_features(cameras: CamerasBase, depth: Tensor, feature_map: Tensor)
 def project_vertices_to_features(
     mesh: Meshes, cam: CamerasBase, feature_map: Tensor, mode="nearest"
 ):
-
     feature_dim, _, _ = feature_map.shape
 
     # rasterize mesh
@@ -124,7 +122,6 @@ def project_vertices_to_features(
 
 
 def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
-
     # rasterize mesh, to get visible verts
     raster_settings = RasterizationSettings(
         image_size=600,
@@ -140,7 +137,6 @@ def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
     packed_vert_cnt = 0
 
     for view in range(len(meshes)):
-
         pix_to_face = fragments.pix_to_face[view]
         mask = pix_to_face > 0
 
@@ -171,14 +167,12 @@ def aggregate_features_precomputed_vertex_positions(
     mode="nearest",
     aggregation_type="first",
 ):
-
     # initialize empty vertex features
     feature_dim = feature_maps.shape[1]
     vert_features = torch.zeros(n_verts, feature_dim).cuda()
     vert_features_cnt = torch.zeros(n_verts).cuda()
 
     for frame, feature_map in enumerate(feature_maps):
-
         # get features for each vertex, for given view
         frame_vert_xys = vertex_positions[frame]
         frame_vert_indices = vertex_indices[frame]
@@ -260,7 +254,6 @@ def multiview_cameras(
 
 
 def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
-
     R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
     cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
     return cameras
@@ -272,7 +265,6 @@ def blend_features(
     alpha: float,
     channel_dim=0,
 ):
-
     # compute mask, where features_rendered is not zero
     masks = torch.sum(features_rendered, dim=channel_dim, keepdim=True) != 0
 

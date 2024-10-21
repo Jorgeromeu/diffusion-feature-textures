@@ -1,22 +1,21 @@
 from math import sqrt
 from typing import Dict, List, Optional
 
-import rerun as rr
 import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
 
+from text3d2video.generative_rendering.configs import RerunConfig
 from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.util import blend_features
 
 
 class GenerativeRenderingAttn:
-
     # rerun
-    rerun: bool = False
-    rerun_module_paths = []
+    rerun_config: RerunConfig
+    rerun_frame_indices: List[int] = []
 
     # modules to save/inject features
     module_paths = []
@@ -49,7 +48,6 @@ class GenerativeRenderingAttn:
         self.unet_chunk_size = unet_chunk_size
 
     def memory_efficient_attention(self, attn, key, query, value, attention_mask):
-
         batch_size = query.shape[0]
 
         inner_dim = key.shape[-1]
@@ -84,7 +82,6 @@ class GenerativeRenderingAttn:
         hidden_states: Float[torch.Tensor, "b t d"],
         encoder_hidden_states: Float[torch.Tensor, "b t d"],
     ) -> Float[torch.Tensor, "b t d"]:
-
         # if encoder hidden states are provided use them for cross attention
         if encoder_hidden_states is not None:
             hidden_states = encoder_hidden_states
@@ -95,7 +92,6 @@ class GenerativeRenderingAttn:
         n_frames = hidden_states.shape[0] // self.unet_chunk_size
 
         if self.do_extended_attention:
-
             # stack all frames across time dimension
             # unet_chunk_size * (n_frames * sequence_length) hidden_size
             ext_hidden_states = rearrange(
@@ -121,7 +117,6 @@ class GenerativeRenderingAttn:
             return ext_hidden_states
 
         if self.do_pre_attn_injection:
-
             # get saved hidden states
             saved_hidden_states = self.saved_pre_attn.get(module_path)
             if saved_hidden_states is None:
@@ -205,28 +200,6 @@ class GenerativeRenderingAttn:
             )
 
             attn_out_square = blended
-
-        # log features
-        if module_path in self.rerun_module_paths and self.rerun:
-
-            attn_out_frame = attn_out_square[0, 0, :, :, :]
-            rendered_frame = feature_images[0, 0, :, :, :]
-            blended_frame = blended[0, 0, :, :, :]
-
-            rr.log(
-                f"attn_out",
-                rr.Image(self.pca.feature_map_to_rgb_pil(attn_out_frame.cpu())),
-            )
-
-            rr.log(
-                f"rendered",
-                rr.Image(self.pca.feature_map_to_rgb_pil(rendered_frame.cpu())),
-            )
-
-            rr.log(
-                f"blended",
-                rr.Image(self.pca.feature_map_to_rgb_pil(blended_frame.cpu())),
-            )
 
         attn_out = rearrange(attn_out_square, "b f d h w -> (b f) (h w) d")
 

@@ -14,14 +14,12 @@ from torch import Tensor, nn
 
 
 class FeatureShader(nn.Module):
-
     def __init__(self, device="cuda", blend_params=BlendParams()):
         super().__init__()
         self.device = device
         self.blend_params = blend_params
 
     def forward(self, fragments, meshes):
-
         # get the vertex features
         texels = meshes.sample_textures(fragments)
 
@@ -63,7 +61,6 @@ def render_depth_map(meshes, cameras, resolution=512):
 
 
 def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
-
     # create a rasterizer
     raster_settings = RasterizationSettings(
         image_size=resolution, blur_radius=0.0, faces_per_pixel=3, bin_size=0
@@ -82,12 +79,10 @@ def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
 def rasterize_vertex_features(
     cameras: CamerasBase, meshes: Meshes, res: int, vertex_features: Tensor
 ):
-
     rasterizer = make_rasterizer(cameras, res)
 
     renders = []
     for mesh in meshes:
-
         fragments = rasterizer(mesh)
 
         # B, F, V, D storing feature for each vertex in each face

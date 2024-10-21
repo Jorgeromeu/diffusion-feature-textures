@@ -9,7 +9,6 @@ input_video_path = input_data_dir / "combined_captioned.mp4"
 
 
 class Cropper:
-
     def __init__(self):
         self.x_offsets = [0, 410, 772, 1188, 1554]
         self.y_offsets = [92, 502, 916]
@@ -27,7 +26,6 @@ cropper = Cropper()
 scenes = ["sneaker", "house", "bed"]
 
 for s_i, scene in enumerate(scenes):
-
     # Create a directory for the scene
     scene_vids_dir = output_data_dir / scene
     scene_vids_dir.mkdir(exist_ok=True)

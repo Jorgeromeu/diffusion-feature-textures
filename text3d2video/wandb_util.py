@@ -84,7 +84,6 @@ def cleanup_artifact_collection(
     delete_log_runs: bool = True,
     keep_latest: bool = True,
 ):
-
     artifacts = api.artifacts(
         artifact_type, f"romeu/diffusion-3D-features/{artifact_name}"
     )
@@ -96,7 +95,6 @@ def cleanup_artifact_collection(
     print(f"{artifact_name}: Found {len(artifacts)} artifacts")
 
     for artifact in artifacts:
-
         # if keep latest ignore the run
         if keep_latest and "latest" in artifact.aliases:
             continue
@@ -165,7 +163,6 @@ class ArtifactWrapper:
 
     @classmethod
     def from_wandb_artifact(cls, artifact: Artifact, download=False):
-
         if download:
             artifact.download()
 

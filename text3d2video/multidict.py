@@ -64,7 +64,6 @@ class MultiDict:
         del self._data[self.dict_to_str(key)]
 
     def serialize_multidict(self, folder: Path, extension: str, save_fun: Callable):
-
         for k, v in self.items():
             name = self.dict_to_str(k)
             filename = folder / f"{name}.{extension}"
@@ -72,11 +71,9 @@ class MultiDict:
 
     @classmethod
     def read_multidict(cls, folder: Path, load_fun: Callable):
-
         d = MultiDict()
 
         for f in folder.iterdir():
-
             name = f.stem
             key = cls.str_to_dict(name)
             value = load_fun(folder / f)

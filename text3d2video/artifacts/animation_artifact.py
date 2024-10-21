@@ -11,11 +11,9 @@ from text3d2video.wandb_util import ArtifactWrapper
 
 
 class AnimationArtifact(ArtifactWrapper):
-
     wandb_artifact_type = "animation"
 
     def write_animation(self, animation_path: str, static_path: str):
-
         shutil.copy(static_path, self.unposed_mesh_path())
 
         # copy frames
@@ -38,7 +36,6 @@ class AnimationArtifact(ArtifactWrapper):
         return self.folder / "animation" / f"animation{frame:04}.obj"
 
     def frame_nums(self, sample_n=None):
-
         frame_paths = (self.folder / "animation").iterdir()
         frame_nums = [int(path.stem[-4:]) for path in frame_paths]
         frame_nums = sorted(frame_nums)
@@ -62,7 +59,6 @@ class AnimationArtifact(ArtifactWrapper):
         return load_objs_as_meshes([self.frame_path(frame)], device=device)
 
     def load_frames(self, frame_indices=None, device: str = "cuda") -> Meshes:
-
         if frame_indices is None:
             frame_indices = self.frame_nums()
 
@@ -77,7 +73,6 @@ class AnimationArtifact(ArtifactWrapper):
         return front_camera(1)
 
     def cameras(self, frame_indices=None):
-
         if frame_indices is None:
             frame_indices = self.frame_nums()
 

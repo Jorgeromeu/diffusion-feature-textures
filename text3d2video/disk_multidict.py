@@ -107,7 +107,6 @@ class TensorDiskMultiDict(DiskMultiDict):
     """
 
     def __init__(self, path: Path, init_empty: bool = False):
-
         super().__init__(
             path,
             save_fun=lambda t, p: torch.save(t.cpu(), p),

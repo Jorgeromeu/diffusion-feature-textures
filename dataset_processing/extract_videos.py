@@ -7,7 +7,6 @@ output_data_dir = Path("data/generative_rendering_results_processed")
 
 
 class Cropper:
-
     def __init__(self):
         self.square_w = 320
 
@@ -25,7 +24,6 @@ cropper = Cropper()
 scenes = ["ball", "fox", "girl", "rumba", "silly_dance"]
 
 for scene in scenes:
-
     # read video
     input_video_path = input_data_dir / "results" / f"{scene}.mp4"
     video = VideoFileClip(str(input_video_path))

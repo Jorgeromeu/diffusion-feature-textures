@@ -43,7 +43,6 @@ def get_module_from_path(parent_module: nn.Module, path: str) -> nn.Module:
 
     cur_module = parent_module
     for component in path.split("."):
-
         if component.isdigit():
             cur_module = cur_module[int(component)]
         else:
@@ -95,7 +94,6 @@ class HookManager:
 
 
 class DiffusionFeatureExtractor:
-
     # store saved features here, list because one per timestep
     _saved_features: Dict[str, List[torch.Tensor]]
 
@@ -132,7 +130,6 @@ class DiffusionFeatureExtractor:
 
         # pylint: disable=unused-argument
         def hook(module, inp, out):
-
             # save feature if current step is in save_steps
             if self._hook_data[name]["cur_step"] in self.save_steps:
                 self._saved_features[name].append(out.cpu().numpy())
@@ -144,7 +141,6 @@ class DiffusionFeatureExtractor:
 
 
 class SAFeatureExtractor:
-
     def __init__(self) -> None:
         self.hooks = HookManager()
         self.saved_outputs = {}

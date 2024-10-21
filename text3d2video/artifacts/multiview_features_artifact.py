@@ -12,7 +12,6 @@ from text3d2video.multidict import MultiDict
 
 
 class MVFeaturesArtifact(ArtifactWrapper):
-
     wandb_artifact_type = "multiview_features"
 
     def create_features_disk_dict(self) -> TensorDiskMultiDict:

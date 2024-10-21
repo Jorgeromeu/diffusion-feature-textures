@@ -15,7 +15,6 @@ from text3d2video.util import project_vertices_to_features
 
 
 def test_projection(anim_tag: str, image_path: str):
-
     blueprint = rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial3DView(name="3D"),

@@ -12,16 +12,24 @@ run:
   job_type: "generate_video"
   wandb: true
   instant_exit: false
-  rerun_enabled: false
   download_artifacts: false
   tags: []
 
 prompt: "Deadpool"
 out_artifact: "video"
 
+save_tensors:
+  enabled: true
+  save_latents: true
+  n_frames: 5
+  out_artifact: 'tensors'
+
+rerun:
+  enabled: false
+  module_paths: ["down_blocks.0.attentions.0.transformer_blocks.0.attn1"]
+  n_frames: 5
+
 generative_rendering:
-  save_tensors: true
-  rerun_module_paths: ["down_blocks.0.attentions.0.transformer_blocks.0.attn1"]
   res: 512
   seed: 0
   uv_texture_res: 64

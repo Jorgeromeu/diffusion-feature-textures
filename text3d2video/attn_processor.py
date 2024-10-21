@@ -1,19 +1,14 @@
-from math import sqrt
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
-import rerun as rr
 import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
-from einops import rearrange
 from jaxtyping import Float
 
 from text3d2video.sd_feature_extraction import get_module_path
-from text3d2video.util import blend_features
 
 
 class MyAttnProcessor:
-
     saved_tensors: Dict[str, torch.Tensor] = {}
 
     def __init__(self, unet, unet_chunk_size=2):
@@ -25,7 +20,6 @@ class MyAttnProcessor:
         self.unet_chunk_size = unet_chunk_size
 
     def memory_efficient_attention(self, attn, key, query, value, attention_mask):
-
         batch_size = query.shape[0]
 
         inner_dim = key.shape[-1]
@@ -59,7 +53,6 @@ class MyAttnProcessor:
         hidden_states: Float[torch.Tensor, "b t d"],
         encoder_hidden_states: Float[torch.Tensor, "b t d"],
     ) -> Float[torch.Tensor, "b t d"]:
-
         # if encoder hidden states are provided use them for cross attention
         if encoder_hidden_states is not None:
             hidden_states = encoder_hidden_states

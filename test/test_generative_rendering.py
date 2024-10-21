@@ -11,9 +11,7 @@ from text3d2video.generative_rendering.generative_rendering_pipeline import (
 
 
 class TestGenerativeRendering(unittest.TestCase):
-
     def setUp(self):
-
         device = torch.device("cuda")
         dtype = torch.float16
         sd_repo = "runwayml/stable-diffusion-v1-5"
@@ -62,7 +60,6 @@ class TestGenerativeRendering(unittest.TestCase):
 
     @torch.no_grad()
     def test_model_forward(self):
-
         n_frames = 3
         n_batches = 2
         prompt = "lol"
