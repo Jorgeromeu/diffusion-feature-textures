@@ -1,5 +1,6 @@
+import itertools
 import math
-from typing import List
+from typing import Callable, List
 
 import torch
 import torch.nn.functional as F
@@ -14,6 +15,12 @@ from pytorch3d.renderer import (
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
+
+
+def group_list_by(lst: List, key: Callable):
+    sorted_list = sorted(lst, key=key)
+    groupby_result = itertools.groupby(sorted_list, key)
+    return [list(content) for _, content in groupby_result]
 
 
 def ordered_sample(lst, n):

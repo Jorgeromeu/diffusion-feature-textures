@@ -10,17 +10,21 @@ import text3d2video.wandb_util as wu
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 
 
+def pil_frames_to_clip(frames: List, fps=10) -> ImageSequenceClip:
+    # convert PIL images to numpy arrays
+    frames_np = [np.asarray(im) for im in frames]
+
+    # create video
+    clip = ImageSequenceClip(frames_np, fps=fps)
+    return clip
+
+
 class VideoArtifact(wu.ArtifactWrapper):
 
     wandb_artifact_type = "video"
 
     def write_frames(self, frames: List, fps=10):
-
-        # convert PIL images to numpy arrays
-        frames_np = [np.asarray(im) for im in frames]
-
-        # create video
-        clip = ImageSequenceClip(frames_np, fps=fps)
+        clip = pil_frames_to_clip(frames, fps=fps)
         clip.write_videofile(str(self.get_mp4_path()))
 
     def get_mp4_path(self) -> Path:
