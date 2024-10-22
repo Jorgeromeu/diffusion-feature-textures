@@ -1,6 +1,7 @@
 import math
 from typing import List
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -14,6 +15,14 @@ from pytorch3d.renderer import (
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
+
+
+def turntable_cameras(dist: float, n: int, device="cuda") -> FoVPerspectiveCameras:
+    azim = np.linspace(0, 360, n)
+    elev = [0] * n
+    dist = [dist] * n
+    R, T = look_at_view_transform(dist, elev, azim)
+    return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
 
 def ordered_sample(lst, n):
@@ -275,4 +284,5 @@ def blend_features(
     blended_masked = blended * masks
 
     # return blended features, where features_rendered is not zero
+    return original_background + blended_masked
     return original_background + blended_masked

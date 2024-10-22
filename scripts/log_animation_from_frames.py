@@ -9,7 +9,8 @@ from text3d2video.artifacts.animation_artifact import AnimationArtifact
 def log_animation(artifact_name: str, animation_path: Path, static_path: Path):
     wandb.init(project="diffusion-3D-features", job_type="log_artifact")
     artifact: AnimationArtifact = AnimationArtifact.create_empty_artifact(artifact_name)
-    artifact.write_animation(animation_path, static_path)
+    artifact.write_unposed(static_path)
+    artifact.write_frames(animation_path)
     artifact.log_if_enabled()
     wandb.finish()
 
