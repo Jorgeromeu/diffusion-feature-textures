@@ -1,5 +1,6 @@
+import itertools
 import math
-from typing import List
+from typing import Callable, List
 
 import numpy as np
 import torch
@@ -23,6 +24,12 @@ def turntable_cameras(dist: float, n: int, device="cuda") -> FoVPerspectiveCamer
     dist = [dist] * n
     R, T = look_at_view_transform(dist, elev, azim)
     return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
+
+
+def group_list_by(lst: List, key: Callable):
+    sorted_list = sorted(lst, key=key)
+    groupby_result = itertools.groupby(sorted_list, key)
+    return [list(content) for _, content in groupby_result]
 
 
 def ordered_sample(lst, n):
