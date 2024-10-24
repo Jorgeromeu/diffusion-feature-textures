@@ -3,12 +3,12 @@ from typing import Callable, List
 
 from moviepy.editor import CompositeVideoClip, TextClip, clips_array
 from omegaconf import OmegaConf
+from wandb.apis.public import Run
 
 import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact, pil_frames_to_clip
 from text3d2video.rendering import render_depth_map
-from wandb.apis.public import Run
 
 
 @dataclass
@@ -109,7 +109,7 @@ def make_comparison_vid(
         title_clip = title_clip.margin(top=10, left=10, right=10, bottom=10, color=(255, 255, 255))
 
         # add margin
-        # pylint: disable no-member
+        # pylint: disable=no-member
         array_clip = array_clip.margin(top=title_clip.h, left=0, right=0, color=(255, 255, 255))
 
         array_clip = CompositeVideoClip([array_clip, title_clip])

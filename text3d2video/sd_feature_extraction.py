@@ -1,5 +1,4 @@
-from collections import defaultdict
-from typing import Callable, Dict, List, Set
+from typing import Callable, Dict, Set
 
 import torch
 from diffusers.models.attention_processor import Attention
@@ -87,76 +86,3 @@ class HookManager:
         for handle in self._named_handles.values():
             handle.remove()
         self._named_handles = {}
-
-
-class DiffusionFeatureExtractor:
-    # store saved features here, list because one per timestep
-    _saved_features: Dict[str, List[torch.Tensor]]
-
-    # store "local vars for each hook"
-    _hook_data: Dict[str, dict]
-
-    save_steps: list
-
-    def __init__(self, save_steps=None) -> None:
-        self.hook_manager = HookManager()
-        self._saved_features = defaultdict(lambda: [])
-        self._hook_data = {}
-
-        if save_steps is None:
-            save_steps = []
-        self.save_steps = save_steps
-
-    def clear_features(self):
-        self._saved_features = defaultdict(lambda: [])
-
-    def add_save_feature_hook(self, name: str, module: nn.Module):
-        self.hook_manager.add_named_hook(name, module, self._save_feature_hook(name))
-
-    def get_feature(self, name: str, timestep=0):
-        timestep_index = self.save_steps.index(timestep)
-        return self._saved_features[name][timestep_index]
-
-    def _save_feature_hook(self, name: str):
-        """
-        Create a hook that saves the output of a module with key `name`
-        """
-
-        self._hook_data[name] = {"cur_step": 0}
-
-        # pylint: disable=unused-argument
-        def hook(module, inp, out):
-            # save feature if current step is in save_steps
-            if self._hook_data[name]["cur_step"] in self.save_steps:
-                self._saved_features[name].append(out.cpu().numpy())
-
-            # increment step
-            self._hook_data[name]["cur_step"] += 1
-
-        return hook
-
-
-class SAFeatureExtractor:
-    def __init__(self) -> None:
-        self.hooks = HookManager()
-        self.saved_outputs = {}
-        self.saved_inputs = {}
-
-    def _post_attn_hook(self, module_name: str):
-        # pylint: disable=unused-argument
-        def hook(module, inp, output):
-            # self.saved_inputs[module_name] = inp[0].cpu()
-            self.saved_outputs[module_name] = output.cpu()
-
-        return hook
-
-    def _pre_attn_hook(self, module_name: str):
-        # pylint: disable=unused-argument
-        def hook(module, inp, output):
-            self.saved_inputs[module_name] = inp[0].cpu()
-
-        return hook
-
-    def add_attn_hooks(self, attn: Attention, name: str):
-        self.hooks.add_named_hook(f"save_{name}_out", attn, self._post_attn_hook(name))
-        self.hooks.add_named_hook(f"save_{name}_in", attn.to_k, self._pre_attn_hook(name))

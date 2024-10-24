@@ -2,7 +2,7 @@ from pathlib import Path
 
 import click
 import torch
-from pytorch3d.renderer import FoVOrthographicCameras, FoVPerspectiveCameras
+from pytorch3d.renderer import FoVPerspectiveCameras
 
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
