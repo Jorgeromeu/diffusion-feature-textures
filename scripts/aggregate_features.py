@@ -61,9 +61,7 @@ def aggregate_3d_features(
         if aggregation_type == AggregationType.MEAN:
             # get indices of vertices with nonzero features
             vert_features += view_vert_features
-            aggr_vert_features = vert_features / torch.clamp(
-                vert_feature_cnt, min=1
-            ).unsqueeze(1)
+            aggr_vert_features = vert_features / torch.clamp(vert_feature_cnt, min=1).unsqueeze(1)
 
     return aggr_vert_features
 
@@ -96,9 +94,7 @@ def run(cfg: DictConfig):
     cameras = mv_features.get_cameras()
 
     # create empty out artifact
-    out_artifact = VertAttributesArtifact.create_empty_artifact(
-        aggr_cfg.out_artifact_name
-    )
+    out_artifact = VertAttributesArtifact.create_empty_artifact(aggr_cfg.out_artifact_name)
 
     # store all aggregated 3D features
     all_vertex_features = out_artifact.get_features_disk_dict()
@@ -112,8 +108,7 @@ def run(cfg: DictConfig):
             # get feature map per view
             feature_identifier = {"layer": layer, "timestep": timestep}
             features = [
-                mv_features.get_feature(i, feature_identifier)
-                for i in mv_features.view_indices()
+                mv_features.get_feature(i, feature_identifier) for i in mv_features.view_indices()
             ]
 
             # reshape features to square

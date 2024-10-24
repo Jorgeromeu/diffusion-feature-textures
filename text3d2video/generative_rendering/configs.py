@@ -25,6 +25,7 @@ class SaveConfig:
     out_artifact: str
 
 
+# pylint: disable=too-many-instance-attributes
 @dataclass
 class GenerativeRenderingConfig:
     res: int

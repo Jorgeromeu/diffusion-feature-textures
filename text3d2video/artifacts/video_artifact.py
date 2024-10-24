@@ -48,7 +48,5 @@ class VideoArtifact(wu.ArtifactWrapper):
 
     def get_animation_from_lineage(self):
         log_run = self.logged_by()
-        animation = wu.first_used_artifact_of_type(
-            log_run, AnimationArtifact.wandb_artifact_type
-        )
+        animation = wu.first_used_artifact_of_type(log_run, AnimationArtifact.wandb_artifact_type)
         return AnimationArtifact.from_wandb_artifact(animation)

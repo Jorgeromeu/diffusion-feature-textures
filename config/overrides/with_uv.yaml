@@ -1,0 +1,6 @@
+# @package _global_
+
+generative_rendering:
+  do_uv_noise_init: true
+  do_pre_attn_injection: false
+  do_post_attn_injection: false

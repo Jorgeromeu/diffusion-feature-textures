@@ -14,7 +14,7 @@ from diffusers.image_processor import VaeImageProcessor
 from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
-from pytorch3d.renderer import FoVPerspectiveCameras, TexturesUV, TexturesVertex
+from pytorch3d.renderer import FoVPerspectiveCameras, TexturesVertex
 from pytorch3d.structures import Meshes
 from torch import Tensor
 from tqdm import tqdm
@@ -28,6 +28,7 @@ from text3d2video.generative_rendering.configs import (
     SaveConfig,
 )
 from text3d2video.generative_rendering.generative_rendering_attn import (
+    AttentionMode,
     GenerativeRenderingAttn,
 )
 from text3d2video.rendering import make_feature_renderer, render_depth_map
@@ -36,6 +37,7 @@ from text3d2video.util import (
     ordered_sample,
     project_vertices_to_cameras,
 )
+from text3d2video.uv_noise import prepare_uv_initialized_latents
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -108,10 +110,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return cond_embeddings, uncond_embeddings
 
-    def prepare_random_latents(
-        self, batch_size: int, generator=None
-    ) -> Float[Tensor, "b c w h"]:
-        latent_res = self.res // 8
+    def prepare_random_latents(self, batch_size: int, generator=None) -> Float[Tensor, "b c w h"]:
+        latent_res = self.gr_config.res // 8
         in_channels = self.unet.config.in_channels
         latents = torch.randn(
             batch_size,
@@ -133,46 +133,18 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         faces_uvs: torch.Tensor,
         generator=None,
     ) -> Float[Tensor, "b c w h"]:
-        # setup noise texture
-        latent_res = self.gr_config.res // 8
-        noise_texture_res = latent_res * 1
-        in_channels = self.unet.config.in_channels
-        noise_texture_map = torch.randn(
-            noise_texture_res,
-            noise_texture_res,
-            in_channels,
+        return prepare_uv_initialized_latents(
+            frames,
+            cameras,
+            verts_uvs,
+            faces_uvs,
+            generator,
             device=self.device,
-            generator=generator,
+            dtype=self.dtype,
+            latent_channels=self.unet.config.in_channels,
+            latent_res=self.gr_config.res // 8,
+            latent_texture_res=self.gr_config.res,
         )
-
-        n_frames = len(frames)
-
-        noise_texture = TexturesUV(
-            verts_uvs=verts_uvs.expand(n_frames, -1, -1).to(self.device),
-            faces_uvs=faces_uvs.expand(n_frames, -1, -1).to(self.device),
-            maps=noise_texture_map.expand(n_frames, -1, -1, -1).to(self.device),
-        )
-
-        frames.textures = noise_texture
-
-        # render noise texture for each frame
-        renderer = make_feature_renderer(cameras, latent_res)
-        noise_renders = renderer(frames).to(self.dtype)
-
-        noise_renders = rearrange(noise_renders, "b h w c -> b c h w")
-        noise_renders = noise_renders.to(device=self.device, dtype=self.dtype)
-
-        background_noise = torch.randn(
-            in_channels, latent_res, latent_res, generator=generator, device=self.device
-        ).expand(n_frames, -1, -1, -1)
-        background_noise = background_noise.to(self.device, dtype=self.dtype)
-
-        latents_mask = (noise_renders == 0).float()
-        latents = noise_renders + background_noise * latents_mask
-
-        latents = latents.to(self.device, dtype=self.dtype)
-
-        return latents
 
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
         # scale latents
@@ -198,9 +170,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         height = images[0].height
         width = images[0].width
 
-        image = self.control_image_processor.preprocess(
-            images, height=height, width=width
-        ).to(dtype=self.dtype, device=self.device)
+        image = self.control_image_processor.preprocess(images, height=height, width=width).to(
+            dtype=self.dtype, device=self.device
+        )
 
         if do_classifier_free_guidance:
             image = torch.cat([image] * 2)
@@ -260,23 +232,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         Dict[str, Float[torch.Tensor, "b t c"]],
         Dict[str, Float[torch.Tensor, "b f t c"]],
     ]:
-        # do extended attention and save features
-        self.attn_processor.do_extended_attention = True
-        self.attn_processor.save_pre_attn_features = (
-            self.gr_config.do_pre_attn_injection
-        )
-        self.attn_processor.save_post_attn_features = (
-            self.gr_config.do_post_attn_injection
-        )
-        self.attn_processor.module_paths = self.gr_config.module_paths
+        # set attn processor flags
+        self.attn_processor.attn_mode = AttentionMode.FEATURE_EXTRACTION
 
         self.model_forward(latents, text_embeddings, depth_maps, t)
-
-        # clear flags
-        self.attn_processor.save_pre_attn_features = False
-        self.attn_processor.save_post_attn_features = False
-        self.attn_processor.do_extended_attention = False
-        self.attn_processor.module_paths = []
 
         # get saved features
         pre_attn_features, post_attn_features = (
@@ -284,9 +243,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             self.attn_processor.saved_post_attn,
         )
 
-        # clear saved features
-        self.attn_processor.saved_pre_attn = {}
-        self.attn_processor.saved_post_attn = {}
+        self.attn_processor.clear_saved_features()
 
         return pre_attn_features, post_attn_features
 
@@ -299,27 +256,12 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         pre_attn_features: Dict[str, Float[Tensor, "b f t d"]],
         feature_images: Dict[str, Float[Tensor, "b f d h w"]],
     ):
-        # set modules
-        self.attn_processor.module_paths = self.gr_config.module_paths
-
         # pass features to attn processor
-        self.attn_processor.feature_images = feature_images
+        self.attn_processor.attn_mode = AttentionMode.FEATURE_INJECTION
+        self.attn_processor.post_attn_feature_images = feature_images
         self.attn_processor.saved_pre_attn = pre_attn_features
 
-        # do feature injection
-        self.attn_processor.do_pre_attn_injection = self.gr_config.do_pre_attn_injection
-        self.attn_processor.do_post_attn_injection = (
-            self.gr_config.do_post_attn_injection
-        )
-        self.attn_processor.feature_blend_alpha = self.gr_config.feature_blend_alpha
-
         noise_pred = self.model_forward(latents, text_embeddings, depth_maps, t)
-
-        self.attn_processor.module_paths = []
-        self.attn_processor.feature_images = {}
-        self.attn_processor.saved_pre_attn = {}
-        self.attn_processor.do_pre_attn_injection = False
-        self.attn_processor.do_post_attn_injection = False
 
         return noise_pred
 
@@ -424,9 +366,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         for frame_i in self.rerun_frame_indices:
             frame_views.append(rrb.Spatial2DView(contents=[f"+/frame_{frame_i}"]))
             latent_views.append(rrb.TensorView(contents=[f"+/latent_{frame_i}"]))
-            depth_map_views.append(
-                rrb.Spatial2DView(contents=[f"+/depth_map_{frame_i}"])
-            )
+            depth_map_views.append(rrb.Spatial2DView(contents=[f"+/depth_map_{frame_i}"]))
 
         main_tab = rrb.Vertical(
             rrb.Horizontal(*latent_views, name="Latents"),
@@ -498,9 +438,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         )
 
         # setup artifact
-        tensors_artifact = H5Artifact.create_empty_artifact(
-            self.save_tensors_config.out_artifact
-        )
+        tensors_artifact = H5Artifact.create_empty_artifact(self.save_tensors_config.out_artifact)
         tensors_artifact.open_h5_file()
         self.tensors_artifact = tensors_artifact
 
@@ -535,6 +473,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     ):
         # store configs for use throughout pipeline
         self.gr_config = generative_rendering_config
+        self.attn_processor.gr_config = generative_rendering_config
         self.rerun_config = rerun_config
         self.save_tensors_config = save_config
 
@@ -572,9 +511,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             latents = self.prepare_random_latents(n_frames, generator=generator)
 
         # chunk indices to use in inference loop
-        chunks_indices = torch.split(
-            torch.arange(0, n_frames), self.gr_config.chunk_size
-        )
+        chunks_indices = torch.split(torch.arange(0, n_frames), self.gr_config.chunk_size)
 
         # get 2D vertex positions for each frame
         vert_xys, vert_indices = project_vertices_to_cameras(frames, cameras)
@@ -596,13 +533,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             kf_embeddings = stacked_text_embeddings[:, kf_indices]
             kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
 
-            pre_attn_features, post_attn_features = (
-                self.model_forward_feature_extraction(
-                    kf_latents,
-                    kf_embeddings,
-                    kf_depth_maps,
-                    t,
-                )
+            pre_attn_features, post_attn_features = self.model_forward_feature_extraction(
+                kf_latents,
+                kf_embeddings,
+                kf_depth_maps,
+                t,
             )
 
             # Unify features across keyframes as vertex features
@@ -650,9 +585,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # preform classifier free guidance
             noise_pred_uncond, noise_pred_text = noise_pred_all
             guidance_direction = noise_pred_text - noise_pred_uncond
-            noise_pred = (
-                noise_pred_uncond + self.gr_config.guidance_scale * guidance_direction
-            )
+            noise_pred = noise_pred_uncond + self.gr_config.guidance_scale * guidance_direction
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample

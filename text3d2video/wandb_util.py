@@ -25,9 +25,7 @@ def setup_run(cfg: DictConfig):
     )
 
     # add config
-    wandb.config.update(
-        OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    )
+    wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     do_run = True
 
@@ -84,9 +82,7 @@ def cleanup_artifact_collection(
     delete_log_runs: bool = True,
     keep_latest: bool = True,
 ):
-    artifacts = api.artifacts(
-        artifact_type, f"romeu/diffusion-3D-features/{artifact_name}"
-    )
+    artifacts = api.artifacts(artifact_type, f"romeu/diffusion-3D-features/{artifact_name}")
 
     if artifacts is None:
         print(f"{artifact_name}: No artifacts found")

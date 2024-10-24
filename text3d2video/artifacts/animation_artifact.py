@@ -8,7 +8,8 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.util import front_camera, ordered_sample
+from text3d2video.camera_placement import front_camera
+from text3d2video.util import ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
 
 

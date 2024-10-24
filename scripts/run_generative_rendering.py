@@ -23,6 +23,8 @@ def run(cfg: RunGenerativeRenderingConfig):
     if not do_run:
         return
 
+    torch.set_grad_enabled(False)
+
     # read animation
     animation = AnimationArtifact.from_wandb_artifact_tag(
         cfg.animation.artifact_tag, download=cfg.run.download_artifacts
@@ -39,17 +41,13 @@ def run(cfg: RunGenerativeRenderingConfig):
     sd_repo = cfg.model.sd_repo
     controlnet_repo = cfg.model.controlnet_repo
 
-    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(
-        device
-    )
+    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(device)
 
     pipe: GenerativeRenderingPipeline = GenerativeRenderingPipeline.from_pretrained(
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 
-    pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
-        pipe.scheduler.config
-    )
+    pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(pipe.scheduler.config)
 
     pipe.module_paths = cfg.generative_rendering.module_paths
 

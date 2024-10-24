@@ -17,11 +17,11 @@ from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.artifacts.vertex_atributes_artifact import VertAttributesArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
+from text3d2video.camera_placement import front_camera
 from text3d2video.cross_frame_attn import CrossFrameAttnProcessor
 from text3d2video.multidict import MultiDict
 from text3d2video.pipelines.controlnet_pipeline import ControlNetPipeline
 from text3d2video.rendering import make_feature_renderer, render_depth_map
-from text3d2video.util import front_camera
 
 
 def render_feature_images(
@@ -79,13 +79,13 @@ def run(cfg: DictConfig):
     controlnet_repo = cfg.model.controlnet_repo
     device = torch.device("cuda")
 
-    controlnet = ControlNetModel.from_pretrained(
-        controlnet_repo, torch_dtype=torch.float16
-    ).to(device)
+    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=torch.float16).to(
+        device
+    )
 
-    pipe = ControlNetPipeline.from_pretrained(
-        sd_repo, controlnet=controlnet, torch_dtype=dtype
-    ).to(device)
+    pipe = ControlNetPipeline.from_pretrained(sd_repo, controlnet=controlnet, torch_dtype=dtype).to(
+        device
+    )
 
     # read animation
     animation = AnimationArtifact.from_wandb_artifact_tag(

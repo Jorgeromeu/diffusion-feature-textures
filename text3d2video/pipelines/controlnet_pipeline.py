@@ -106,15 +106,13 @@ class ControlNetPipeline(DiffusionPipeline):
 
         return images
 
-    def prepare_controlnet_image(
-        self, images: List[Image.Image], do_classifier_free_guidance=True
-    ):
+    def prepare_controlnet_image(self, images: List[Image.Image], do_classifier_free_guidance=True):
         height = images[0].height
         width = images[0].width
 
-        image = self.control_image_processor.preprocess(
-            images, height=height, width=width
-        ).to(dtype=self.dtype, device=self.device)
+        image = self.control_image_processor.preprocess(images, height=height, width=width).to(
+            dtype=self.dtype, device=self.device
+        )
 
         if do_classifier_free_guidance:
             image = torch.cat([image] * 2)
@@ -132,6 +130,7 @@ class ControlNetPipeline(DiffusionPipeline):
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         generator=None,
+        initial_latents: torch.Tensor = None,
     ):
         # number of images being generated
         batch_size = len(prompts)
@@ -144,7 +143,10 @@ class ControlNetPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, res, generator=generator)
+        if initial_latents is not None:
+            latents = initial_latents
+        else:
+            latents = self.prepare_latents(batch_size, res, generator=generator)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):

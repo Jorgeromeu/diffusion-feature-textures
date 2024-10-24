@@ -1,29 +1,17 @@
 import itertools
-import math
 from typing import Callable, List
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.renderer import (
     CamerasBase,
-    FoVPerspectiveCameras,
     MeshRasterizer,
     RasterizationSettings,
-    look_at_view_transform,
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
-
-
-def turntable_cameras(dist: float, n: int, device="cuda") -> FoVPerspectiveCameras:
-    azim = np.linspace(0, 360, n)
-    elev = [0] * n
-    dist = [dist] * n
-    R, T = look_at_view_transform(dist, elev, azim)
-    return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
 
 def group_list_by(lst: List, key: Callable):
@@ -179,7 +167,7 @@ def aggregate_features_precomputed_vertex_positions(
     feature_maps: Float[Tensor, "n c h w"],
     n_verts: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],
+    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
     mode="nearest",
     aggregation_type="first",
 ):
@@ -228,53 +216,6 @@ def sample_feature_map(feature_map: Tensor, coords: Tensor, mode="nearest"):
     return out_features
 
 
-def multiview_cameras(
-    mesh: Meshes,
-    num_views: int,
-    add_angle_ele=0,
-    add_angle_azi=0,
-    scaling_factor=0.65,
-    device="cpu",
-) -> FoVPerspectiveCameras:
-    """
-    Generate cameras that envelope a mesh
-    """
-
-    # get bbox around mesh
-    bbox = mesh.get_bounding_boxes()
-    bbox_min = bbox.min(dim=-1).values[0]
-    bbox_max = bbox.max(dim=-1).values[0]
-
-    bb_diff = bbox_max - bbox_min
-    bbox_center = (bbox_min + bbox_max) / 2.0
-    distance = torch.sqrt((bb_diff * bb_diff).sum())
-    distance *= scaling_factor
-
-    steps = int(math.sqrt(num_views))
-    end = 360 - 360 / steps
-    elevation = (
-        torch.linspace(start=0, end=end, steps=steps).repeat(steps) + add_angle_ele
-    )
-    azimuth = torch.linspace(start=0, end=end, steps=steps)
-    azimuth = torch.repeat_interleave(azimuth, steps) + add_angle_azi
-    bbox_center = bbox_center.unsqueeze(0)
-    rotation, translation = look_at_view_transform(
-        dist=distance, azim=azimuth, elev=elevation, device=device, at=bbox_center
-    )
-
-    cameras = FoVPerspectiveCameras(
-        R=rotation, T=translation, device=device, znear=0.1, zfar=100
-    )
-
-    return cameras
-
-
-def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
-    R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
-    cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
-    return cameras
-
-
 def blend_features(
     features_original: Tensor,
     features_rendered: Tensor,
@@ -291,5 +232,4 @@ def blend_features(
     blended_masked = blended * masks
 
     # return blended features, where features_rendered is not zero
-    return original_background + blended_masked
     return original_background + blended_masked

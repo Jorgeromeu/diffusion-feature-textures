@@ -15,6 +15,7 @@ import text3d2video.wandb_util as wu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
+from text3d2video.camera_placement import multiview_cameras
 from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.multidict import MultiDict
 from text3d2video.pipelines.controlnet_pipeline import ControlNetPipeline
@@ -23,7 +24,6 @@ from text3d2video.sd_feature_extraction import (
     DiffusionFeatureExtractor,
     get_module_from_path,
 )
-from text3d2video.util import multiview_cameras
 
 
 def extract_multiview_features(
@@ -68,9 +68,7 @@ def extract_multiview_features(
     # log cameras
     rr_seq.step()
     for view_i in range(n_views):
-        ru.log_pt3d_fov_camera(
-            f"cam_{view_i}", cameras, batch_idx=view_i, res=resolution
-        )
+        ru.log_pt3d_fov_camera(f"cam_{view_i}", cameras, batch_idx=view_i, res=resolution)
 
     # render depth maps
     rasterizer = make_rasterizer(cameras, resolution)
@@ -95,9 +93,7 @@ def extract_multiview_features(
     # Generate images
     prompts = [prompt] * n_views
     with Timer(initial_text="Generating images"):
-        generted_ims = pipe(
-            prompts, depth_imgs, num_inference_steps=num_inference_steps
-        )
+        generted_ims = pipe(prompts, depth_imgs, num_inference_steps=num_inference_steps)
 
     # log generated images
     rr_seq.step()
@@ -146,13 +142,13 @@ def run(cfg: DictConfig):
     controlnet_repo = cfg.model.controlnet_repo
     device = torch.device("cuda")
 
-    controlnet = ControlNetModel.from_pretrained(
-        controlnet_repo, torch_dtype=torch.float16
-    ).to(device)
+    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=torch.float16).to(
+        device
+    )
 
-    pipe = ControlNetPipeline.from_pretrained(
-        sd_repo, controlnet=controlnet, torch_dtype=dtype
-    ).to(device)
+    pipe = ControlNetPipeline.from_pretrained(sd_repo, controlnet=controlnet, torch_dtype=dtype).to(
+        device
+    )
 
     # create empty output artifact
     out_artifact: MVFeaturesArtifact = MVFeaturesArtifact.create_empty_artifact(

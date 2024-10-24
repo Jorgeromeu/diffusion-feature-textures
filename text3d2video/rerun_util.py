@@ -60,9 +60,7 @@ def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     )
 
 
-def log_pt3d_fov_camera(
-    label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100
-):
+def log_pt3d_fov_camera(label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
     rr.log(label, pt3d_fov_camera(cameras, batch_idx, res))
     cam_trans = cameras.get_world_to_view_transform().inverse()
     rr.log(label, pt3d_transform(cam_trans, batch_idx))

@@ -11,11 +11,7 @@ def find_attn_modules(module: nn.Module):
     Find all attention modules in a module
     """
 
-    return [
-        (name, mod)
-        for name, mod in module.named_modules()
-        if isinstance(module, Attention)
-    ]
+    return [(name, mod) for name, mod in module.named_modules() if isinstance(module, Attention)]
 
 
 def get_module_path(parent_module: nn.Module, module: nn.Module) -> str:
@@ -163,6 +159,4 @@ class SAFeatureExtractor:
 
     def add_attn_hooks(self, attn: Attention, name: str):
         self.hooks.add_named_hook(f"save_{name}_out", attn, self._post_attn_hook(name))
-        self.hooks.add_named_hook(
-            f"save_{name}_in", attn.to_k, self._pre_attn_hook(name)
-        )
+        self.hooks.add_named_hook(f"save_{name}_in", attn.to_k, self._pre_attn_hook(name))

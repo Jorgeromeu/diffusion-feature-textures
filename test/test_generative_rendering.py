@@ -17,15 +17,13 @@ class TestGenerativeRendering(unittest.TestCase):
         sd_repo = "runwayml/stable-diffusion-v1-5"
         controlnet_repo = "lllyasviel/control_v11f1p_sd15_depth"
 
-        controlnet = ControlNetModel.from_pretrained(
-            controlnet_repo, torch_dtype=torch.float16
-        ).to(device)
-
-        self.pipe: GenerativeRenderingPipeline = (
-            GenerativeRenderingPipeline.from_pretrained(
-                sd_repo, controlnet=controlnet, torch_dtype=dtype
-            ).to(device)
+        controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=torch.float16).to(
+            device
         )
+
+        self.pipe: GenerativeRenderingPipeline = GenerativeRenderingPipeline.from_pretrained(
+            sd_repo, controlnet=controlnet, torch_dtype=dtype
+        ).to(device)
 
         self.animation = AnimationArtifact.from_wandb_artifact_tag(
             "backflip:latest", download=False
@@ -52,9 +50,7 @@ class TestGenerativeRendering(unittest.TestCase):
         cameras = self.animation.cameras(frame_nums)
         verts_uv, faces_uv = self.animation.texture_data()
         latents_random = self.pipe.prepare_random_latents(len(frame_nums))
-        latents_uv = self.pipe.prepare_uv_initialized_latents(
-            frames, cameras, verts_uv, faces_uv
-        )
+        latents_uv = self.pipe.prepare_uv_initialized_latents(frames, cameras, verts_uv, faces_uv)
 
         self.assertEqual(latents_random.shape, latents_uv.shape)
 
@@ -72,9 +68,7 @@ class TestGenerativeRendering(unittest.TestCase):
         embeddings = torch.stack([cond_emb, uncond_emb])
 
         # random depth maps
-        depth_maps = [
-            TF.to_pil_image(torch.zeros(3, 512, 512)) for _ in range(n_frames)
-        ]
+        depth_maps = [TF.to_pil_image(torch.zeros(3, 512, 512)) for _ in range(n_frames)]
 
         # timestep
         t = 0
