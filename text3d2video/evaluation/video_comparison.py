@@ -3,12 +3,12 @@ from typing import Callable, List
 
 from moviepy.editor import CompositeVideoClip, TextClip, clips_array
 from omegaconf import OmegaConf
-from wandb.apis.public import Run
 
 import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact, pil_frames_to_clip
 from text3d2video.rendering import render_depth_map
+from wandb.apis.public import Run
 
 
 @dataclass
@@ -28,9 +28,28 @@ def scene_key_fun(run: Run):
     return frozenset({prompt, animation, n_frames})
 
 
+def add_label_to_clip(clip, label: VideoLabel, position=("left", "top")):
+    text_clip = (
+        TextClip(
+            label.content,
+            fontsize=label.font_size,
+            color=label.color,
+            font=label.font,
+            align="West",
+            bg_color=label.bg_color,
+        )
+        .set_position(position)
+        .set_duration(clip.duration)
+        .set_fps(clip.fps)
+    )
+
+    return CompositeVideoClip([clip, text_clip])
+
+
 def make_comparison_vid(
     runs: List[List[Run]],
-    info_fun: Callable[[Run], VideoLabel],
+    info_fun_top: Callable[[Run, VideoArtifact], VideoLabel] = None,
+    info_fun_bottom: Callable[[Run, VideoArtifact], VideoLabel] = None,
     title: str = None,
     download=True,
     show_guidance_video=False,
@@ -68,25 +87,17 @@ def make_comparison_vid(
             video_artifact = VideoArtifact.from_wandb_artifact(video_artifact, download=download)
             clip = video_artifact.get_moviepy_clip()
 
-            label = info_fun(run)
-
-            text_clip = (
-                TextClip(
-                    label.content,
-                    fontsize=label.font_size,
-                    color=label.color,
-                    font=label.font,
-                    align="West",
-                    bg_color=label.bg_color,
+            if info_fun_bottom is not None:
+                clip = add_label_to_clip(
+                    clip, info_fun_bottom(run, video_artifact), position=("left", "bottom")
                 )
-                .set_position(("left", "top"))
-                .set_duration(clip.duration)
-                .set_fps(clip.fps)
-            )
 
-            composited = CompositeVideoClip([clip, text_clip])
+            if info_fun_top is not None:
+                clip = add_label_to_clip(
+                    clip, info_fun_top(run, video_artifact), position=("left", "top")
+                )
 
-            row_clips.append(composited)
+            row_clips.append(clip)
 
         clips_grid.append(row_clips)
 

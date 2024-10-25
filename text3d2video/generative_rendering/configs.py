@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Union
 
 
 @dataclass
@@ -28,9 +27,9 @@ class SaveConfig:
 
 
 class NoiseInitializationMethod(Enum):
-    RANDOM: str = "random"
-    FIXED: str = "fixed"
-    UV: str = "uv"
+    RANDOM: str = "RANDOM"
+    FIXED: str = "FIXED"
+    UV: str = "UV"
 
 
 @dataclass
