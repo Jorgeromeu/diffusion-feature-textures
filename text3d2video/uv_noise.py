@@ -17,6 +17,7 @@ def prepare_uv_initialized_latents(
     latent_res=64,
     latent_texture_res=64,
     latent_channels=4,
+    sampling_mode: str = "nearest",
     device="cuda",
     dtype=torch.float16,
 ) -> Float[Tensor, "b c w h"]:
@@ -36,7 +37,7 @@ def prepare_uv_initialized_latents(
         faces_uvs=faces_uvs.expand(n_frames, -1, -1).to(device),
         maps=noise_texture_map.expand(n_frames, -1, -1, -1).to(device),
     )
-    noise_texture.sampling_mode = "nearest"
+    noise_texture.sampling_mode = sampling_mode
     frames.textures = noise_texture
 
     # render noise texture for each frame

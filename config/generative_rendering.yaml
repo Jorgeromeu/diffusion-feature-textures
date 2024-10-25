@@ -7,6 +7,7 @@ hydra:
 defaults:
   - model: stable_diffusion_v1_5
   - animation: backflip
+  - generative_rendering/noise_initialization: uv
 
 run:
   job_type: "generate_video"
@@ -30,16 +31,15 @@ rerun:
   n_frames: 5
 
 generative_rendering:
-  res: 512
+  resolution: 512
   seed: 0
-  uv_texture_res: 64
-  do_uv_noise_init: true
   do_pre_attn_injection: true
   do_post_attn_injection: true
   feature_blend_alpha: 1.0
   mean_features_weight: 0.5
   chunk_size: 5
   num_keyframes: 4
+  attend_to_self_kv: true
   num_inference_steps: 10
   guidance_scale: 7.5
   controlnet_conditioning_scale: 1.0

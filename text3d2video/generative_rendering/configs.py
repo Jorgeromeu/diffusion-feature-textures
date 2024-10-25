@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, Union
 
 
 @dataclass
@@ -25,16 +27,28 @@ class SaveConfig:
     out_artifact: str
 
 
+class NoiseInitializationMethod(Enum):
+    RANDOM: str = "random"
+    FIXED: str = "fixed"
+    UV: str = "uv"
+
+
+@dataclass
+class NoiseInitializationConfig:
+    method: NoiseInitializationMethod
+    uv_texture_res = -1
+
+
 # pylint: disable=too-many-instance-attributes
 @dataclass
 class GenerativeRenderingConfig:
-    res: int
     seed: int
-    uv_texture_res: int
-    do_uv_noise_init: bool
+    resolution: int
+    noise_initialization: NoiseInitializationConfig
     do_pre_attn_injection: bool
     do_post_attn_injection: bool
     feature_blend_alpha: float
+    attend_to_self_kv: bool
     mean_features_weight: float
     chunk_size: int
     num_keyframes: int

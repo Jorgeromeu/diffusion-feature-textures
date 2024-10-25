@@ -28,7 +28,6 @@ class AttentionMode(Enum):
 class GenerativeRenderingAttn:
     # generative rendering config
     gr_config: GenerativeRenderingConfig
-
     attn_mode: AttentionMode = AttentionMode.FEATURE_INJECTION
 
     # save features here
@@ -89,8 +88,9 @@ class GenerativeRenderingAttn:
             # repeat across frame dimension
             saved_hidden_states = extend_across_frame_dim(saved_hidden_states, n_frames)
 
-            # concatenate current hidden states
-            saved_hidden_states = torch.cat([saved_hidden_states, hidden_states], dim=1)
+            if self.gr_config.attend_to_self_kv:
+                # concatenate current hidden states
+                hidden_states = torch.cat([hidden_states, saved_hidden_states], dim=1)
 
             return saved_hidden_states
 

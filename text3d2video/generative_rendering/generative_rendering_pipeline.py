@@ -11,7 +11,7 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 from diffusers.image_processor import VaeImageProcessor
-from einops import rearrange
+from einops import rearrange, repeat
 from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import FoVPerspectiveCameras, TexturesVertex
@@ -24,6 +24,7 @@ import text3d2video.rerun_util as ru
 from text3d2video.artifacts.tensors_artifact import H5Artifact
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
+    NoiseInitializationMethod,
     RerunConfig,
     SaveConfig,
 )
@@ -110,41 +111,54 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return cond_embeddings, uncond_embeddings
 
-    def prepare_random_latents(self, batch_size: int, generator=None) -> Float[Tensor, "b c w h"]:
-        latent_res = self.gr_config.res // 8
-        in_channels = self.unet.config.in_channels
-        latents = torch.randn(
-            batch_size,
-            in_channels,
-            latent_res,
-            latent_res,
-            device=self.device,
-            generator=generator,
-            dtype=self.dtype,
-        )
+    def prepare_latents(
+        self, frames: Meshes, cameras: FoVPerspectiveCameras, verts_uvs, faces_uvs, generator=None
+    ):
+        latent_channels = self.unet.config.in_channels
+        latent_res = self.gr_config.resolution // 8
+        n_frames = len(frames)
 
-        return latents
+        noise_init_method = self.gr_config.noise_initialization.method
 
-    def prepare_uv_initialized_latents(
-        self,
-        frames: Meshes,
-        cameras: FoVPerspectiveCameras,
-        verts_uvs: torch.Tensor,
-        faces_uvs: torch.Tensor,
-        generator=None,
-    ) -> Float[Tensor, "b c w h"]:
-        return prepare_uv_initialized_latents(
-            frames,
-            cameras,
-            verts_uvs,
-            faces_uvs,
-            generator,
-            device=self.device,
-            dtype=self.dtype,
-            latent_channels=self.unet.config.in_channels,
-            latent_res=self.gr_config.res // 8,
-            latent_texture_res=self.gr_config.res,
-        )
+        if noise_init_method == NoiseInitializationMethod.UV:
+            uv_tex_resolution = self.gr_config.noise_initialization.uv_texture_res
+
+            return prepare_uv_initialized_latents(
+                frames,
+                cameras,
+                verts_uvs,
+                faces_uvs,
+                generator,
+                device=self.device,
+                dtype=self.dtype,
+                latent_channels=latent_channels,
+                latent_res=latent_res,
+                latent_texture_res=uv_tex_resolution,
+            )
+
+        if noise_init_method == NoiseInitializationMethod.RANDOM:
+            return torch.randn(
+                n_frames,
+                latent_channels,
+                latent_res,
+                latent_res,
+                device=self.device,
+                generator=generator,
+                dtype=self.dtype,
+            )
+
+        if noise_init_method == NoiseInitializationMethod.FIXED:
+            latent_0 = torch.randn(
+                latent_channels,
+                latent_res,
+                latent_res,
+                device=self.device,
+                generator=generator,
+                dtype=self.dtype,
+            )
+            return repeat(latent_0, "c h w -> b c h w", b=n_frames)
+
+        raise ValueError(f"Invalid noise initialization method: {noise_init_method}")
 
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
         # scale latents
@@ -271,7 +285,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return torch.randperm(n_frames)[: self.gr_config.num_keyframes]
 
-    def aggregate_kf_features(
+    def aggregate_feature_maps(
         self,
         n_vertices: int,
         kf_vert_xys: List[Tensor],
@@ -490,7 +504,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         generator.manual_seed(self.gr_config.seed)
 
         # render depth maps
-        depth_maps = render_depth_map(frames, cameras, self.gr_config.res)
+        depth_maps = render_depth_map(frames, cameras, self.gr_config.resolution)
 
         for i, depth_map in enumerate(depth_maps):
             rr.log(f"depth_map_{i}", rr.Image(depth_map))
@@ -499,16 +513,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
         stacked_text_embeddings = torch.stack([uncond_embeddings, cond_embeddings])
 
-        # set timesteps
+        # configure scheduler
         self.scheduler.set_timesteps(self.gr_config.num_inference_steps)
 
         # initial latent noise
-        if self.gr_config.do_uv_noise_init:
-            latents = self.prepare_uv_initialized_latents(
-                frames, cameras, verts_uvs, faces_uvs, generator=generator
-            )
-        else:
-            latents = self.prepare_random_latents(n_frames, generator=generator)
+        latents = self.prepare_latents(frames, cameras, verts_uvs, faces_uvs, generator)
 
         # chunk indices to use in inference loop
         chunks_indices = torch.split(torch.arange(0, n_frames), self.gr_config.chunk_size)
@@ -519,7 +528,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
             # self.log_latents(latents, generator)
-            self.save_latents(latents, rerun_seq.cur_step)
+            # self.save_latents(latents, rerun_seq.cur_step)
 
             # duplicate latent, to feed to model with CFG
             latents_stacked = torch.stack([latents] * 2)
@@ -543,7 +552,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # Unify features across keyframes as vertex features
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
-            aggregated_3d_features = self.aggregate_kf_features(
+            aggregated_3d_features = self.aggregate_feature_maps(
                 frames.num_verts_per_mesh()[0],
                 kf_vert_xys,
                 kf_vert_indices,
