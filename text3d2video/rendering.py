@@ -21,7 +21,10 @@ class UVShader(nn.Module):
 
     def forward(self, fragments, meshes):
         packing_list = [
-            i[j] for i, j in zip(meshes.textures.verts_uvs_list(), meshes.textures.faces_uvs_list())
+            i[j]
+            for i, j in zip(
+                meshes.textures.verts_uvs_list(), meshes.textures.faces_uvs_list()
+            )
         ]
         faces_verts_uvs = torch.cat(packing_list)
 
@@ -85,7 +88,9 @@ def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
         image_size=resolution, blur_radius=0.0, faces_per_pixel=3, bin_size=0
     )
 
-    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings).to(device)
+    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings).to(
+        device
+    )
 
     shader = FeatureShader()
     renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)

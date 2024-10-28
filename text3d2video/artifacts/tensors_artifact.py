@@ -17,7 +17,9 @@ class H5Artifact(ArtifactWrapper):
     def close_h5_file(self):
         self.h5_file.close()
 
-    def create_dataset(self, path: str, data: torch.Tensor, dim_names: list[str] = None):
+    def create_dataset(
+        self, path: str, data: torch.Tensor, dim_names: list[str] = None
+    ):
         d = self.h5_file.create_dataset(path, data=data.cpu().numpy())
 
         if dim_names is not None and len(dim_names) != len(data.shape):

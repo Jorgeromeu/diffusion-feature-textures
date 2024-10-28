@@ -1,4 +1,4 @@
-from typing import List
+from typing import Callable, List, Optional
 
 import torch
 from diffusers import (
@@ -16,6 +16,8 @@ from typeguard import typechecked
 
 
 class ControlNetPipeline(DiffusionPipeline):
+    pre_step_callback: Optional[Callable] = None
+
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -106,13 +108,15 @@ class ControlNetPipeline(DiffusionPipeline):
 
         return images
 
-    def prepare_controlnet_image(self, images: List[Image.Image], do_classifier_free_guidance=True):
+    def prepare_controlnet_image(
+        self, images: List[Image.Image], do_classifier_free_guidance=True
+    ):
         height = images[0].height
         width = images[0].width
 
-        image = self.control_image_processor.preprocess(images, height=height, width=width).to(
-            dtype=self.dtype, device=self.device
-        )
+        image = self.control_image_processor.preprocess(
+            images, height=height, width=width
+        ).to(dtype=self.dtype, device=self.device)
 
         if do_classifier_free_guidance:
             image = torch.cat([image] * 2)
@@ -149,7 +153,10 @@ class ControlNetPipeline(DiffusionPipeline):
             latents = self.prepare_latents(batch_size, res, generator=generator)
 
         # denoising loop
-        for t in tqdm(self.scheduler.timesteps):
+        for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+            if self.pre_step_callback is not None:
+                self.pre_step_callback(t, i)
+
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)

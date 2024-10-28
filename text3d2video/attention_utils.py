@@ -1,6 +1,8 @@
+from typing import List
+
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
-from einops import rearrange
+from einops import rearrange, reduce
 from jaxtyping import Float
 from torch import Tensor
 
@@ -30,38 +32,53 @@ def memory_efficient_attention(attn: Attention, key, query, value, attention_mas
         query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
     )
 
-    hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+    hidden_states = hidden_states.transpose(1, 2).reshape(
+        batch_size, -1, attn.heads * head_dim
+    )
     attn_out = hidden_states.to(query.dtype)
 
     return attn_out
 
 
 def extended_attn_kv_hidden_states(
-    x: Float[Tensor, "b t d"], chunk_size: int = 2
+    x: Float[Tensor, "b t d"], chunk_size: int = 2, frame_indices: List[int] = None
 ) -> Float[Tensor, "b t d"]:
     n_frames = x.shape[0] // chunk_size
 
-    # unstack batch-frame dimension, and stack all frames across seq dimension
-    extended_x = rearrange(x, "(b f) t c -> b (f t) c", f=n_frames)
+    # unstack batch-frame dimension
+    extended_x = rearrange(x, "(b f) t c -> b f t c", f=n_frames)
+
+    # select specific frames
+    if frame_indices is not None:
+        extended_x = extended_x[:, frame_indices, ...]
+
+    # stack frames across seq dimension
+    extended_x = rearrange(extended_x, "b f t c -> b (f t) c")
 
     return extended_x
 
 
-def single_frame_attn_kv_hidden_states(
-    x: Float[Tensor, "b t d"], chunk_size: int = 2, tgt_frame_index: int = 0
+def averaged_attn_kv_hidden_states(
+    x: Float[Tensor, "b t d"], chunk_size: int = 2, frame_indices: List[int] = None
 ) -> Float[Tensor, "b t d"]:
     n_frames = x.shape[0] // chunk_size
 
-    # expand batch-frame dim
-    hidden_states_unstacked = rearrange(x, "(b f) t c -> b f t c", f=n_frames)
+    # unstack batch-frame dimension
+    x = rearrange(x, "(b f) t c -> b f t c", f=n_frames)
 
-    # get first frame
-    x_fst = hidden_states_unstacked[:, tgt_frame_index, ...]
+    # select specific frames
+    if frame_indices is not None:
+        x = x[:, frame_indices, ...]
 
-    return x_fst
+    # average frames across seq dimension
+    x = reduce(x, "b f t c -> b t c", "mean")
+
+    return x
 
 
-def extend_across_frame_dim(x: Float[Tensor, "b t d"], n_frames: int) -> Float[Tensor, "b* t d"]:
+def extend_across_frame_dim(
+    x: Float[Tensor, "b t d"], n_frames: int
+) -> Float[Tensor, "b* t d"]:
     """
     Given a tensor B T D for cross-frame attention, expand across
     frame dimension, and stack as batch dimension

@@ -10,7 +10,11 @@ def find_attn_modules(module: nn.Module):
     Find all attention modules in a module
     """
 
-    return [(name, mod) for name, mod in module.named_modules() if isinstance(module, Attention)]
+    return [
+        (name, mod)
+        for name, mod in module.named_modules()
+        if isinstance(module, Attention)
+    ]
 
 
 def get_module_path(parent_module: nn.Module, module: nn.Module) -> str:

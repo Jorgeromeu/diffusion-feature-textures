@@ -112,7 +112,12 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         return cond_embeddings, uncond_embeddings
 
     def prepare_latents(
-        self, frames: Meshes, cameras: FoVPerspectiveCameras, verts_uvs, faces_uvs, generator=None
+        self,
+        frames: Meshes,
+        cameras: FoVPerspectiveCameras,
+        verts_uvs,
+        faces_uvs,
+        generator=None,
     ):
         latent_channels = self.unet.config.in_channels
         latent_res = self.gr_config.resolution // 8
@@ -184,9 +189,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         height = images[0].height
         width = images[0].width
 
-        image = self.control_image_processor.preprocess(images, height=height, width=width).to(
-            dtype=self.dtype, device=self.device
-        )
+        image = self.control_image_processor.preprocess(
+            images, height=height, width=width
+        ).to(dtype=self.dtype, device=self.device)
 
         if do_classifier_free_guidance:
             image = torch.cat([image] * 2)
@@ -380,7 +385,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         for frame_i in self.rerun_frame_indices:
             frame_views.append(rrb.Spatial2DView(contents=[f"+/frame_{frame_i}"]))
             latent_views.append(rrb.TensorView(contents=[f"+/latent_{frame_i}"]))
-            depth_map_views.append(rrb.Spatial2DView(contents=[f"+/depth_map_{frame_i}"]))
+            depth_map_views.append(
+                rrb.Spatial2DView(contents=[f"+/depth_map_{frame_i}"])
+            )
 
         main_tab = rrb.Vertical(
             rrb.Horizontal(*latent_views, name="Latents"),
@@ -452,7 +459,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         )
 
         # setup artifact
-        tensors_artifact = H5Artifact.create_empty_artifact(self.save_tensors_config.out_artifact)
+        tensors_artifact = H5Artifact.create_empty_artifact(
+            self.save_tensors_config.out_artifact
+        )
         tensors_artifact.open_h5_file()
         self.tensors_artifact = tensors_artifact
 
@@ -520,7 +529,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         latents = self.prepare_latents(frames, cameras, verts_uvs, faces_uvs, generator)
 
         # chunk indices to use in inference loop
-        chunks_indices = torch.split(torch.arange(0, n_frames), self.gr_config.chunk_size)
+        chunks_indices = torch.split(
+            torch.arange(0, n_frames), self.gr_config.chunk_size
+        )
 
         # get 2D vertex positions for each frame
         vert_xys, vert_indices = project_vertices_to_cameras(frames, cameras)
@@ -542,11 +553,13 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             kf_embeddings = stacked_text_embeddings[:, kf_indices]
             kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
 
-            pre_attn_features, post_attn_features = self.model_forward_feature_extraction(
-                kf_latents,
-                kf_embeddings,
-                kf_depth_maps,
-                t,
+            pre_attn_features, post_attn_features = (
+                self.model_forward_feature_extraction(
+                    kf_latents,
+                    kf_embeddings,
+                    kf_depth_maps,
+                    t,
+                )
             )
 
             # Unify features across keyframes as vertex features
@@ -594,7 +607,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # preform classifier free guidance
             noise_pred_uncond, noise_pred_text = noise_pred_all
             guidance_direction = noise_pred_text - noise_pred_uncond
-            noise_pred = noise_pred_uncond + self.gr_config.guidance_scale * guidance_direction
+            noise_pred = (
+                noise_pred_uncond + self.gr_config.guidance_scale * guidance_direction
+            )
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample

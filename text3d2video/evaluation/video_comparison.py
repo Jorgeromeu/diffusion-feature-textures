@@ -66,7 +66,9 @@ def make_comparison_vid(
         if show_guidance_video:
             row_run = row[0]
             animation = wbu.first_used_artifact_of_type(row_run, "animation")
-            animation = AnimationArtifact.from_wandb_artifact(animation, download=download)
+            animation = AnimationArtifact.from_wandb_artifact(
+                animation, download=download
+            )
 
             n_frames = OmegaConf.create(row_run.config).animation.n_frames
             frame_nums = animation.frame_nums(n_frames)
@@ -84,12 +86,16 @@ def make_comparison_vid(
                 print(f"Skipping {run.name} - no video artifact found")
                 continue
 
-            video_artifact = VideoArtifact.from_wandb_artifact(video_artifact, download=download)
+            video_artifact = VideoArtifact.from_wandb_artifact(
+                video_artifact, download=download
+            )
             clip = video_artifact.get_moviepy_clip()
 
             if info_fun_bottom is not None:
                 clip = add_label_to_clip(
-                    clip, info_fun_bottom(run, video_artifact), position=("left", "bottom")
+                    clip,
+                    info_fun_bottom(run, video_artifact),
+                    position=("left", "bottom"),
                 )
 
             if info_fun_top is not None:
@@ -117,11 +123,15 @@ def make_comparison_vid(
             .set_duration(array_clip.duration)
             .set_fps(array_clip.fps)
         )
-        title_clip = title_clip.margin(top=10, left=10, right=10, bottom=10, color=(255, 255, 255))
+        title_clip = title_clip.margin(
+            top=10, left=10, right=10, bottom=10, color=(255, 255, 255)
+        )
 
         # add margin
         # pylint: disable=no-member
-        array_clip = array_clip.margin(top=title_clip.h, left=0, right=0, color=(255, 255, 255))
+        array_clip = array_clip.margin(
+            top=title_clip.h, left=0, right=0, color=(255, 255, 255)
+        )
 
         array_clip = CompositeVideoClip([array_clip, title_clip])
 

@@ -9,7 +9,9 @@ from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.camera_placement import z_movement_cameras
 
 
-def log_animation(artifact_name: str, static_path: Path, cameras: FoVPerspectiveCameras):
+def log_animation(
+    artifact_name: str, static_path: Path, cameras: FoVPerspectiveCameras
+):
     wandb.init(project="diffusion-3D-features", job_type="log_artifact")
     artifact: AnimationArtifact = AnimationArtifact.create_empty_artifact(artifact_name)
     artifact.write_cameras(cameras)

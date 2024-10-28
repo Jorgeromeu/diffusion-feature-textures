@@ -9,8 +9,10 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 
 
-def turntable_cameras(dist: float, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-    azim = torch.linspace(0, 360, n)
+def turntable_cameras(
+    n: int, dist: float = 2, start_angle=0, stop_angle=360, device: str = "cuda"
+) -> FoVPerspectiveCameras:
+    azim = torch.linspace(start_angle, stop_angle, n)
     elev = [0] * n
     dists = [dist] * n
     R, T = look_at_view_transform(dists, elev, azim)
@@ -74,7 +76,9 @@ def multiview_cameras(
 
     steps = int(math.sqrt(num_views))
     end = 360 - 360 / steps
-    elevation = torch.linspace(start=0, end=end, steps=steps).repeat(steps) + add_angle_ele
+    elevation = (
+        torch.linspace(start=0, end=end, steps=steps).repeat(steps) + add_angle_ele
+    )
     azimuth = torch.linspace(start=0, end=end, steps=steps)
     azimuth = torch.repeat_interleave(azimuth, steps) + add_angle_azi
     bbox_center = bbox_center.unsqueeze(0)
@@ -82,7 +86,9 @@ def multiview_cameras(
         dist=distance, azim=azimuth, elev=elevation, device=device, at=bbox_center
     )
 
-    cameras = FoVPerspectiveCameras(R=rotation, T=translation, device=device, znear=0.1, zfar=100)
+    cameras = FoVPerspectiveCameras(
+        R=rotation, T=translation, device=device, znear=0.1, zfar=100
+    )
 
     return cameras
 

@@ -45,7 +45,9 @@ class CLIPMetrics:
 
         similarities = []
         for embedding in image_embeds:
-            sim = torch.cosine_similarity(embedding.unsqueeze(0), text_embed.unsqueeze(0))
+            sim = torch.cosine_similarity(
+                embedding.unsqueeze(0), text_embed.unsqueeze(0)
+            )
             similarities.append(sim.item())
 
         average_sim = torch.mean(torch.tensor(similarities)).item()
@@ -60,7 +62,9 @@ class CLIPMetrics:
             embedding = image_embeds[i]
             next_embedding = image_embeds[i + 1]
 
-            sim = torch.cosine_similarity(embedding.unsqueeze(0), next_embedding.unsqueeze(0))
+            sim = torch.cosine_similarity(
+                embedding.unsqueeze(0), next_embedding.unsqueeze(0)
+            )
             similarities.append(sim.item())
 
         average_sim = torch.mean(torch.tensor(similarities)).item()

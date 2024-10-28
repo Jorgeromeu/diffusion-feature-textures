@@ -20,7 +20,9 @@ def test_img(
     return_type="PIL",
 ):
     image_size = (resolution, resolution)
-    gray_image = Image.new("RGB", image_size, color=color)  # RGB mode with mid-gray color
+    gray_image = Image.new(
+        "RGB", image_size, color=color
+    )  # RGB mode with mid-gray color
 
     # Draw the number on the image
     draw = ImageDraw.Draw(gray_image)

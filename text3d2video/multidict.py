@@ -2,6 +2,58 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 
+class MultiDict2:
+    def __init__(self):
+        self._data = {}
+
+    def _dict_to_hashable(self, keys: Dict[str, Any]):
+        items = sorted(keys.items())
+
+        return tuple(items)
+
+    def __setitem__(self, keys: Dict[str, Any], value: Any):
+        self._data[self._dict_to_hashable(keys)] = value
+
+    def __getitem__(self, keys: Dict[str, Any]):
+        return self._data[self._dict_to_hashable(keys)]
+
+    def keys(self, filter_keys: Dict[str, Any] = None):
+        all_keys = [dict(k) for k in self._data.keys()]
+
+        if filter_keys is None:
+            return all_keys
+
+        return [
+            k
+            for k in all_keys
+            if all(k.get(kk) == vv for kk, vv in filter_keys.items())
+        ]
+
+    def key_values(self, key_name: str):
+        vals = set()
+        for items in self._data:
+            for item in items:
+                if item[0] == key_name:
+                    vals.add(item[1])
+        return vals
+
+    def key_names(self):
+        key_names = set()
+
+        keys = self._data.keys()
+        for tuple_key in keys:
+            for pair in tuple_key:
+                key_names.add(pair[0])
+
+        return key_names
+
+    def values(self):
+        return list(self._data.values())
+
+    def __repr__(self):
+        return f"MyMultiDict({self._data})"
+
+
 class MultiDict:
     """
     Utility class for dictionary with dict keys

@@ -27,9 +27,9 @@ class SaveConfig:
 
 
 class NoiseInitializationMethod(Enum):
-    RANDOM: str = "RANDOM"
-    FIXED: str = "FIXED"
-    UV: str = "UV"
+    RANDOM = "RANDOM"
+    FIXED = "FIXED"
+    UV = "UV"
 
 
 @dataclass
