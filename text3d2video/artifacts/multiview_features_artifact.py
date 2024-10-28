@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 from pytorch3d.renderer import FoVPerspectiveCameras
 
-import text3d2video.wandb_util as wu
+import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.animation_artifact import AnimationArtifact, ArtifactWrapper
 from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.multidict import MultiDict
@@ -31,7 +31,7 @@ class MVFeaturesArtifact(ArtifactWrapper):
 
     def get_animation_from_lineage(self) -> AnimationArtifact:
         log_run = self.wandb_artifact.logged_by()
-        anim_artifact = wu.first_used_artifact_of_type(
+        anim_artifact = wbu.first_used_artifact_of_type(
             log_run, AnimationArtifact.wandb_artifact_type
         )
         return AnimationArtifact.from_wandb_artifact(anim_artifact)

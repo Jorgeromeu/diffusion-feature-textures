@@ -1,5 +1,4 @@
 from math import sqrt
-from pathlib import Path
 
 import dash_bootstrap_components as dbc
 import plotly.express as px
@@ -12,21 +11,19 @@ from einops import einsum, rearrange
 from torch import Tensor
 from torchvision.io import read_image
 
-from text3d2video.disk_multidict import TensorDiskMultiDict
+from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
 from text3d2video.feature_visualization import reduce_feature_map
 
-out_path = Path("outs/tensors")
-multidict_path = out_path / "tensors"
+artifact_tag = "attn_data:latest"
+attn_data = AttentionFeaturesArtifact.from_wandb_artifact_tag(
+    artifact_tag, download=False
+)
 
-multidict = TensorDiskMultiDict(multidict_path)
 
+multidict = attn_data.get_features_diskdict()
+images = attn_data.get_images()
 layer_names = sorted(multidict.key_values("layer"))
 time_steps = sorted(multidict.key_values("timestep"))
-
-n_imgs = len(list(out_path.iterdir())) - 1
-images = [
-    TF.to_pil_image(read_image(str(out_path / f"image_{i}.png"))) for i in range(n_imgs)
-]
 
 
 TIMESTEP_INPUT_ID = "time-input"
@@ -157,21 +154,18 @@ def update_pixel(clickData):
     return {"x": x, "y": y}
 
 
-@callback(
-    Output(FRAME_IMG_ID, "src"),
-    Input(FRAME_IDX_STORE_ID, "data"),
-)
-def update_frame_img(frame_idx: dict):
-    frame_idx = int(frame_idx["frame_idx"])
-
-    img_path = str((out_path / f"image_{frame_idx}.png").absolute())
-    img = TF.to_pil_image(read_image(img_path))
-    return img_path
+# @callback(
+#     Output(FRAME_IMG_ID, "src"),
+#     Input(FRAME_IDX_STORE_ID, "data"),
+# )
+# def update_frame_img(frame_idx: dict):
+#     frame_idx = int(frame_idx["frame_idx"])
+#     return images[frame_idx]
 
 
-img_path = str((out_path / "image_0.png").absolute())
-img = TF.to_pil_image(read_image(img_path))
-
+item_style = {
+    "height": "300px",
+}
 
 app = Dash(external_stylesheets=[BOOTSTRAP])
 app.title = "Attention Visualization"
@@ -180,14 +174,38 @@ app.layout = html.Div(
         dcc.Store(id=PIXEL_STORE_ID, data={}),
         dcc.Store(id=FRAME_IDX_STORE_ID, data=0),
         html.H1("Attention Visualization"),
-        dbc.Row(
-            [
-                dbc.Col(html.Img(id=FRAME_IMG_ID, src=img)),
-                dbc.Col(dcc.Graph(id=X_GRAPH_ID, config={"displayModeBar": False})),
-                dbc.Col(
-                    dcc.Graph(id=WEIGHTS_GRAPH_ID, config={"displayModeBar": False})
+        html.Div(
+            children=[
+                html.Img(
+                    src=img,
+                    style={"height": "auto", "min-width": "0px", "max-width": "300px"},
+                )
+                for img in images
+            ],
+            style={
+                "display": "flex",
+                "justify-content": "center",
+            },
+        ),
+        html.Div(
+            children=[
+                # html.Img(id=FRAME_IMG_ID, style=item_style),
+                dcc.Graph(
+                    id=X_GRAPH_ID, config={"displayModeBar": False}, style=item_style
+                ),
+                dcc.Graph(
+                    id=WEIGHTS_GRAPH_ID,
+                    config={"displayModeBar": False},
+                    style=item_style,
                 ),
             ],
+            style={
+                "display": "flex",
+                "justify-content": "left",
+                "align-items": "stretch",
+                "gap": "1em",
+                "padding": "1em",
+            },
         ),
         dcc.Slider(
             id=TIMESTEP_INPUT_ID,

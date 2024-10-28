@@ -6,7 +6,7 @@ from IPython.display import Video
 from moviepy.editor import ImageSequenceClip, VideoFileClip
 from PIL import Image
 
-import text3d2video.wandb_util as wu
+import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 
 
@@ -20,7 +20,7 @@ def pil_frames_to_clip(frames: List, fps=10) -> ImageSequenceClip:
     return clip
 
 
-class VideoArtifact(wu.ArtifactWrapper):
+class VideoArtifact(wbu.ArtifactWrapper):
     wandb_artifact_type = "video"
 
     def write_frames(self, frames: List, fps=10):
@@ -49,7 +49,7 @@ class VideoArtifact(wu.ArtifactWrapper):
 
     def get_animation_from_lineage(self):
         log_run = self.logged_by()
-        animation = wu.first_used_artifact_of_type(
+        animation = wbu.first_used_artifact_of_type(
             log_run, AnimationArtifact.wandb_artifact_type
         )
         return AnimationArtifact.from_wandb_artifact(animation)

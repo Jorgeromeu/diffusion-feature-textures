@@ -14,6 +14,7 @@ from pytorch3d.io import load_obj, load_objs_as_meshes
 
 import text3d2video.wandb_util as wbu
 import wandb
+from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
 from text3d2video.attn_processor import MyAttnProcessor, SaveConfig
 from text3d2video.camera_placement import turntable_cameras
 from text3d2video.disk_multidict import TensorDiskMultiDict
@@ -127,21 +128,18 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
     depth_maps = render_depth_map(meshes, cameras)
 
     gen = torch.Generator(device=device)
-    gen.manual_seed(0)
+    gen.manual_seed(cfg.experiment.seed)
 
     # setup uv-initialized latents
     latents = prepare_uv_initialized_latents(
-        meshes, cameras, verts_uvs, faces_uvs, latent_texture_res=70
+        meshes, cameras, verts_uvs, faces_uvs, latent_texture_res=70, generator=gen
     )
 
-    output_folder = Path("outs/tensors")
-    if output_folder.exists():
-        shutil.rmtree(output_folder)
-    output_folder.mkdir(parents=True)
-    tensors_folder = output_folder / "tensors"
-    tensors_folder.mkdir()
+    out_artifact: AttentionFeaturesArtifact = (
+        AttentionFeaturesArtifact.create_empty_artifact(cfg.save_config.out_artifact)
+    )
 
-    tensors_multidict = TensorDiskMultiDict(tensors_folder)
+    tensors_multidict = out_artifact.create_features_diskdict()
 
     def pre_step(t, i):
         attn_processor.cur_timestep = t
@@ -188,8 +186,8 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
         }
     )
 
-    for i, img in enumerate(images):
-        img.save(output_folder / f"image_{i}.png")
+    out_artifact.write_images(images)
+    out_artifact.log_if_enabled()
 
 
 if __name__ == "__main__":
