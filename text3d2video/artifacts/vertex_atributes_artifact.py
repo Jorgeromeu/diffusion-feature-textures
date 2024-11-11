@@ -1,4 +1,4 @@
-import text3d2video.wandb_util as wu
+import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.multiview_features_artifact import MVFeaturesArtifact
 from text3d2video.disk_multidict import TensorDiskMultiDict
 from text3d2video.wandb_util import ArtifactWrapper
@@ -15,7 +15,7 @@ class VertAttributesArtifact(ArtifactWrapper):
 
     def get_mv_features_from_lineage(self) -> MVFeaturesArtifact:
         log_run = self.wandb_artifact.logged_by()
-        mv_features_artifact = wu.first_used_artifact_of_type(
+        mv_features_artifact = wbu.first_used_artifact_of_type(
             log_run, MVFeaturesArtifact.wandb_artifact_type
         )
         return MVFeaturesArtifact.from_wandb_artifact(mv_features_artifact)

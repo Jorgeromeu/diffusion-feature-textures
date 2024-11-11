@@ -13,13 +13,35 @@ from pytorch3d.structures import Meshes
 from torch import Tensor, nn
 
 
-class FeatureShader(nn.Module):
+class UVShader(nn.Module):
     def __init__(self, device="cuda", blend_params=BlendParams()):
         super().__init__()
         self.device = device
         self.blend_params = blend_params
 
     def forward(self, fragments, meshes):
+        packing_list = [
+            i[j]
+            for i, j in zip(
+                meshes.textures.verts_uvs_list(), meshes.textures.faces_uvs_list()
+            )
+        ]
+        faces_verts_uvs = torch.cat(packing_list)
+
+        pixel_uvs = interpolate_face_attributes(
+            fragments.pix_to_face, fragments.bary_coords, faces_verts_uvs
+        )
+
+        return pixel_uvs
+
+
+class FeatureShader(nn.Module):
+    def __init__(self, device="cuda", blend_params=BlendParams()):
+        super().__init__()
+        self.device = device
+        self.blend_params = blend_params
+
+    def forward(self, fragments, meshes: Meshes):
         # get the vertex features
         texels = meshes.sample_textures(fragments)
 

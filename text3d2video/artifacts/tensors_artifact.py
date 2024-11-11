@@ -6,6 +6,7 @@ from text3d2video.artifacts.animation_artifact import ArtifactWrapper
 
 class H5Artifact(ArtifactWrapper):
     wandb_artifact_type = "h5_data"
+    h5_file: h5py.File
 
     def h5_file_path(self):
         return self.folder / "data.h5"
@@ -23,7 +24,11 @@ class H5Artifact(ArtifactWrapper):
 
         if dim_names is not None and len(dim_names) != len(data.shape):
             raise ValueError(
-                f"dim_names should have the same length as the number of dimensions of the tensor. Got {len(dim_names)} dim_names and {len(data.shape)} dimensions."
+                f"""
+                dim_names should have the same length as the number of 
+                dimensions of the tensor. Got {len(dim_names)} dim_names
+                and {len(data.shape)} dimensions."
+                """
             )
 
         if dim_names:

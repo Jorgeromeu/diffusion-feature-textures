@@ -239,3 +239,6 @@ fabric.properties
 /workspace
 /.hydra
 /multirun
+results
+__temp__.mp4
+.vscode/settings.json

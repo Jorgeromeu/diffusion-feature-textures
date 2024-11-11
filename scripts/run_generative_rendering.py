@@ -23,6 +23,8 @@ def run(cfg: RunGenerativeRenderingConfig):
     if not do_run:
         return
 
+    torch.set_grad_enabled(False)
+
     # read animation
     animation = AnimationArtifact.from_wandb_artifact_tag(
         cfg.animation.artifact_tag, download=cfg.run.download_artifacts
@@ -60,6 +62,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         uv_verts,
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
+        noise_initialization_config=cfg.noise_initialization,
         rerun_config=cfg.rerun,
         save_config=cfg.save_tensors,
     )

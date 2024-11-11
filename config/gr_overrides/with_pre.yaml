@@ -1,0 +1,8 @@
+# @package _global_
+
+defaults:
+  - override /noise_initialization: uv
+
+generative_rendering:
+  do_pre_attn_injection: true
+  do_post_attn_injection: false

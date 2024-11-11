@@ -2,10 +2,11 @@ from pathlib import Path
 
 import click
 import torch
-from pytorch3d.renderer import FoVOrthographicCameras, FoVPerspectiveCameras
+from pytorch3d.renderer import FoVPerspectiveCameras
 
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.camera_placement import sideways_orthographic_cameras
 
 
 def log_animation(
@@ -24,24 +25,8 @@ def log_animation(
 @click.option("--mesh_path", type=click.Path(exists=True), required=True)
 @click.option("--n_frames", type=int, required=False, default=100)
 def log_animation_main(artifact_name: str, mesh_path: Path, n_frames: int):
-    x0 = 1
-    x1 = -1
-
-    line = torch.linspace(x0, x1, n_frames)
-
-    r = torch.eye(3)
-    r[0, 0] = -1
-    r[2, 2] = -1
-
-    R = r.repeat(n_frames, 1, 1)
-
-    T = torch.zeros(n_frames, 3)
-    T[:, 2] = 2
-    T[:, 0] = line
-
     device = torch.device("cuda")
-    cameras = FoVOrthographicCameras(device=device, R=R, T=T)
-
+    cameras = sideways_orthographic_cameras(x_0=1, x_1=-1, n=n_frames, device=device)
     log_animation(artifact_name, mesh_path, cameras)
 
 

@@ -1,4 +1,4 @@
-from typing import List
+from typing import Callable, List, Optional
 
 import torch
 from diffusers import (
@@ -16,6 +16,8 @@ from typeguard import typechecked
 
 
 class ControlNetPipeline(DiffusionPipeline):
+    pre_step_callback: Optional[Callable] = None
+
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -132,6 +134,7 @@ class ControlNetPipeline(DiffusionPipeline):
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         generator=None,
+        initial_latents: torch.Tensor = None,
     ):
         # number of images being generated
         batch_size = len(prompts)
@@ -144,10 +147,16 @@ class ControlNetPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, res, generator=generator)
+        if initial_latents is not None:
+            latents = initial_latents
+        else:
+            latents = self.prepare_latents(batch_size, res, generator=generator)
 
         # denoising loop
-        for t in tqdm(self.scheduler.timesteps):
+        for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+            if self.pre_step_callback is not None:
+                self.pre_step_callback(t, i)
+
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)

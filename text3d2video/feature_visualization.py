@@ -5,6 +5,15 @@ from einops import rearrange
 from torch import Tensor
 
 
+def reduce_feature_map(feature_map: Tensor, output_type="pil"):
+    pca = RgbPcaUtil.init_from_features(rearrange(feature_map, "c h w -> (h w) c"))
+
+    if output_type == "pil":
+        return pca.feature_map_to_rgb_pil(feature_map)
+
+    return pca.feature_map_to_rgb(feature_map)
+
+
 class RgbPcaUtil:
     """
     Utility class to facilitate performing PCA on high-dimensional features,

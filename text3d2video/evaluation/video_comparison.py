@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from typing import Callable, List
+
+from moviepy.editor import CompositeVideoClip, TextClip, clips_array
 from omegaconf import OmegaConf
-from wandb.apis.public import Run
+
+import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact, pil_frames_to_clip
 from text3d2video.rendering import render_depth_map
-import text3d2video.wandb_util as wbu
-from moviepy.editor import TextClip, CompositeVideoClip, clips_array
+from wandb.apis.public import Run
 
 
 @dataclass
@@ -26,14 +28,32 @@ def scene_key_fun(run: Run):
     return frozenset({prompt, animation, n_frames})
 
 
+def add_label_to_clip(clip, label: VideoLabel, position=("left", "top")):
+    text_clip = (
+        TextClip(
+            label.content,
+            fontsize=label.font_size,
+            color=label.color,
+            font=label.font,
+            align="West",
+            bg_color=label.bg_color,
+        )
+        .set_position(position)
+        .set_duration(clip.duration)
+        .set_fps(clip.fps)
+    )
+
+    return CompositeVideoClip([clip, text_clip])
+
+
 def make_comparison_vid(
     runs: List[List[Run]],
-    info_fun: Callable[[Run], VideoLabel],
+    info_fun_top: Callable[[Run, VideoArtifact], VideoLabel] = None,
+    info_fun_bottom: Callable[[Run, VideoArtifact], VideoLabel] = None,
     title: str = None,
     download=True,
     show_guidance_video=False,
 ):
-
     # ensure vids is rectangular
     for row in runs:
         if len(row) != len(runs[0]):
@@ -41,11 +61,9 @@ def make_comparison_vid(
 
     clips_grid = []
     for row in runs:
-
         row_clips = []
 
         if show_guidance_video:
-
             row_run = row[0]
             animation = wbu.first_used_artifact_of_type(row_run, "animation")
             animation = AnimationArtifact.from_wandb_artifact(
@@ -62,7 +80,6 @@ def make_comparison_vid(
             row_clips.append(depth_video)
 
         for run in row:
-
             video_artifact = wbu.first_logged_artifact_of_type(run, "video")
 
             if video_artifact is None:
@@ -74,32 +91,25 @@ def make_comparison_vid(
             )
             clip = video_artifact.get_moviepy_clip()
 
-            label = info_fun(run)
-
-            text_clip = (
-                TextClip(
-                    label.content,
-                    fontsize=label.font_size,
-                    color=label.color,
-                    font=label.font,
-                    align="West",
-                    bg_color=label.bg_color,
+            if info_fun_bottom is not None:
+                clip = add_label_to_clip(
+                    clip,
+                    info_fun_bottom(run, video_artifact),
+                    position=("left", "bottom"),
                 )
-                .set_position(("left", "top"))
-                .set_duration(clip.duration)
-                .set_fps(clip.fps)
-            )
 
-            composited = CompositeVideoClip([clip, text_clip])
+            if info_fun_top is not None:
+                clip = add_label_to_clip(
+                    clip, info_fun_top(run, video_artifact), position=("left", "top")
+                )
 
-            row_clips.append(composited)
+            row_clips.append(clip)
 
         clips_grid.append(row_clips)
 
     array_clip = clips_array(clips_grid)
 
     if title is not None:
-
         title_clip = (
             TextClip(
                 title,
@@ -118,6 +128,7 @@ def make_comparison_vid(
         )
 
         # add margin
+        # pylint: disable=no-member
         array_clip = array_clip.margin(
             top=title_clip.h, left=0, right=0, color=(255, 255, 255)
         )

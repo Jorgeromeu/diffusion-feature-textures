@@ -8,7 +8,8 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.util import front_camera, ordered_sample
+from text3d2video.camera_placement import front_camera
+from text3d2video.util import ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
 
 
@@ -44,11 +45,7 @@ class AnimationArtifact(ArtifactWrapper):
     def _has_single_mesh(self) -> bool:
         return not self._animation_path().exists()
 
-    def unposed_mesh_path(self) -> Path:
-        return self.folder / "static.obj"
-
-    def frame_path(self, frame=1) -> Path:
-        return self.folder / "animation" / f"animation{frame:04}.obj"
+    # public methods
 
     def frame_nums(self, sample_n=None):
         if self._has_single_mesh():
@@ -63,6 +60,12 @@ class AnimationArtifact(ArtifactWrapper):
             frame_nums = ordered_sample(frame_nums, sample_n)
 
         return frame_nums
+
+    def unposed_mesh_path(self) -> Path:
+        return self.folder / "static.obj"
+
+    def frame_path(self, frame=1) -> Path:
+        return self.folder / "animation" / f"animation{frame:04}.obj"
 
     def load_unposed_mesh(self, device: str = "cuda") -> Meshes:
         return load_objs_as_meshes([self.unposed_mesh_path()], device=device)
@@ -90,7 +93,6 @@ class AnimationArtifact(ArtifactWrapper):
             [self.frame_path(frame) for frame in frame_indices], device=device
         )
 
-    # pylint: disable=unused-argument
     def camera(self, frame: int):
         if not self._has_cameras():
             return front_camera(1)
