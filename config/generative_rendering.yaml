@@ -1,20 +1,12 @@
-hydra:
-  run:
-    dir: .
-  job:
-    chdir: false
-
 defaults:
+  - hydra: default
+  - run: default
   - model: stable_diffusion_v1_5
   - animation: backflip
   - noise_initialization: uv
 
 run:
   job_type: "generate_video"
-  wandb: true
-  instant_exit: false
-  download_artifacts: false
-  tags: []
 
 prompt: "Deadpool"
 out_artifact: "video"

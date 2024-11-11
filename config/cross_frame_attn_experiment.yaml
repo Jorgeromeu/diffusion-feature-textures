@@ -1,19 +1,11 @@
-hydra:
-  run:
-    dir: .
-  job:
-    chdir: false
-
 defaults:
+    - hydra: default
+    - run: default
     - model: stable_diffusion_v1_5
     - noise_initialization: random
 
 run:
   job_type: "cross_frame_attn_experiment"
-  wandb: true
-  instant_exit: false
-  download_artifacts: false
-  tags: []
 
 save_config:
   enabled: true

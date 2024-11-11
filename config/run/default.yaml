@@ -1,0 +1,5 @@
+job_type: null
+wandb: true
+instant_exit: false
+download_artifacts: false
+tags: []
