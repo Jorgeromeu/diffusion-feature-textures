@@ -62,6 +62,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         uv_verts,
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
+        noise_initialization_config=cfg.noise_initialization,
         rerun_config=cfg.rerun,
         save_config=cfg.save_tensors,
     )

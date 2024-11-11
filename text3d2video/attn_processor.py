@@ -6,7 +6,6 @@ from diffusers.models.attention_processor import Attention
 from jaxtyping import Float
 
 from text3d2video.attention_utils import (
-    averaged_attn_kv_hidden_states,
     extend_across_frame_dim,
     extended_attn_kv_hidden_states,
     memory_efficient_attention,
@@ -21,20 +20,25 @@ class SaveConfig:
     module_pahts = []
 
 
-class MyAttnProcessor:
+class MultiFrameAttnProcessor:
+    """
+    Attention processor that supports sharing k/v sequences across generated frames
+    """
+
+    # tensor-saving fields
+    save_cfg: SaveConfig
     saved_tensors: MultiDict2
-    do_st_extended_attention = False
-    do_st_averaged_attention = False
+
+    # config fields
+    attend_to_self = True
     target_frame_indices = [0]
 
+    # state variables
     cur_timestep = 0
     cur_timestep_idx = 0
-
-    is_cross_attn: bool
-    is_self_attn: bool
-    module_path: str
-
-    save_cfg: SaveConfig
+    _is_cross_attn: bool
+    _is_self_attn: bool
+    _cur_module_path: str
 
     def __init__(self, unet, unet_chunk_size=2):
         """
@@ -45,9 +49,9 @@ class MyAttnProcessor:
         self.unet_chunk_size = unet_chunk_size
 
     def call_init(self, attn, encoder_hidden_states):
-        self.is_cross_attn = encoder_hidden_states is not None
-        self.is_self_attn = not self.is_cross_attn
-        self.module_path = get_module_path(self.unet, attn)
+        self._is_cross_attn = encoder_hidden_states is not None
+        self._is_self_attn = not self._is_cross_attn
+        self._cur_module_path = get_module_path(self.unet, attn)
 
     def get_kv_hidden_states(
         self,
@@ -62,37 +66,38 @@ class MyAttnProcessor:
                 hidden_states = attn.norm_cross(hidden_states)
             return hidden_states
 
+        b, _, d = hidden_states.shape
+        kv_sequence = torch.empty(
+            b, 0, d, device=hidden_states.device, dtype=hidden_states.dtype
+        )
+
+        # include self-features
+        if self.attend_to_self:
+            kv_sequence = torch.cat([kv_sequence, hidden_states], dim=1)
+
         n_frames = hidden_states.shape[0] // self.unet_chunk_size
 
-        if self.do_st_extended_attention:
-            ext_hidden_states = extended_attn_kv_hidden_states(
-                hidden_states,
-                chunk_size=self.unet_chunk_size,
-                frame_indices=self.target_frame_indices,
-            )
-            ext_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
-            return ext_hidden_states
+        ext_hidden_states = extended_attn_kv_hidden_states(
+            hidden_states,
+            chunk_size=self.unet_chunk_size,
+            frame_indices=self.target_frame_indices,
+        )
+        ext_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
 
-        if self.do_st_averaged_attention:
-            ext_hidden_states = averaged_attn_kv_hidden_states(
-                hidden_states,
-                chunk_size=self.unet_chunk_size,
-                frame_indices=self.target_frame_indices,
-            )
-            ext_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
-            return ext_hidden_states
+        # include extended features
+        kv_sequence = torch.cat([kv_sequence, ext_hidden_states], dim=1)
 
-        return hidden_states
+        return kv_sequence
 
     def save_tensor(self, name: str, tensor: torch.Tensor):
         if self.cur_timestep_idx not in self.save_cfg.save_steps:
             return
 
-        if self.module_path not in self.save_cfg.module_pahts:
+        if self._cur_module_path not in self.save_cfg.module_pahts:
             return
 
         keys = {
-            "layer": self.module_path,
+            "layer": self._cur_module_path,
             "timestep": self.cur_timestep_idx,
             "name": name,
         }
@@ -122,7 +127,7 @@ class MyAttnProcessor:
         key = attn.to_k(kv_x)
         value = attn.to_v(kv_x)
 
-        if self.is_self_attn:
+        if self._is_self_attn:
             self.save_tensor("x", hidden_states)
             self.save_tensor("query", query)
             self.save_tensor("key", key)

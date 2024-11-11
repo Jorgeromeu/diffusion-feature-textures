@@ -7,7 +7,7 @@ hydra:
 defaults:
   - model: stable_diffusion_v1_5
   - animation: backflip
-  - generative_rendering/noise_initialization: uv
+  - noise_initialization: uv
 
 run:
   job_type: "generate_video"

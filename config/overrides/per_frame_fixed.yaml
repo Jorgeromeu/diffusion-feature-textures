@@ -1,8 +1,0 @@
-# @package _global_
-
-defaults:
-  - override /generative_rendering/noise_initialization: fixed
-
-generative_rendering:
-  do_pre_attn_injection: false
-  do_post_attn_injection: false

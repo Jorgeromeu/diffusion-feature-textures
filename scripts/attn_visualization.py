@@ -1,30 +1,18 @@
 from math import sqrt
+from typing import List
 
 import dash_bootstrap_components as dbc
 import plotly.express as px
 import plotly.graph_objects as go
 import torch.nn.functional as F
-import torchvision.transforms.functional as TF
 from dash import Dash, Input, Output, callback, dcc, html
 from dash_bootstrap_components.themes import BOOTSTRAP
 from einops import einsum, rearrange
+from omegaconf import OmegaConf
 from torch import Tensor
-from torchvision.io import read_image
 
 from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
 from text3d2video.feature_visualization import reduce_feature_map
-
-artifact_tag = "attn_data:latest"
-attn_data = AttentionFeaturesArtifact.from_wandb_artifact_tag(
-    artifact_tag, download=False
-)
-
-
-multidict = attn_data.get_features_diskdict()
-images = attn_data.get_images()
-layer_names = sorted(multidict.key_values("layer"))
-time_steps = sorted(multidict.key_values("timestep"))
-
 
 TIMESTEP_INPUT_ID = "time-input"
 TEMPERATURE_INPUT_ID = "temp-input"
@@ -38,6 +26,8 @@ FRAME_IMG_ID = "frame-img"
 
 FRAME_IDX_STORE_ID = "frame-idx-store"
 PIXEL_STORE_ID = "pixel-store"
+
+FRAMES_DIV_ID = "frames-div"
 
 
 @callback(
@@ -100,23 +90,22 @@ def plot_attention(
     x_square = rearrange(x, "(h w) d -> d h w", h=layer_res)
     x_square_rgb = reduce_feature_map(x_square)
 
+    x_imshow = px.imshow(x_square_rgb)
     weights_imshow = px.imshow(
-        weights_square, color_continuous_scale="viridis", title="Weights"
-    )
-    weights_imshow.update_xaxes(showticklabels=False)
-    weights_imshow.update_yaxes(showticklabels=False)
-    weights_imshow.update_layout(
-        coloraxis_showscale=False, margin=dict(l=0, r=0, t=0, b=0), title="x"
+        weights_square,
+        color_continuous_scale="viridis",
     )
 
-    x_imshow = px.imshow(x_square_rgb, color_continuous_scale="viridis", title="X")
-    x_imshow.update_xaxes(showticklabels=False)
-    x_imshow.update_yaxes(showticklabels=False)
-    x_imshow.update_layout(
-        coloraxis_showscale=False, margin=dict(l=0, r=0, t=0, b=0), title="x"
-    )
-    x_imshow.update_traces(hoverinfo="skip")
+    for imshow in [weights_imshow, x_imshow]:
+        imshow.update_xaxes(showticklabels=False)
+        imshow.update_yaxes(showticklabels=False)
+        imshow.update_layout(
+            coloraxis_showscale=False,
+            margin=dict(l=0, r=0, t=0, b=0),
+        )
+        imshow.update_traces(hoverinfo="skip")
 
+    # add pixel marker
     x_imshow.add_trace(
         go.Scatter(
             x=[pixel_data["x"]],
@@ -124,6 +113,11 @@ def plot_attention(
             mode="markers",
             marker=dict(color="red", size=10),
         )
+    )
+
+    x_imshow.update_layout(
+        xaxis=dict(range=[0, layer_res]),
+        yaxis=dict(range=[layer_res, 0]),
     )
 
     return x_imshow, weights_imshow
@@ -141,6 +135,17 @@ def update_frame(value):
 
 
 @callback(
+    Output(FRAMES_DIV_ID, "children"),
+    Input(FRAME_IDX_STORE_ID, "data"),
+)
+def update_generated_frames(frame_idx: dict):
+    frame_idx = frame_idx["frame_idx"]
+    return generated_frames(
+        images, target_indices, do_multiframe_attn, selected_frame=frame_idx
+    )
+
+
+@callback(
     Output(PIXEL_STORE_ID, "data"),
     Input(X_GRAPH_ID, "clickData"),
 )
@@ -154,98 +159,173 @@ def update_pixel(clickData):
     return {"x": x, "y": y}
 
 
-# @callback(
-#     Output(FRAME_IMG_ID, "src"),
-#     Input(FRAME_IDX_STORE_ID, "data"),
-# )
-# def update_frame_img(frame_idx: dict):
-#     frame_idx = int(frame_idx["frame_idx"])
-#     return images[frame_idx]
+def generated_frames(
+    images: List,
+    target_indices: List[int],
+    do_multiframe_attn: bool = False,
+    selected_frame: int = 2,
+):
+    if target_indices is None:
+        target_indices = []
+
+    border_style = {"border": "6px solid red"}
+
+    children = []
+    for i, img in enumerate(images):
+        style = {
+            "height": "auto",
+            "min-width": "0px",
+            "max-width": "300px",
+        }
+
+        if do_multiframe_attn and i in target_indices:
+            style.update(border_style)
+
+        if not do_multiframe_attn and i == selected_frame:
+            style.update(border_style)
+
+        if i != selected_frame:
+            style.update({"opacity": 0.5})
+
+        image = html.Img(src=img, style=style)
+
+        children.append(image)
+
+    return html.Div(
+        children=children,
+        style={
+            "display": "flex",
+            "justify-content": "flex-start",
+            "gap": "0.5em",
+        },
+    )
 
 
-item_style = {
-    "height": "300px",
-}
+def controls(layer_names: List[str], time_steps: List[int]):
+    layer_select = dcc.Dropdown(
+        id=LAYER_INPUT_ID,
+        options=layer_names,
+        placeholder="Select Layer",
+        value=layer_names[0],
+    )
 
-app = Dash(external_stylesheets=[BOOTSTRAP])
-app.title = "Attention Visualization"
-app.layout = html.Div(
-    children=[
-        dcc.Store(id=PIXEL_STORE_ID, data={}),
-        dcc.Store(id=FRAME_IDX_STORE_ID, data=0),
-        html.H1("Attention Visualization"),
-        html.Div(
-            children=[
-                html.Img(
-                    src=img,
-                    style={"height": "auto", "min-width": "0px", "max-width": "300px"},
-                )
-                for img in images
-            ],
-            style={
-                "display": "flex",
-                "justify-content": "center",
-            },
-        ),
-        html.Div(
-            children=[
-                # html.Img(id=FRAME_IMG_ID, style=item_style),
-                dcc.Graph(
-                    id=X_GRAPH_ID, config={"displayModeBar": False}, style=item_style
-                ),
-                dcc.Graph(
-                    id=WEIGHTS_GRAPH_ID,
-                    config={"displayModeBar": False},
-                    style=item_style,
-                ),
-            ],
-            style={
-                "display": "flex",
-                "justify-content": "left",
-                "align-items": "stretch",
-                "gap": "1em",
-                "padding": "1em",
-            },
-        ),
-        dcc.Slider(
-            id=TIMESTEP_INPUT_ID,
-            min=0,
-            max=len(time_steps) - 1,
-            value=time_steps[0],
-            step=1,
-            marks=time_steps,
-        ),
-        dcc.Dropdown(
-            id=LAYER_INPUT_ID,
-            options=layer_names,
-            placeholder="Select Layer",
-            value=layer_names[0],
-        ),
-        dcc.Dropdown(
-            id=HEAD_INPUT_ID,
-            options=[0, 1, 2, 3, 4, 5, 6, 7],
-            multi=False,
-            placeholder="Select Heads",
-            value=0,
-        ),
-        dcc.Input(
-            id=TEMPERATURE_INPUT_ID,
-            type="number",
-            value=1,
-            placeholder="Temperature",
-        ),
-        dcc.Input(
-            id=FRAME_IDX_INPUT_ID,
-            type="number",
-            value=1,
-            placeholder="Frame Index",
-        ),
-    ],
-    style={
-        "padding": "2em",
-        "display": "flex",
-        "flex-direction": "column",
-        "gap": "1em",
-    },
-)
-app.run()
+    time_slider = dcc.Slider(
+        id=TIMESTEP_INPUT_ID,
+        min=0,
+        max=len(time_steps) - 1,
+        value=time_steps[0],
+        step=1,
+        marks=time_steps,
+    )
+
+    head_select = dcc.Dropdown(
+        id=HEAD_INPUT_ID,
+        options=[0, 1, 2, 3, 4, 5, 6, 7],
+        multi=False,
+        placeholder="Select Heads",
+        value=0,
+    )
+
+    temp_slider = dcc.Input(
+        id=TEMPERATURE_INPUT_ID,
+        type="number",
+        value=1,
+        placeholder="Temperature",
+    )
+
+    frame_select = dcc.Input(
+        id=FRAME_IDX_INPUT_ID,
+        type="number",
+        value=1,
+        placeholder="Frame Index",
+    )
+
+    controls = {
+        "layer": layer_select,
+        "time": time_slider,
+        "head": head_select,
+        "temp": temp_slider,
+        "frame": frame_select,
+    }
+
+    return dbc.Card(
+        [
+            html.Div(
+                children=[dbc.Label(lbl), control],
+                style={},
+            )
+            for lbl, control in controls.items()
+        ],
+        body=True,
+        style={"display": "flex", "flex-direction": "column", "gap": "1em"},
+    )
+
+
+def attn_visualization():
+    item_style = {
+        "height": "auto",
+        "width": "50%",
+    }
+
+    return html.Div(
+        children=[
+            dcc.Graph(
+                id=X_GRAPH_ID,
+                config={"displayModeBar": False},
+                style=item_style,
+            ),
+            dcc.Graph(
+                id=WEIGHTS_GRAPH_ID,
+                config={"displayModeBar": False},
+                style=item_style,
+            ),
+        ],
+        style={
+            "display": "flex",
+            "justify-content": "left",
+            "padding": "1em",
+            "gap": "1em",
+        },
+    )
+
+
+if __name__ == "__main__":
+    artifact_tag = "attn_data:v1"
+    attn_data = AttentionFeaturesArtifact.from_wandb_artifact_tag(
+        artifact_tag, download=True
+    )
+
+    run = attn_data.logged_by()
+    conf = OmegaConf.create(run.config)
+    target_indices = list(conf.experiment.target_frame_indices)
+    do_multiframe_attn = conf.experiment.do_multiframe_attn
+
+    multidict = attn_data.get_features_diskdict()
+    images = attn_data.get_images()
+    layer_names = sorted(multidict.key_values("layer"))
+    time_steps = sorted(multidict.key_values("timestep"))
+
+    app = Dash(external_stylesheets=[BOOTSTRAP])
+    app.title = "Attention Visualization"
+    app.layout = html.Div(
+        children=[
+            dcc.Store(id=PIXEL_STORE_ID, data={}),
+            dcc.Store(id=FRAME_IDX_STORE_ID, data=0),
+            controls(layer_names, time_steps),
+            dbc.Card(
+                [
+                    html.H2("Frames"),
+                    html.Div(id=FRAMES_DIV_ID),
+                ],
+                body=True,
+            ),
+            dbc.Card([attn_visualization()], body=True),
+        ],
+        style={
+            "padding": "2em",
+            "display": "flex",
+            "flex-direction": "column",
+            "gap": "1em",
+        },
+    )
+    app.run_server(debug=True, dev_tools_hot_reload=True)

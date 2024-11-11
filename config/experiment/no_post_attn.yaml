@@ -1,4 +1,0 @@
-# @package _global_
-
-generative_rendering:
-  do_post_attn_injection: false

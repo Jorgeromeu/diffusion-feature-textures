@@ -24,6 +24,7 @@ import text3d2video.rerun_util as ru
 from text3d2video.artifacts.tensors_artifact import H5Artifact
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
+    NoiseInitializationConfig,
     NoiseInitializationMethod,
     RerunConfig,
     SaveConfig,
@@ -38,11 +39,12 @@ from text3d2video.util import (
     ordered_sample,
     project_vertices_to_cameras,
 )
-from text3d2video.uv_noise import prepare_uv_initialized_latents
+from text3d2video.uv_noise import prepare_latents, prepare_uv_initialized_latents
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
     gr_config: GenerativeRenderingConfig
+    noise_init_config: NoiseInitializationConfig
     rerun_config: RerunConfig
     save_tensors_config = SaveConfig
     tensors_artifact: H5Artifact = None
@@ -121,49 +123,19 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     ):
         latent_channels = self.unet.config.in_channels
         latent_res = self.gr_config.resolution // 8
-        n_frames = len(frames)
 
-        noise_init_method = self.gr_config.noise_initialization.method
-
-        if noise_init_method == NoiseInitializationMethod.UV:
-            uv_tex_resolution = self.gr_config.noise_initialization.uv_texture_res
-
-            return prepare_uv_initialized_latents(
-                frames,
-                cameras,
-                verts_uvs,
-                faces_uvs,
-                generator,
-                device=self.device,
-                dtype=self.dtype,
-                latent_channels=latent_channels,
-                latent_res=latent_res,
-                latent_texture_res=uv_tex_resolution,
-            )
-
-        if noise_init_method == NoiseInitializationMethod.RANDOM:
-            return torch.randn(
-                n_frames,
-                latent_channels,
-                latent_res,
-                latent_res,
-                device=self.device,
-                generator=generator,
-                dtype=self.dtype,
-            )
-
-        if noise_init_method == NoiseInitializationMethod.FIXED:
-            latent_0 = torch.randn(
-                latent_channels,
-                latent_res,
-                latent_res,
-                device=self.device,
-                generator=generator,
-                dtype=self.dtype,
-            )
-            return repeat(latent_0, "c h w -> b c h w", b=n_frames)
-
-        raise ValueError(f"Invalid noise initialization method: {noise_init_method}")
+        return prepare_latents(
+            frames,
+            cameras,
+            verts_uvs,
+            faces_uvs,
+            self.noise_init_config,
+            latent_channels=latent_channels,
+            latent_resolution=latent_res,
+            generator=generator,
+            device=self.device,
+            dtype=self.dtype,
+        )
 
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
         # scale latents
@@ -491,11 +463,13 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
         generative_rendering_config: GenerativeRenderingConfig,
+        noise_initialization_config: NoiseInitializationConfig,
         rerun_config: RerunConfig,
         save_config: SaveConfig,
     ):
         # store configs for use throughout pipeline
         self.gr_config = generative_rendering_config
+        self.noise_init_config = noise_initialization_config
         self.attn_processor.gr_config = generative_rendering_config
         self.rerun_config = rerun_config
         self.save_tensors_config = save_config

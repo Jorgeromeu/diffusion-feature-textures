@@ -6,6 +6,7 @@ hydra:
 
 defaults:
     - model: stable_diffusion_v1_5
+    - noise_initialization: random
 
 run:
   job_type: "cross_frame_attn_experiment"
@@ -17,20 +18,20 @@ run:
 save_config:
   enabled: true
   out_artifact: 'attn_data'
-  n_save_steps: 5
+  n_save_steps: 3
   module_paths: [
       # "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
       "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
       # "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
-      "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      # "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
       # "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
       "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
       # "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
       "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
       # "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-      "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      # "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
       # "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-      "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+      # "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
       # "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
       "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
       # "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
@@ -38,14 +39,12 @@ save_config:
     ]
 
 
-experiment:
+cross_frame_attn_experiment:
   seed: 0
-  prompt: "Cat"
-
-  num_cameras: 5
-  do_multiframe_attn: true
-  target_frame_indices: [0, 1, 2, 3, 4]
-
+  prompt: "Deadpool"
+  n_views: 5
+  attend_to_self: true
+  target_frame_indices: []
   num_inference_steps: 10
   guidance_scale: 7.5
   controlnet_conditioning_scale: 1.0

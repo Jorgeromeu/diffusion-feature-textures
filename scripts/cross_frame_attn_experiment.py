@@ -1,6 +1,4 @@
-import shutil
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List
 
 import hydra
@@ -15,19 +13,19 @@ from pytorch3d.io import load_obj, load_objs_as_meshes
 import text3d2video.wandb_util as wbu
 import wandb
 from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
-from text3d2video.attn_processor import MyAttnProcessor, SaveConfig
+from text3d2video.attn_processor import MultiFrameAttnProcessor, SaveConfig
 from text3d2video.camera_placement import turntable_cameras
-from text3d2video.disk_multidict import TensorDiskMultiDict
-from text3d2video.generative_rendering.configs import RunConfig
+from text3d2video.generative_rendering.configs import (
+    NoiseInitializationConfig,
+    RunConfig,
+)
 from text3d2video.pipelines.controlnet_pipeline import ControlNetPipeline
 from text3d2video.rendering import render_depth_map
 from text3d2video.util import ordered_sample
-from text3d2video.uv_noise import prepare_uv_initialized_latents
+from text3d2video.uv_noise import prepare_latents
 
 
-def plot_images(
-    images: List[Image], do_multiframe_attn: List[int], target_frame_indices: List[int]
-):
+def plot_images(images: List[Image], target_frame_indices: List[int]):
     n_cameras = len(images)
     fig, axs = plt.subplots(1, n_cameras, figsize=(n_cameras * 5, 5))
     for i, img in enumerate(images):
@@ -35,7 +33,7 @@ def plot_images(
         axs[i].set_xticks([])
         axs[i].set_yticks([])
 
-        if i in target_frame_indices and do_multiframe_attn:
+        if i in target_frame_indices:
             for spine in axs[i].spines.values():
                 spine.set_edgecolor("red")
                 spine.set_linewidth(5)
@@ -57,8 +55,8 @@ class SaveCfg:
 class CrossFrameAttnExperimentCfg:
     seed: int
     prompt: str
-    num_cameras: int
-    do_multiframe_attn: bool
+    n_views: int
+    attend_to_self: bool
     target_frame_indices: List[int]
     num_inference_steps: int
     guidance_scale: float
@@ -69,7 +67,8 @@ class CrossFrameAttnExperimentCfg:
 class RunCrossFrameAttnExperimentCfg:
     run: RunConfig
     save_config: SaveCfg
-    experiment: CrossFrameAttnExperimentCfg
+    noise_initialization: NoiseInitializationConfig
+    cross_frame_attn_experiment: CrossFrameAttnExperimentCfg
 
 
 cs = ConfigStore.instance()
@@ -114,7 +113,7 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
     faces_uvs = faces.textures_idx
 
     dist = 2
-    n_cameras = cfg.experiment.num_cameras
+    n_cameras = cfg.cross_frame_attn_experiment.n_views
     cameras = turntable_cameras(
         n_cameras,
         dist=dist,
@@ -128,11 +127,16 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
     depth_maps = render_depth_map(meshes, cameras)
 
     gen = torch.Generator(device=device)
-    gen.manual_seed(cfg.experiment.seed)
+    gen.manual_seed(cfg.cross_frame_attn_experiment.seed)
 
     # setup uv-initialized latents
-    latents = prepare_uv_initialized_latents(
-        meshes, cameras, verts_uvs, faces_uvs, latent_texture_res=70, generator=gen
+    latents = prepare_latents(
+        meshes,
+        cameras,
+        verts_uvs,
+        faces_uvs,
+        cfg.noise_initialization,
+        generator=gen,
     )
 
     out_artifact: AttentionFeaturesArtifact = (
@@ -147,7 +151,7 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
 
     pipe.pre_step_callback = pre_step
 
-    n_inference_steps = cfg.experiment.num_inference_steps
+    n_inference_steps = cfg.cross_frame_attn_experiment.num_inference_steps
 
     save_cfg = SaveConfig()
     save_cfg.save_steps = ordered_sample(
@@ -155,17 +159,19 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
     )
     save_cfg.module_pahts = cfg.save_config.module_paths
 
-    attn_processor = MyAttnProcessor(pipe.unet)
+    attn_processor = MultiFrameAttnProcessor(pipe.unet)
     attn_processor.save_cfg = save_cfg
-    attn_processor.target_frame_indices = cfg.experiment.target_frame_indices
-    attn_processor.do_st_extended_attention = cfg.experiment.do_multiframe_attn
+    attn_processor.target_frame_indices = (
+        cfg.cross_frame_attn_experiment.target_frame_indices
+    )
+    attn_processor.attend_to_self = cfg.cross_frame_attn_experiment.attend_to_self
     attn_processor.saved_tensors = tensors_multidict
     pipe.unet.set_attn_processor(attn_processor)
 
     gen = torch.Generator(device=device)
     gen.manual_seed(0)
 
-    prompts = [cfg.experiment.prompt] * n_cameras
+    prompts = [cfg.cross_frame_attn_experiment.prompt] * n_cameras
 
     images = pipe(
         prompts,
@@ -180,8 +186,7 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
         {
             "images": plot_images(
                 images,
-                cfg.experiment.do_multiframe_attn,
-                cfg.experiment.target_frame_indices,
+                cfg.cross_frame_attn_experiment.target_frame_indices,
             )
         }
     )

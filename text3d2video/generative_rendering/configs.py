@@ -43,7 +43,6 @@ class NoiseInitializationConfig:
 class GenerativeRenderingConfig:
     seed: int
     resolution: int
-    noise_initialization: NoiseInitializationConfig
     do_pre_attn_injection: bool
     do_post_attn_injection: bool
     feature_blend_alpha: float
@@ -64,4 +63,5 @@ class RunGenerativeRenderingConfig:
     run: RunConfig
     rerun: RerunConfig
     save_tensors: SaveConfig
+    noise_initialization: NoiseInitializationConfig
     generative_rendering: GenerativeRenderingConfig
