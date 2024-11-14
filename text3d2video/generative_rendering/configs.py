@@ -38,6 +38,12 @@ class NoiseInitializationConfig:
     uv_texture_res = -1
 
 
+@dataclass
+class AnimationConfig:
+    n_frames: int
+    artifact_tag: str
+
+
 # pylint: disable=too-many-instance-attributes
 @dataclass
 class GenerativeRenderingConfig:

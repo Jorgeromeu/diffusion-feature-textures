@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 from torch import Tensor
 
 from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
+from text3d2video.attention_visualization import split_heads
 from text3d2video.feature_visualization import reduce_feature_map
 
 TIMESTEP_INPUT_ID = "time-input"
@@ -52,36 +53,35 @@ def plot_attention(
         temperature = 1
 
     frame_idx = frame_idx["frame_idx"]
-
     time_step_idx = int(time_step_idx)
 
     identifier = {"layer": layer_name, "timestep": time_steps[time_step_idx]}
 
     x = multidict[identifier | {"name": "x"}][frame_idx]
-    qrys = multidict[identifier | {"name": "query"}][frame_idx]
-    keys = multidict[identifier | {"name": "key"}][frame_idx]
+    qrys = multidict[identifier | {"name": "query"}][: len(images)]
+    keys = multidict[identifier | {"name": "key"}][: len(images)]
+    vals = multidict[identifier | {"name": "value"}][: len(images)]
 
-    n_heads = 8
-    layer_res = int(sqrt(qrys.shape[0]))
-    inner_dim = keys.shape[-1]
-    head_dim = inner_dim // n_heads
+    layer_res = int(sqrt(qrys.shape[1]))
 
-    qrys_multihead = qrys.view(-1, n_heads, head_dim).transpose(1, 2)
-    keys_multihead = keys.view(-1, n_heads, head_dim).transpose(1, 2)
+    qrys_multihead = split_heads(qrys)
+    keys_multihead = split_heads(keys)
+    vals_multihead = split_heads(vals)
 
     # get pixel index in flattened tensor
     pixel_coord = Tensor([pixel_data["x"], pixel_data["y"]]).int()
     pixel_idx_flat = pixel_coord[1] * layer_res + pixel_coord[0]
 
-    # get query embedding for pixel and head
-    pixel_qry = qrys_multihead[pixel_idx_flat, :, head_idx]
+    # get q/k/v for the given head
+    head_qrys = qrys_multihead[:, :, head_idx, :]
+    head_keys = keys_multihead[:, :, head_idx, :]
+    head_vals = vals_multihead[:, :, head_idx, :]
 
-    # get keys and values for the given head
-    head_keys = keys_multihead[:, :, head_idx]
+    # get query for pixel
+    pixel_qry = head_qrys[frame_idx, pixel_idx_flat]
 
     # compute weights
     weights = einsum(pixel_qry, head_keys, "d , n d -> n")
-    weights = F.softmax(weights / (temperature * sqrt(head_dim)))
 
     # reshape weights and values
     # weights_square = rearrange(weights, "(h w) -> h w", w=layer_res)
@@ -213,9 +213,8 @@ def controls(layer_names: List[str], time_steps: List[int]):
         id=TIMESTEP_INPUT_ID,
         min=0,
         max=len(time_steps) - 1,
-        value=time_steps[0],
+        value=int(time_steps[0]),
         step=1,
-        marks=time_steps,
     )
 
     head_select = dcc.Dropdown(
@@ -292,7 +291,7 @@ def attn_visualization():
 if __name__ == "__main__":
     artifact_tag = "attn_data:v1"
     attn_data = AttentionFeaturesArtifact.from_wandb_artifact_tag(
-        artifact_tag, download=True
+        artifact_tag, download=False
     )
 
     run = attn_data.logged_by()

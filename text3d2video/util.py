@@ -207,13 +207,19 @@ def aggregate_features_precomputed_vertex_positions(
 
 
 def sample_feature_map(feature_map: Tensor, coords: Tensor, mode="nearest"):
+    """
+    Sample the feature map at the given coordinates
+    :param feature_map: (C, H, W) feature map
+    :param coords: (N, 2) coordinates in the range [-1, 1] (NDC)
+    :param mode: interpolation mode
+    :return: (N, C) sampled features
+    """
+    coords = coords.clone()
     batched_feature_map = rearrange(feature_map, "c h w -> 1 c h w").to(torch.float32)
-    coords[:, 0] *= -1
-    coords[:, 1] *= -1
     grid = rearrange(coords, "n d -> 1 1 n d")
     out = F.grid_sample(batched_feature_map, grid, align_corners=True, mode=mode)
     out_features = rearrange(out, "1 f 1 n -> n f")
-    return out_features
+    return out_features.to(feature_map)
 
 
 def blend_features(

@@ -19,7 +19,7 @@ def turntable_cameras(
     return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
 
-def sideways_orthographic_cameras(x_0=1, x_1=-1, n: int = 10, device: str = "cuda"):
+def sideways_orthographic_cameras(n: int = 10, x_0=1, x_1=-1, device: str = "cuda"):
     line = torch.linspace(x_0, x_1, n)
 
     r = torch.eye(3)
@@ -36,7 +36,7 @@ def sideways_orthographic_cameras(x_0=1, x_1=-1, n: int = 10, device: str = "cud
     return cameras
 
 
-def z_movement_cameras(z_0=2, z_1=4, n: int = 10, device: str = "cuda"):
+def z_movement_cameras(n: int = 10, z_0=2, z_1=4, device: str = "cuda"):
     line = torch.linspace(z_0, z_1, n)
 
     r = torch.eye(3)

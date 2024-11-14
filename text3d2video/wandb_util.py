@@ -1,6 +1,7 @@
 import logging
 import shutil
 import tempfile
+from ast import alias
 from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
@@ -176,12 +177,15 @@ class ArtifactWrapper:
         artifact = get_artifact(artifact_tag)
         return cls.from_wandb_artifact(artifact, download)
 
-    def log_if_enabled(self):
+    def log_if_enabled(self, aliases=None):
+        if aliases is None:
+            aliases = []
+
         self.wandb_artifact.add_dir(self.folder)
 
         if wandb_is_enabled():
             logging.info("Logging artifact %s", self.wandb_artifact.name)
-            wandb.log_artifact(self.wandb_artifact)
+            wandb.log_artifact(self.wandb_artifact, aliases)
             self.delete_folder()
             return
 

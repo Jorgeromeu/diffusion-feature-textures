@@ -9,7 +9,9 @@ from pytorch3d.structures import Meshes
 from torch import Tensor
 
 from text3d2video.camera_placement import front_camera
+from text3d2video.rendering import render_depth_map
 from text3d2video.util import ordered_sample
+from text3d2video.video_util import pil_frames_to_clip
 from text3d2video.wandb_util import ArtifactWrapper
 
 
@@ -107,3 +109,11 @@ class AnimationArtifact(ArtifactWrapper):
             return front_camera(len(frame_indices))
 
         return torch.load(self._cameras_path())[frame_indices]
+
+    def render_depth_clip(self):
+        frame_nums = self.frame_nums()
+        frames = self.load_frames(frame_nums)
+        cams = self.cameras(frame_nums)
+        depth_maps = render_depth_map(frames, cams)
+        clip = pil_frames_to_clip(depth_maps)
+        return clip
