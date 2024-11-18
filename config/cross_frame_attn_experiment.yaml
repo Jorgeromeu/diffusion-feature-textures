@@ -37,10 +37,10 @@ save_config:
 
 cross_frame_attn_experiment:
   seed: 0
-  prompt: "Lion"
+  prompt: "Deadpool"
   n_views: 5
-  attend_to_self: true
-  target_frame_indices: []
+  attend_to_self: false
+  target_frame_indices: [0,1,2,3,4]
   num_inference_steps: 10
   guidance_scale: 7.5
-  controlnet_conditioning_scale: 1.0
+  controlnet_conditioning_scale: 1.5

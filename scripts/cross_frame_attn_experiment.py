@@ -151,6 +151,8 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
 
     tensors_multidict = out_artifact.create_features_diskdict()
 
+    attn_processor = MultiFrameAttnProcessor(pipe.unet)
+
     def pre_step(t, i):
         attn_processor.cur_timestep = t
         attn_processor.cur_timestep_idx = i
@@ -165,7 +167,6 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
     )
     save_cfg.module_pahts = cfg.save_config.module_paths
 
-    attn_processor = MultiFrameAttnProcessor(pipe.unet)
     attn_processor.save_cfg = save_cfg
     attn_processor.target_frame_indices = (
         cfg.cross_frame_attn_experiment.target_frame_indices

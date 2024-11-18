@@ -1,13 +1,17 @@
+from math import sqrt
 from typing import List
 
+import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
-from einops import rearrange, reduce
+from einops import einsum, rearrange, reduce
 from jaxtyping import Float
 from torch import Tensor
 
 
-def memory_efficient_attention(attn: Attention, key, query, value, attention_mask):
+def memory_efficient_attention(
+    attn: Attention, key, query, value, attention_mask, temperature=1.0
+):
     """
     Attention operation with F.scaled_dot_product_attention
     """
@@ -27,9 +31,19 @@ def memory_efficient_attention(attn: Attention, key, query, value, attention_mas
     if attn.norm_k is not None:
         key = attn.norm_k(key)
 
+    d_kv = key.shape[-1]
+
+    scale = 1 / (temperature * sqrt(d_kv))
+
     # pylint: disable=not-callable
     hidden_states = F.scaled_dot_product_attention(
-        query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        query,
+        key,
+        value,
+        attn_mask=attention_mask,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=scale,
     )
 
     hidden_states = hidden_states.transpose(1, 2).reshape(
@@ -38,6 +52,17 @@ def memory_efficient_attention(attn: Attention, key, query, value, attention_mas
     attn_out = hidden_states.to(query.dtype)
 
     return attn_out
+
+
+def compute_attn_weights(qrys, keys, temperature=1, device="cuda"):
+    with torch.no_grad():
+        attn_scores = einsum(
+            qrys.to(device), keys.to(device), "b tq d, b tk d -> b tq tk"
+        )
+        attn_weights = F.softmax(
+            attn_scores / (temperature * sqrt(qrys.shape[-1])), dim=1
+        )
+        return attn_weights.cpu()
 
 
 def extended_attn_kv_hidden_states(

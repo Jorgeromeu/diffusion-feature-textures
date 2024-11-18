@@ -24,12 +24,15 @@ def ordered_sample(lst, n):
     """
     Sample n elements from a list in order.
     """
-
-    step_size = len(lst) // (n - 1)
-    # Get the sample by slicing the list
-    sample = [lst[i * step_size] for i in range(n - 1)]
-    sample.append(lst[-1])  # Add the last element
-    return sample
+    if n <= 1:
+        return [lst[0]] if n == 1 else []
+    if n >= len(lst):
+        return lst
+    # Calculate the step size based on list length and number of samples
+    step = (len(lst) - 1) / (n - 1)
+    # Use the calculated step to select indices
+    indices = [round(i * step) for i in range(n)]
+    return [lst[i] for i in indices]
 
 
 def pixel_coords_uv(

@@ -1,9 +1,8 @@
 from pathlib import Path
 from typing import List
 
-import numpy as np
 from IPython.display import Video
-from moviepy.editor import ImageSequenceClip, VideoFileClip
+from moviepy.editor import VideoFileClip
 from PIL import Image
 
 import text3d2video.wandb_util as wbu

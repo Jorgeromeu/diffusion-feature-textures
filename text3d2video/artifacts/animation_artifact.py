@@ -110,10 +110,10 @@ class AnimationArtifact(ArtifactWrapper):
 
         return torch.load(self._cameras_path())[frame_indices]
 
-    def render_depth_clip(self):
-        frame_nums = self.frame_nums()
-        frames = self.load_frames(frame_nums)
-        cams = self.cameras(frame_nums)
+    def render_depth_clip(self, n_frames=None, fps=10):
+        frame_nums = self.frame_nums(n_frames)
+        frames = self.load_frames(frame_nums).cuda()
+        cams = self.cameras(frame_nums).cuda()
         depth_maps = render_depth_map(frames, cams)
-        clip = pil_frames_to_clip(depth_maps)
+        clip = pil_frames_to_clip(depth_maps, fps=fps)
         return clip

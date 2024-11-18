@@ -4,7 +4,6 @@ from typing import List
 import dash_bootstrap_components as dbc
 import plotly.express as px
 import plotly.graph_objects as go
-import torch.nn.functional as F
 from dash import Dash, Input, Output, callback, dcc, html
 from dash_bootstrap_components.themes import BOOTSTRAP
 from einops import einsum, rearrange
@@ -60,13 +59,11 @@ def plot_attention(
     x = multidict[identifier | {"name": "x"}][frame_idx]
     qrys = multidict[identifier | {"name": "query"}][: len(images)]
     keys = multidict[identifier | {"name": "key"}][: len(images)]
-    vals = multidict[identifier | {"name": "value"}][: len(images)]
 
     layer_res = int(sqrt(qrys.shape[1]))
 
     qrys_multihead = split_heads(qrys)
     keys_multihead = split_heads(keys)
-    vals_multihead = split_heads(vals)
 
     # get pixel index in flattened tensor
     pixel_coord = Tensor([pixel_data["x"], pixel_data["y"]]).int()
@@ -75,7 +72,6 @@ def plot_attention(
     # get q/k/v for the given head
     head_qrys = qrys_multihead[:, :, head_idx, :]
     head_keys = keys_multihead[:, :, head_idx, :]
-    head_vals = vals_multihead[:, :, head_idx, :]
 
     # get query for pixel
     pixel_qry = head_qrys[frame_idx, pixel_idx_flat]

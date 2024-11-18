@@ -177,6 +177,7 @@ class GenerativeRenderingAttn:
         # save post-attn features
         if self.attn_mode == AttentionMode.FEATURE_EXTRACTION:
             self.save_post_attn_features(attn_out_square)
+
         elif self.attn_mode == AttentionMode.FEATURE_INJECTION:
             attn_out_square = self.post_attn_injection(attn_out_square)
 

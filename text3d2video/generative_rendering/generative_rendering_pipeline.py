@@ -11,7 +11,7 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 from diffusers.image_processor import VaeImageProcessor
-from einops import rearrange, repeat
+from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import FoVPerspectiveCameras, TexturesVertex
@@ -25,7 +25,6 @@ from text3d2video.artifacts.tensors_artifact import H5Artifact
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
     NoiseInitializationConfig,
-    NoiseInitializationMethod,
     RerunConfig,
     SaveConfig,
 )
@@ -39,7 +38,7 @@ from text3d2video.util import (
     ordered_sample,
     project_vertices_to_cameras,
 )
-from text3d2video.uv_noise import prepare_latents, prepare_uv_initialized_latents
+from text3d2video.uv_noise import prepare_latents
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -195,6 +194,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             t,
             encoder_hidden_states=controlnet_prompt_embeds,
             controlnet_cond=processed_control_image,
+            conditioning_scale=self.gr_config.controlnet_conditioning_scale,
             guess_mode=False,
             return_dict=False,
         )

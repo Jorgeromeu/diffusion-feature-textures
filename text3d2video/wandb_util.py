@@ -1,7 +1,6 @@
 import logging
 import shutil
 import tempfile
-from ast import alias
 from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
@@ -164,6 +163,10 @@ class ArtifactWrapper:
 
     @classmethod
     def from_wandb_artifact(cls, artifact: Artifact, download=False):
+        folder = Path(artifact._default_root())
+        if not folder.exists():
+            artifact.download()
+
         if download:
             artifact.download()
 

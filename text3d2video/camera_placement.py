@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import torch
 from pytorch3d.renderer import (
     FoVOrthographicCameras,
@@ -7,6 +8,16 @@ from pytorch3d.renderer import (
     look_at_view_transform,
 )
 from pytorch3d.structures import Meshes
+
+
+def turntable_loop_cameras(
+    n: int, dist: float = 2, device: str = "cuda"
+) -> FoVPerspectiveCameras:
+    azim = np.linspace(0, 360, n, endpoint=False)
+    elev = [0] * n
+    dists = [dist] * n
+    R, T = look_at_view_transform(dists, elev, azim)
+    return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
 
 def turntable_cameras(

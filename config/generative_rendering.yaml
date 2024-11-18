@@ -12,7 +12,7 @@ prompt: "Deadpool"
 out_artifact: "video"
 
 save_tensors:
-  enabled: true
+  enabled: false
   save_latents: true
   n_frames: 5
   out_artifact: 'tensors'
@@ -27,14 +27,14 @@ generative_rendering:
   seed: 0
   do_pre_attn_injection: true
   do_post_attn_injection: true
-  feature_blend_alpha: 1.0
+  feature_blend_alpha: 0.5
   mean_features_weight: 0.5
   chunk_size: 5
-  num_keyframes: 4
+  num_keyframes: 8
   attend_to_self_kv: true
   num_inference_steps: 10
   guidance_scale: 7.5
-  controlnet_conditioning_scale: 1.0
+  controlnet_conditioning_scale: 2.0
   module_paths:
     [
       "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
