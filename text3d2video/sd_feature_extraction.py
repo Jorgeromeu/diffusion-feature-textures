@@ -1,3 +1,4 @@
+import re
 from typing import Callable, Dict, Set
 
 import torch
@@ -30,6 +31,47 @@ def get_module_path(parent_module: nn.Module, module: nn.Module) -> str:
             return name
 
     return None
+
+
+def parse_layer_name(layer_name):
+    """
+    Parse a layer name into its components
+    :param layer_name: layer name
+    :return: dict with block_type, attention_index, block_index, attention_index
+    """
+
+    match = re.match(
+        r"(?:(down_blocks|up_blocks)\.(\d+)|mid_block)\.attentions\.(\d+)\.transformer_blocks\.(\d+)\.attn1",
+        layer_name,
+    )
+
+    if not match:
+        raise ValueError(f"Invalid layer name format: {layer_name}")
+
+    block_type = match.group(1) if match.group(1) else "mid"
+    block_index = int(match.group(2)) if match.group(2) else None
+    attention_index = int(match.group(3))
+
+    return {
+        "block_type": block_type,
+        "block_index": block_index,
+        "attention_index": attention_index,
+    }
+
+
+def flatten_layer_index(layer_dict):
+    block_type = layer_dict["block_type"]
+    block_idx = layer_dict["block_index"]
+    attn_idx = layer_dict["attention_index"]
+
+    if block_type == "mid":
+        return attn_idx
+
+    if block_type == "down_blocks":
+        return (block_idx - 1) * 2 + attn_idx
+
+    if block_type == "up_blocks":
+        return (block_idx - 1) * 3 + attn_idx
 
 
 def get_module_from_path(parent_module: nn.Module, path: str) -> nn.Module:
