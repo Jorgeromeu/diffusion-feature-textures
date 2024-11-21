@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from math import sqrt
+from tkinter import NO
 from typing import List
 
 import torch
@@ -13,6 +15,14 @@ from PIL.Image import Image
 from torch import Tensor
 
 from text3d2video.feature_visualization import RgbPcaUtil
+
+
+@dataclass
+class AttnFeatures:
+    qrys_mh: Tensor
+    keys_mh: Tensor
+    vals_mh: Tensor
+    layer_res: int
 
 
 def split_heads(seq, n_heads=8):
@@ -90,6 +100,12 @@ def reshape_concatenated(
     seq: Tensor,
     layer_res: int,
 ):
+    """
+    Reshape a key/value to a square grid
+    :param seq: (n, T) tensor
+    :param layer_res: resolution of the layer before flattening/concatenating
+    : return: (n, h, w) tensor
+    """
     return rearrange(seq, "(n h w) d -> d h (n w)", w=layer_res, h=layer_res)
 
 
@@ -107,7 +123,7 @@ def plot_image_and_weight(
     img: Image,
     weights: Tensor,
     alpha=0.8,
-    interpolation="bilinear",
+    interpolation="bicubic",
     cmap="turbo",
 ):
     """
@@ -152,52 +168,105 @@ def add_pixel_marker(
     ax.add_patch(rect)
 
 
-def plot_qry_value_weights(
-    qry_img,
-    val_img,
-    qry_weights: Tensor = None,
-    kv_weights: Tensor = None,
-    qry_coord: Tensor = None,
-    val_coord: Tensor = None,
-    circle_color="lime",
-    weights_cmap="turbo",
-    weights_alpha=0.5,
-    weights_interpolation="bilinear",
-    hide_axes=False,
-    layer_res=64,
+def compute_attn_weights(qrys, keys, temperature=1, device="cuda"):
+    """
+    Compute attention weights for key/qry pair
+    :param qrys: (b, t, d) tensor of queries
+    :param keys: (b, t, d) tensor of keys
+    :param temperature: temperature for softmax
+    :param device: device to compute on
+    : return: (b, t_q, t_kv) tensor of attention weights
+    """
+
+    with torch.no_grad():
+        attn_scores = einsum(
+            qrys.to(device), keys.to(device), "b tq d, b tk d -> b tq tk"
+        )
+        attn_weights = F.softmax(
+            attn_scores / (temperature * sqrt(qrys.shape[-1])), dim=1
+        )
+        return attn_weights.cpu()
+
+
+def get_attn_weights(attn_features, head_idx=0):
+    """
+    Compute attention weights for a given head
+    :param attn_features: AttnFeatures object
+    :param head_idx: index of the head
+    :return: (b, t_q, t_kv) tensor of attention weights
+    """
+
+    # get attn features for layer/time/head
+    keys = attn_features.keys_mh[:, :, head_idx, :]
+    qrys = attn_features.qrys_mh[:, :, head_idx, :]
+
+    # compute attn weights
+    attn_weights = compute_attn_weights(qrys, keys)
+    return attn_weights
+
+
+def plot_qry_weights(
+    ax_qry: Axes,
+    ax_kv: Axes,
+    attn_features: AttnFeatures,
+    attn_weights: Tensor,
+    qry_coord: Tensor,
+    qry_frame_idx: int,
+    target_frame_indices: List[int],
+    images: List[Image],
 ):
-    fig, axs = plt.subplots(1, 2)
-    ax_qry = axs[0]
-    ax_val = axs[1]
-    ax_qry.set_title("Query")
-    ax_val.set_title("Key/Value")
+    """
+    Plot attention attention weights and query position over generated images
+    :param ax_qry: matplotlib axes for query image
+    :param ax_kv: matplotlib axes for key/value images
+    :param attn_features: AttnFeatures object
+    :param attn_weights: (b, t_q, t_kv) tensor of attention weights
+    :param qry_coord: (2,) tensor of query coordinates
+    :param qry_frame_idx: index of query frame
+    :param target_frame_indices: indices of key/value frames
+    :param images: list of PIL images
+    """
 
-    # plot images and weights
-    weights_kwargs = {
-        "alpha": weights_alpha,
-        "interpolation": weights_interpolation,
-        "cmap": weights_cmap,
-    }
-    plot_image_and_weight(ax_qry, qry_img, qry_weights, **weights_kwargs)
-    plot_image_and_weight(ax_val, val_img, kv_weights, **weights_kwargs)
+    qry_grid_size = (attn_features.layer_res, attn_features.layer_res)
 
-    # add markers
-    marker_kwargs = {
-        "color": circle_color,
-    }
-    if qry_coord is not None:
-        grid_size = (layer_res, layer_res)
-        add_pixel_marker(ax_qry, qry_coord, qry_img.size, grid_size, **marker_kwargs)
-    if val_coord is not None:
-        grid_size = (layer_res * 5, layer_res)
-        add_pixel_marker(ax_val, val_coord, val_img.size, grid_size, **marker_kwargs)
+    if ax_qry is not None:
+        qry_im = images[qry_frame_idx]
+        ax_qry.imshow(qry_im)
+        add_pixel_marker(ax_qry, qry_coord, qry_im.size, qry_grid_size)
 
-    # hide axes
-    if hide_axes:
-        ax_qry.axis("off")
-        ax_val.axis("off")
+    if ax_kv is not None:
+        # get index in attn_weights for query pixel
+        qry_pix = coord_to_pixel(qry_coord, qry_grid_size)
+        qry_pix_1d = pixel_coord_flattened(qry_pix, qry_grid_size)
 
-    # set size
-    scale = 0.5
-    ax_qry.set_position([0, 0, scale, scale])
-    ax_val.set_position([scale, 0, scale * 3.8, scale])
+        # get weights for quer and reshape to square
+        weights = attn_weights[qry_frame_idx, qry_pix_1d, :]
+        weights = reshape_concatenated(
+            weights.unsqueeze(-1), layer_res=attn_features.layer_res
+        )[0]
+
+        kv_im = concatenate_images([images[idx] for idx in target_frame_indices])
+        plot_image_and_weight(ax_kv, kv_im, weights)
+
+
+def make_gridspec_figure(
+    n_rows: int,
+    n_cols: int,
+    width_ratios: List[int],
+    height_ratios: List[int],
+    scale: int = 2,
+):
+    height = sum(height_ratios) + 0.2
+    width = sum(width_ratios)
+
+    fig = plt.figure(figsize=(width * scale, height * scale))
+    gs = fig.add_gridspec(
+        n_rows,
+        n_cols,
+        width_ratios=width_ratios,
+        height_ratios=height_ratios,
+        hspace=0.0,
+        wspace=0.01,
+    )
+
+    return fig, gs

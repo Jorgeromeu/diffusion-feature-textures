@@ -16,12 +16,13 @@ save_config:
   out_artifact: 'attn_data'
   n_save_steps: 5
   module_paths: [
-      "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
-      "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
-      "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
-      "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
-      "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
-      "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      # "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
+      # "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
+      # "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      # "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      # "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      # "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      # "mid_block.attentions.0.transformer_blocks.0.attn1",
       "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
       "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
       "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
@@ -31,7 +32,6 @@ save_config:
       "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
       "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
       "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-      "mid_block.attentions.0.transformer_blocks.0.attn1",
     ]
 
 
@@ -40,7 +40,7 @@ cross_frame_attn_experiment:
   prompt: "Deadpool"
   n_views: 5
   attend_to_self: false
-  target_frame_indices: [0,1,2,3,4]
+  target_frame_indices: [1,1,1,1,1]
   num_inference_steps: 10
   guidance_scale: 7.5
   controlnet_conditioning_scale: 1.5

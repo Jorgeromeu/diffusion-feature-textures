@@ -54,17 +54,6 @@ def memory_efficient_attention(
     return attn_out
 
 
-def compute_attn_weights(qrys, keys, temperature=1, device="cuda"):
-    with torch.no_grad():
-        attn_scores = einsum(
-            qrys.to(device), keys.to(device), "b tq d, b tk d -> b tq tk"
-        )
-        attn_weights = F.softmax(
-            attn_scores / (temperature * sqrt(qrys.shape[-1])), dim=1
-        )
-        return attn_weights.cpu()
-
-
 def extended_attn_kv_hidden_states(
     x: Float[Tensor, "b t d"], chunk_size: int = 2, frame_indices: List[int] = None
 ) -> Float[Tensor, "b t d"]:
