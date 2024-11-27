@@ -536,7 +536,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 )
             )
 
-            # Unify features across keyframes as vertex features
+            # unify spatial features across keyframes as vertex features
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
             aggregated_3d_features = self.aggregate_feature_maps(

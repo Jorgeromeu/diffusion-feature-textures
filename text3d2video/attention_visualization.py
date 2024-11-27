@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from PIL.Image import Image
+from sympy import N
 from torch import Tensor
 
 from text3d2video.feature_visualization import RgbPcaUtil
@@ -133,16 +134,22 @@ def plot_image_and_weight(
     :param weights: (h, w) tensor of weights
     """
 
-    ax.imshow(img)
-    if weights is not None:
+    if img is not None:
+        im_imshow = ax.imshow(img)
         w, h = img.size
-        ax.imshow(
+    else:
+        im_imshow = None
+        w, h = weights.shape
+
+    if weights is not None:
+        weights_imshow = ax.imshow(
             weights,
             cmap=cmap,
             alpha=alpha,
             interpolation=interpolation,
             extent=[0, w, h, 0],
         )
+    return im_imshow, weights_imshow
 
 
 def add_pixel_marker(
@@ -165,7 +172,7 @@ def add_pixel_marker(
 
     # create rect
     rect = Rectangle(coord_pix, height=pixel_w, width=pixel_w, color=color)
-    ax.add_patch(rect)
+    return ax.add_patch(rect)
 
 
 def compute_attn_weights(qrys, keys, temperature=1, device="cuda"):
@@ -214,6 +221,7 @@ def plot_qry_weights(
     qry_frame_idx: int,
     target_frame_indices: List[int],
     images: List[Image],
+    weight_only=False,
 ):
     """
     Plot attention attention weights and query position over generated images
@@ -231,8 +239,8 @@ def plot_qry_weights(
 
     if ax_qry is not None:
         qry_im = images[qry_frame_idx]
-        ax_qry.imshow(qry_im)
-        add_pixel_marker(ax_qry, qry_coord, qry_im.size, qry_grid_size)
+        qry_imshow = ax_qry.imshow(qry_im)
+        pixel_marker = add_pixel_marker(ax_qry, qry_coord, qry_im.size, qry_grid_size)
 
     if ax_kv is not None:
         # get index in attn_weights for query pixel
@@ -246,7 +254,11 @@ def plot_qry_weights(
         )[0]
 
         kv_im = concatenate_images([images[idx] for idx in target_frame_indices])
-        plot_image_and_weight(ax_kv, kv_im, weights)
+
+        img_input = None if weight_only else kv_im
+        im_imshow, weight_imshow = plot_image_and_weight(ax_kv, img_input, weights)
+
+    return qry_imshow, pixel_marker, im_imshow, weight_imshow
 
 
 def make_gridspec_figure(

@@ -117,3 +117,9 @@ class AnimationArtifact(ArtifactWrapper):
         depth_maps = render_depth_map(frames, cams)
         clip = pil_frames_to_clip(depth_maps, fps=fps)
         return clip
+
+    def cams_and_frames(self, n_frames=None):
+        frame_nums = self.frame_nums(n_frames)
+        frames = self.load_frames(frame_nums)
+        cameras = self.cameras(frame_nums)
+        return cameras, frames
