@@ -180,7 +180,11 @@ class ArtifactWrapper:
         artifact = get_artifact(artifact_tag)
         return cls.from_wandb_artifact(artifact, download)
 
-    def log_if_enabled(self, aliases=None):
+    @classmethod
+    def from_folder(cls, folder: Path):
+        return cls(folder=folder, artifact=None)
+
+    def log_if_enabled(self, aliases=None, delete_folder=True):
         if aliases is None:
             aliases = []
 
@@ -189,7 +193,9 @@ class ArtifactWrapper:
         if wandb_is_enabled():
             logging.info("Logging artifact %s", self.wandb_artifact.name)
             wandb.log_artifact(self.wandb_artifact, aliases)
-            self.delete_folder()
+
+            if delete_folder:
+                self.delete_folder()
             return
 
         logging.info(

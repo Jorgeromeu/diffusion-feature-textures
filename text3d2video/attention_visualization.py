@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from math import sqrt
-from tkinter import NO
 from typing import List
 
 import torch
@@ -12,7 +11,6 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from PIL.Image import Image
-from sympy import N
 from torch import Tensor
 
 from text3d2video.feature_visualization import RgbPcaUtil

@@ -37,6 +37,15 @@ class H5Artifact(ArtifactWrapper):
 
         return d
 
+    def read_dataset(self, path: str):
+        with h5py.File(self.h5_file_path(), "r") as f:
+            try:
+                dataset = f[path]
+            except KeyError as e:
+                raise ValueError(f"Dataset {path} not found in h5 file") from e
+
+            return torch.tensor(dataset)
+
     def print_datasets(self):
         def print_path(name, obj):
             if isinstance(obj, h5py.Dataset):

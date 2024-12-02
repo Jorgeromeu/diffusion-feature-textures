@@ -12,6 +12,7 @@ from text3d2video.generative_rendering.configs import RunGenerativeRenderingConf
 from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
+from text3d2video.util import ordered_sample
 
 cs = ConfigStore.instance()
 cs.store(name="generative_rendering", node=RunGenerativeRenderingConfig)
@@ -22,7 +23,6 @@ def run(cfg: RunGenerativeRenderingConfig):
     do_run = wbu.setup_run(cfg)
     if not do_run:
         return
-
     torch.set_grad_enabled(False)
 
     # read animation
@@ -63,7 +63,6 @@ def run(cfg: RunGenerativeRenderingConfig):
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
         noise_initialization_config=cfg.noise_initialization,
-        rerun_config=cfg.rerun,
         save_config=cfg.save_tensors,
     )
 
@@ -73,6 +72,10 @@ def run(cfg: RunGenerativeRenderingConfig):
     # save video
     video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
     video_artifact.write_frames(video_frames, fps=10)
+
+    # log sampled frames
+    sampled_frames = ordered_sample(video_frames, 5)
+    wandb.log({"frames": [wandb.Image(frame) for frame in sampled_frames]})
 
     # log video to run
     wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})

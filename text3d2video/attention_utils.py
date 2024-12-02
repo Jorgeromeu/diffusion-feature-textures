@@ -1,10 +1,9 @@
 from math import sqrt
 from typing import List
 
-import torch
 import torch.nn.functional as F
 from diffusers.models.attention_processor import Attention
-from einops import einsum, rearrange, reduce
+from einops import rearrange, reduce
 from jaxtyping import Float
 from torch import Tensor
 

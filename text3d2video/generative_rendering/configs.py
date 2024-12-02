@@ -12,18 +12,18 @@ class RunConfig:
 
 
 @dataclass
-class RerunConfig:
-    enabled: bool
-    module_paths: list[str]
-    n_frames: int
-
-
-@dataclass
-class SaveConfig:
+class GrSaveConfig:
     enabled: bool
     save_latents: bool
+    save_q: bool
+    save_k: bool
+    save_v: bool
+    save_features: bool
+    save_features_3d: bool
     n_frames: int
+    n_timesteps: int
     out_artifact: str
+    module_paths: list[str]
 
 
 class NoiseInitializationMethod(Enum):
@@ -65,9 +65,9 @@ class GenerativeRenderingConfig:
 @dataclass
 class RunGenerativeRenderingConfig:
     prompt: str
+    animation: AnimationConfig
     out_artifact: str
     run: RunConfig
-    rerun: RerunConfig
-    save_tensors: SaveConfig
+    save_tensors: GrSaveConfig
     noise_initialization: NoiseInitializationConfig
     generative_rendering: GenerativeRenderingConfig
