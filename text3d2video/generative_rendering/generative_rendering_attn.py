@@ -216,10 +216,8 @@ class GenerativeRenderingAttn:
             self.gr_data_artifact.save_attn_out_pre(
                 attn_out_square, self.cur_timestep, self._cur_module_path
             )
-
             # post attn injection
             attn_out_square = self.post_attn_injection(attn_out_square)
-
             # save attn out post
             self.gr_data_artifact.save_attn_out_post(
                 attn_out_square, self.cur_timestep, self._cur_module_path

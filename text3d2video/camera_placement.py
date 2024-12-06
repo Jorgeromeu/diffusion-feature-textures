@@ -30,6 +30,23 @@ def turntable_cameras(
     return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
 
 
+def turntable_cams(
+    n: int,
+    dist: float = 2,
+    start_angle=0,
+    stop_angle=360,
+    fov=60,
+    device: str = "cuda",
+    endpoint=True,
+) -> FoVPerspectiveCameras:
+    azim = np.linspace(start_angle, stop_angle, n, endpoint=endpoint)
+    print(azim)
+    elev = [0] * n
+    dists = [dist] * n
+    R, T = look_at_view_transform(dists, elev, azim)
+    return FoVPerspectiveCameras(device=device, R=R, T=T, fov=fov)
+
+
 def sideways_orthographic_cameras(n: int = 10, x_0=1, x_1=-1, device: str = "cuda"):
     line = torch.linspace(x_0, x_1, n)
 

@@ -1,6 +1,5 @@
 import unittest
 
-from text3d2video.util import ordered_sample
 
 
 class TestUtils(unittest.TestCase):

@@ -8,7 +8,7 @@ import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.camera_placement import (
     sideways_orthographic_cameras,
-    turntable_cameras,
+    turntable_cams,
     turntable_loop_cameras,
     z_movement_cameras,
 )
@@ -65,7 +65,7 @@ def turntable(ctx, dist, start_angle, stop_angle):
     artifact_name = ctx.obj["artifact_name"]
     mesh_path = ctx.obj["mesh_path"]
     n_frames = ctx.obj["n_frames"]
-    cams = turntable_cameras(
+    cams = turntable_cams(
         n=n_frames, dist=dist, start_angle=start_angle, stop_angle=stop_angle
     )
     log_animation(artifact_name, mesh_path, cams)

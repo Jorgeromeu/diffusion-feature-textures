@@ -29,6 +29,7 @@ from text3d2video.generative_rendering.generative_rendering_attn import (
     GrAttnMode,
 )
 from text3d2video.rendering import make_feature_renderer, render_depth_map
+from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import (
     aggregate_features_precomputed_vertex_positions,
     project_vertices_to_cameras,
@@ -267,7 +268,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         kf_vert_xys: List[Tensor],
         kf_vert_indices: List[Tensor],
         saved_post_attn: Dict[str, Float[Tensor, "b f d h w"]],
-    ) -> Dict[str, Tuple[Float[Tensor, "b v d"], int]]:
+    ) -> Dict[str, Float[Tensor, "b v d"]]:
         """
         Aggregate features in saved_post_attn across keyframe poses and render them for all poses
         """
@@ -279,8 +280,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         all_aggregated_features = {}
 
         for module, kf_post_attn_features in saved_post_attn.items():
-            feature_map_res = kf_post_attn_features.shape[-1]
-
             stacked_vert_features = []
             for feature_maps in kf_post_attn_features:
                 # aggregate multi-pose features to 3D
@@ -307,7 +306,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 stacked_vert_features.append(vert_features)
 
             stacked_vert_features = torch.stack(stacked_vert_features)
-            all_aggregated_features[module] = (stacked_vert_features, feature_map_res)
+            all_aggregated_features[module] = stacked_vert_features
 
         return all_aggregated_features
 
@@ -327,7 +326,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         all_feature_images = {}
 
-        for module, (batched_vert_features, feature_res) in aggregated_features.items():
+        for module, batched_vert_features in aggregated_features.items():
+            # get feature resolution
+            attn_layer = AttnLayerId.parse_module_path(module)
+            feature_res = attn_layer.layer_resolution(self.unet)
+
             renderer = make_feature_renderer(cameras, feature_res)
 
             # render for each batch
@@ -455,11 +458,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 kf_vert_xys,
                 kf_vert_indices,
                 post_attn_features,
-            )
-
-            self.gr_data_artifact.save_vertex_features(
-                aggregated_3d_features,
-                t,
             )
 
             # do inference in chunks

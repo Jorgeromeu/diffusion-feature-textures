@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from text3d2video.artifacts.gr_data import GrSaveConfig
+
 
 @dataclass
 class RunConfig:
@@ -9,21 +11,6 @@ class RunConfig:
     instant_exit: bool
     download_artifacts: bool
     tags: list[str]
-
-
-@dataclass
-class GrSaveConfig:
-    enabled: bool
-    save_latents: bool
-    save_q: bool
-    save_k: bool
-    save_v: bool
-    save_features: bool
-    save_features_3d: bool
-    n_frames: int
-    n_timesteps: int
-    out_artifact: str
-    module_paths: list[str]
 
 
 class NoiseInitializationMethod(Enum):

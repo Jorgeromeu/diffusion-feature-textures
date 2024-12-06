@@ -1,11 +1,28 @@
+from dataclasses import dataclass
+
 import h5py
+import numpy as np
 import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
 from text3d2video.artifacts.tensors_artifact import H5Artifact
-from text3d2video.generative_rendering.configs import GrSaveConfig
 from text3d2video.util import ordered_sample, ordered_sample_indices
+
+
+@dataclass
+class GrSaveConfig:
+    enabled: bool
+    save_latents: bool
+    save_q: bool
+    save_k: bool
+    save_v: bool
+    save_features: bool
+    save_features_3d: bool
+    n_frames: int
+    n_timesteps: int
+    out_artifact: str
+    module_paths: list[str]
 
 
 class GrDataArtifact(H5Artifact):
@@ -27,37 +44,52 @@ class GrDataArtifact(H5Artifact):
     def _3d_features_path(self, t: int, module_path: str):
         return f"time_{t}/layer_{module_path}/vertex_features"
 
-    # Writing methods
+    def should_save_timestep(self, t: int):
+        if self.save_timesteps == []:
+            return True
 
-    def setup_save_config_write(
-        self, cfg: GrSaveConfig, scheduler: SchedulerMixin, n_frames: int
-    ):
-        self.config = cfg
+        return t in self.save_timesteps
 
-        if not self.config.enabled:
-            self.save_frame_indices = []
-            self.save_timesteps = []
-            return
+    def should_save_frame(self, frame_i: int):
+        if self.save_frame_indices == []:
+            return True
 
-        # compute frames to save
+        return frame_i in self.save_frame_indices
+
+    # Initialization Methods
+
+    @classmethod
+    def init_from_cfg(cls, cfg: GrSaveConfig):
+        """
+        Create a GrDataArtifact from a GrSaveConfig
+        :param cfg: GrSaveConfig
+        """
+
+        art = cls.create_empty_artifact(cfg.out_artifact)
+        art.config = cfg
+        art.save_frame_indices = []
+        art.save_timesteps = []
+        return art
+
+    def compute_save_frame_indices(self, n_frames: int):
         frame_indices = list(range(n_frames))
         self.save_frame_indices = ordered_sample_indices(
             frame_indices, self.config.n_frames
         )
 
-        # compute diffusion steps to save
+    def compute_save_timesteps(self, scheduler: SchedulerMixin):
         diffusion_steps = torch.cat([scheduler.timesteps, torch.Tensor([0])])
         self.save_timesteps = ordered_sample(diffusion_steps, self.config.n_timesteps)
 
-        # open h5 file
+    def begin_recording(self):
         self.open_h5_file()
+        self.create_dataset("frame_indices", Tensor(self.save_frame_indices))
+        self.create_dataset("timesteps", Tensor(self.save_timesteps))
 
-        # save the saved frame and tinstep indices
-        frame_indices_tensor = Tensor(self.save_frame_indices)
-        timesteps_tensor = Tensor(self.save_timesteps)
+    def end_recording(self):
+        self.close_h5_file()
 
-        self.create_dataset("frame_indices", frame_indices_tensor)
-        self.create_dataset("timesteps", timesteps_tensor)
+    # Writing methods
 
     def save_latents(self, latents: Tensor, t: int):
         save_latents = (
@@ -129,36 +161,24 @@ class GrDataArtifact(H5Artifact):
     # Reading methods
 
     def read_frame_indices(self):
-        indices = self.read_dataset("frame_indices").long()
+        indices = self.read_dataset_np("frame_indices").astype(int)
         return indices.tolist()
 
     def read_timesteps(self):
-        timesteps = self.read_dataset("timesteps").long()
+        timesteps = self.read_dataset_np("timesteps").astype(int)
         return timesteps.tolist()
 
     def read_module_paths(self):
-        module_paths = set()
-
-        def find_layer_name(name, obj):
-            if isinstance(obj, h5py.Dataset):
-                path = name.split("/")
-                path_len = len(path)
-                if path_len == 4:
-                    path_layer = path[2]
-                    layer = path_layer.split("_", 1)[1]
-                    module_paths.add(layer)
-
-        with h5py.File(self.h5_file_path(), "r") as f:
-            f.visititems(find_layer_name)
-
-        return sorted(list(module_paths))
+        modules = self.read_dataset_np("modules")
+        modules = [m.decode() for m in modules]
+        return modules
 
     def read_latent(self, t: int, frame_i: int) -> Tensor:
         path = self._latent_h5_path(t, frame_i)
-        return self.read_dataset(path)
+        return self.read_dataset_np(path)
 
     def read_feature(
         self, t: int, frame_i: int, module_path: str, feature_name: str
     ) -> Tensor:
         path = self._feature_h5_path(t, frame_i, module_path, feature_name)
-        return self.read_dataset(path)
+        return self.read_dataset_np(path)

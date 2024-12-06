@@ -1,4 +1,5 @@
 import h5py
+import numpy as np
 import torch
 
 from text3d2video.artifacts.animation_artifact import ArtifactWrapper
@@ -17,10 +18,12 @@ class H5Artifact(ArtifactWrapper):
     def close_h5_file(self):
         self.h5_file.close()
 
-    def create_dataset(
-        self, path: str, data: torch.Tensor, dim_names: list[str] = None
-    ):
-        d = self.h5_file.create_dataset(path, data=data.cpu().numpy())
+    def create_dataset(self, path: str, data, dim_names: list[str] = None):
+        # convert tensor to numpy
+        if isinstance(data, torch.Tensor):
+            data = data.cpu().numpy()
+
+        d = self.h5_file.create_dataset(path, data=data)
 
         if dim_names is not None and len(dim_names) != len(data.shape):
             raise ValueError(
@@ -37,14 +40,14 @@ class H5Artifact(ArtifactWrapper):
 
         return d
 
-    def read_dataset(self, path: str):
+    def read_dataset_np(self, path: str) -> np.ndarray:
         with h5py.File(self.h5_file_path(), "r") as f:
             try:
                 dataset = f[path]
             except KeyError as e:
                 raise ValueError(f"Dataset {path} not found in h5 file") from e
 
-            return torch.tensor(dataset)
+            return np.array(dataset)
 
     def print_datasets(self):
         def print_path(name, obj):

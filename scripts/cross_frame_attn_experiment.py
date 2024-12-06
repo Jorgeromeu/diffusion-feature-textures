@@ -15,7 +15,7 @@ import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
 from text3d2video.attn_processor import MultiFrameAttnProcessor, SaveConfig
-from text3d2video.camera_placement import turntable_cameras
+from text3d2video.camera_placement import turntable_cams
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
     NoiseInitializationConfig,
@@ -121,7 +121,7 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
 
     dist = 2
     n_cameras = cfg.cross_frame_attn_experiment.n_views
-    cameras = turntable_cameras(
+    cameras = turntable_cams(
         n_cameras,
         dist=dist,
         start_angle=0,
