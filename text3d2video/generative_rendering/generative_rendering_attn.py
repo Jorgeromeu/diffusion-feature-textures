@@ -210,17 +210,7 @@ class GenerativeRenderingAttn:
         if self.mode == GrAttnMode.FEATURE_INJECTION:
             # save qkv
             self.gr_data_artifact.save_qkv(
-                query, key, value, self.cur_timestep, self._cur_module_path
-            )
-            # save attn out pre
-            self.gr_data_artifact.save_attn_out_pre(
-                attn_out_square, self.cur_timestep, self._cur_module_path
-            )
-            # post attn injection
-            attn_out_square = self.post_attn_injection(attn_out_square)
-            # save attn out post
-            self.gr_data_artifact.save_attn_out_post(
-                attn_out_square, self.cur_timestep, self._cur_module_path
+                self.cur_timestep, query, key, value, self._cur_module_path
             )
 
         # reshape back to 2d

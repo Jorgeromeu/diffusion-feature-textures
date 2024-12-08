@@ -253,3 +253,35 @@ def blend_features(
 
     # return blended features, where features_rendered is not zero
     return original_background + blended_masked
+
+
+def assert_tensor_shape(t: Tensor, shape: tuple[int, ...]):
+    error_str = f"Expected tensor of shape {shape}, got {t.shape}"
+
+    for dim_len in shape:
+        assert isinstance(
+            dim_len, (int, type(None), str)
+        ), "Shape must be int, None, or str"
+
+    assert t.ndim == len(shape), error_str
+
+    named_dim_sizes = {}
+
+    for i, expected_len in enumerate(shape):
+        dim_len = t.shape[i]
+
+        # any len is allowed for None
+        if expected_len is None:
+            continue
+
+        # assert same length as other dims with same key
+        if isinstance(expected_len, str):
+            # save named dim size
+            if expected_len not in named_dim_sizes:
+                named_dim_sizes[expected_len] = dim_len
+                continue
+
+            assert named_dim_sizes[expected_len] == dim_len, error_str
+
+        # assert dim length for numeric
+        assert dim_len == expected_len, error_str

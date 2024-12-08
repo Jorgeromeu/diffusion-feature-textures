@@ -1,184 +1,145 @@
 from dataclasses import dataclass
+from typing import Dict, List
 
-import h5py
-import numpy as np
 import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
-from text3d2video.artifacts.tensors_artifact import H5Artifact
-from text3d2video.util import ordered_sample, ordered_sample_indices
+from text3d2video.artifacts.diffusion_data import (
+    AttnFeaturesWriter,
+    DiffusionData,
+    DiffusionDataCfg,
+    DiffusionDataWriter,
+    LatentsWriter,
+)
+from text3d2video.h5_util import read_tensor_from_dataset, write_tensor_as_dataset
+from text3d2video.wandb_util import ArtifactWrapper
 
 
 @dataclass
 class GrSaveConfig:
     enabled: bool
+    n_frames: int
+    n_timesteps: int
     save_latents: bool
     save_q: bool
     save_k: bool
     save_v: bool
-    save_features: bool
-    save_features_3d: bool
-    n_frames: int
-    n_timesteps: int
     out_artifact: str
     module_paths: list[str]
 
 
-class GrDataArtifact(H5Artifact):
+class GrDataWriter(DiffusionDataWriter):
+    """
+    Class to write attention data
+    """
+
+    def __init__(self, diff_data, data_path="gr_data"):
+        super().__init__(diff_data, data_path)
+
+    def _layer_path(self, t: int, layer: str):
+        return f"{self.data_path}/time_{t}/{layer}"
+
+    def _vert_features_path(self, t: int, layer: str):
+        return f"{self._layer_path(t, layer)}/vert_features"
+
+    def _kf_features_path(self, t: int, layer: str):
+        return f"{self._layer_path(t, layer)}/kf_spatial_features"
+
+    def _rendered_feature_path(self, t: int, frame_i: int, layer: str):
+        return f"{self._layer_path(t, layer)}/frame_{frame_i}/rendered"
+
+    # writing
+
+    def write_vertex_features(self, t: int, vert_features: Dict[str, Tensor]):
+        for layer, features in vert_features.items():
+            path = self._vert_features_path(t, layer)
+            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
+
+    def write_kf_post_attn(self, t: int, post_attn_features: Dict[str, Tensor]):
+        for layer, features in post_attn_features.items():
+            path = self._kf_features_path(t, layer)
+            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
+
+    def write_rendered_post_attn(
+        self, t: int, frame_indices: List[int], rendered_features: Dict[str, Tensor]
+    ):
+        pass
+
+    # reading
+
+    def read_kf_post_attn(self, t: int, layer: str) -> Dict[str, Tensor]:
+        path = self._kf_features_path(t, layer)
+        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+
+    def read_vertex_features(self, t: int, layer: str) -> Dict[str, Tensor]:
+        path = self._vert_features_path(t, layer)
+        print(path)
+        vert_features = read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return vert_features
+
+
+class GrDataArtifact(ArtifactWrapper):
     wandb_artifact_type = "gr_data"
 
     # config for saving
     config: GrSaveConfig
-    save_frame_indices: list[int]
-    save_timesteps: list[int]
+    diffusion_data: DiffusionData
+    attn_writer: AttnFeaturesWriter
+    latents_writer: LatentsWriter
+    gr_writer: GrDataWriter
 
-    def _latent_h5_path(self, t: int, frame_i: int):
-        return f"time_{t}/frame_{frame_i}/latents"
-
-    def _feature_h5_path(
-        self, t: int, frame_i: int, module_path: str, feature_name: str
-    ):
-        return f"time_{t}/frame_{frame_i}/layer_{module_path}/{feature_name}"
-
-    def _3d_features_path(self, t: int, module_path: str):
-        return f"time_{t}/layer_{module_path}/vertex_features"
-
-    def should_save_timestep(self, t: int):
-        if self.save_timesteps == []:
-            return True
-
-        return t in self.save_timesteps
-
-    def should_save_frame(self, frame_i: int):
-        if self.save_frame_indices == []:
-            return True
-
-        return frame_i in self.save_frame_indices
-
-    # Initialization Methods
+    def h5_file_path(self):
+        return self.folder / "data.h5"
 
     @classmethod
-    def init_from_cfg(cls, cfg: GrSaveConfig):
-        """
-        Create a GrDataArtifact from a GrSaveConfig
-        :param cfg: GrSaveConfig
-        """
+    def init_from_config(cls, config: GrSaveConfig):
+        art = GrDataArtifact.create_empty_artifact(config.out_artifact)
+        art.config = config
+        # set up diffusion data object
+        diffusion_data_cfg = DiffusionDataCfg(
+            enabled=config.enabled,
+            n_save_steps=config.n_timesteps,
+            n_save_frames=config.n_frames,
+            attn_paths=config.module_paths,
+        )
 
-        art = cls.create_empty_artifact(cfg.out_artifact)
-        art.config = cfg
-        art.save_frame_indices = []
-        art.save_timesteps = []
+        art.diffusion_data = DiffusionData(diffusion_data_cfg, art.h5_file_path())
+        art.latents_writer = LatentsWriter(art.diffusion_data)
+        art.attn_writer = AttnFeaturesWriter(
+            art.diffusion_data,
+            save_q=config.save_q,
+            save_k=config.save_k,
+            save_v=config.save_v,
+        )
+
+        art.gr_writer = GrDataWriter(art.diffusion_data)
         return art
 
-    def compute_save_frame_indices(self, n_frames: int):
-        frame_indices = list(range(n_frames))
-        self.save_frame_indices = ordered_sample_indices(
-            frame_indices, self.config.n_frames
-        )
-
-    def compute_save_timesteps(self, scheduler: SchedulerMixin):
-        diffusion_steps = torch.cat([scheduler.timesteps, torch.Tensor([0])])
-        self.save_timesteps = ordered_sample(diffusion_steps, self.config.n_timesteps)
-
-    def begin_recording(self):
-        self.open_h5_file()
-        self.create_dataset("frame_indices", Tensor(self.save_frame_indices))
-        self.create_dataset("timesteps", Tensor(self.save_timesteps))
+    def begin_recording(self, scheduler: SchedulerMixin, n_frames: int):
+        self.diffusion_data.calculate_save_steps(scheduler)
+        self.diffusion_data.calculate_save_frames(n_frames)
+        self.diffusion_data.begin_recording()
 
     def end_recording(self):
-        self.close_h5_file()
+        self.diffusion_data.end_recording()
 
-    # Writing methods
+    def save_latents(self, t: int, latents: Tensor):
+        if self.config.save_latents:
+            self.latents_writer.write_latents_batched(t, latents)
 
-    def save_latents(self, latents: Tensor, t: int):
-        save_latents = (
-            self.config.enabled
-            and self.config.save_latents
-            and t in self.save_timesteps
-        )
-
-        if not save_latents:
-            return
-
-        for frame_i in self.save_frame_indices:
-            latent = latents[frame_i]
-            self.create_dataset(
-                self._latent_h5_path(t, frame_i),
-                latent.cpu(),
-                dim_names=["channel", "height", "width"],
-            )
-
-    def should_save_feature(self, t: int, module_path: str):
-        return (
-            self.config.enabled
-            and t in self.save_timesteps
-            and module_path in self.config.module_paths
-        )
-
-    def save_qkv(
-        self, qrys: Tensor, keys: Tensor, values: Tensor, t: int, module_path: str
-    ):
-        if not self.should_save_feature(t, module_path):
-            return
-
-        def save_feature(name, feature):
-            for frame_i in self.save_frame_indices:
-                self.create_dataset(
-                    self._feature_h5_path(t, frame_i, module_path, name),
-                    feature[frame_i].cpu(),
-                    dim_names=["sequence", "channel"],
-                )
-
-        if self.config.save_q:
-            save_feature("query", qrys)
-        if self.config.save_k:
-            save_feature("key", keys)
-        if self.config.save_v:
-            save_feature("value", values)
-
-    def _save_attn_out(self, attn_out, t, module_path, attn_out_name):
-        if not self.should_save_feature(t, module_path):
-            return
-
-        for frame_i in self.save_frame_indices:
-            self.create_dataset(
-                self._feature_h5_path(t, frame_i, module_path, attn_out_name),
-                attn_out[0, frame_i].cpu(),
-                dim_names=["channel", "height", "width"],
-            )
-
-    def save_attn_out_pre(self, attn_out, t, module_path):
-        self._save_attn_out(attn_out, t, module_path, "attn_out_pre")
-
-    def save_attn_out_post(self, attn_out, t, module_path):
-        self._save_attn_out(attn_out, t, module_path, "attn_out_post")
-
-    def save_vertex_features(self, all_vertex_features: dict[str], t: int):
-        for module, (vert_features, res) in all_vertex_features.items():
-            pass
+    def save_qkv(self, t: int, q: Tensor, k: Tensor, v: Tensor, layer: str):
+        self.attn_writer.write_qkv_batched(t, layer, q, k, v)
 
     # Reading methods
 
-    def read_frame_indices(self):
-        indices = self.read_dataset_np("frame_indices").astype(int)
-        return indices.tolist()
-
-    def read_timesteps(self):
-        timesteps = self.read_dataset_np("timesteps").astype(int)
-        return timesteps.tolist()
-
-    def read_module_paths(self):
-        modules = self.read_dataset_np("modules")
-        modules = [m.decode() for m in modules]
-        return modules
-
     def read_latent(self, t: int, frame_i: int) -> Tensor:
-        path = self._latent_h5_path(t, frame_i)
-        return self.read_dataset_np(path)
+        return self.latents_writer.read_latent(t, frame_i)
 
-    def read_feature(
-        self, t: int, frame_i: int, module_path: str, feature_name: str
-    ) -> Tensor:
-        path = self._feature_h5_path(t, frame_i, module_path, feature_name)
-        return self.read_dataset_np(path)
+    def read_latents_at_frame(self, frame_i: int) -> Tensor:
+        times = self.diffusion_data.save_times
+        return torch.stack([self.read_latent(t, frame_i) for t in times])
+
+    def read_latents_at_timestep(self, t: int) -> Tensor:
+        frame_indices = self.diffusion_data.save_frame_indices
+        return torch.stack([self.read_latent(t, frame_i) for frame_i in frame_indices])

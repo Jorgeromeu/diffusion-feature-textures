@@ -351,20 +351,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return all_feature_images
 
-    def setup_gr_data(self, n_frames: int):
-        # create artifact
-        gr_artifact = GrDataArtifact.create_empty_artifact(
-            self.gr_save_config.out_artifact
-        )
-
-        # setup save config
-        gr_artifact.setup_save_config_write(
-            self.gr_save_config, self.scheduler, n_frames
-        )
-
-        self.gr_data_artifact = gr_artifact
-        self.attn_processor.gr_data_artifact = gr_artifact
-
     def log_tensors_artifact(self):
         self.gr_data_artifact.close_h5_file()
         self.gr_data_artifact.log_if_enabled(delete_folder=False)
@@ -392,10 +378,15 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         )
         self.unet.set_attn_processor(self.attn_processor)
 
+        # configure scheduler
+        self.scheduler.set_timesteps(self.gr_config.num_inference_steps)
         n_frames = len(frames)
 
         # setup save tensors
-        self.setup_gr_data(n_frames)
+        gr_artifact = GrDataArtifact.init_from_config(gr_save_config)
+        self.gr_data_artifact = gr_artifact
+        self.attn_processor.gr_data_artifact = gr_artifact
+        gr_artifact.begin_recording(self.scheduler, n_frames)
 
         # setup generator
         generator = torch.Generator(device=self.device)
@@ -407,9 +398,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
         stacked_text_embeddings = torch.stack([uncond_embeddings, cond_embeddings])
-
-        # configure scheduler
-        self.scheduler.set_timesteps(self.gr_config.num_inference_steps)
 
         # initial latent noise
         latents = self.prepare_latents(frames, cameras, verts_uvs, faces_uvs, generator)
@@ -424,7 +412,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-            self.gr_data_artifact.save_latents(latents, t)
+            self.gr_data_artifact.save_latents(t, latents)
 
             # update timestep
             self.attn_processor.cur_timestep = t
@@ -450,6 +438,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 )
             )
 
+            # TODO save kf post attn features
+            # self.gr_data_artifact.save_kf_post_attn(t)
+            self.gr_data_artifact.gr_writer.write_kf_post_attn(t, post_attn_features)
+
             # unify spatial features across keyframes as vertex features
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
@@ -458,6 +450,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 kf_vert_xys,
                 kf_vert_indices,
                 post_attn_features,
+            )
+
+            # save aggregated features
+            self.gr_data_artifact.gr_writer.write_vertex_features(
+                t, aggregated_3d_features
             )
 
             # do inference in chunks
@@ -502,7 +499,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
-        self.gr_data_artifact.save_latents(latents, 0)
+        self.gr_data_artifact.save_latents(0, latents)
 
         # decode latents in chunks
         decoded_imgs = []
@@ -511,4 +508,5 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             chunk_images = self.latents_to_images(chunk_latents, generator)
             decoded_imgs.extend(chunk_images)
 
+        self.gr_data_artifact.end_recording()
         return decoded_imgs

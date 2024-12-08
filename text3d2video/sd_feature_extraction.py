@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Callable, Dict, Set
+from typing import Callable, Dict, Set, Tuple
 
 import torch
 from attr import dataclass
@@ -188,6 +188,17 @@ class AttnLayerId:
             return path_idx + 6
         if self.block_type == BlockType.UP:
             return path_idx + 7
+
+
+def read_layer_paths(
+    modules: list[str],
+) -> Tuple[list[AttnLayerId], list[AttnLayerId], list[AttnLayerId]]:
+    parsed = [AttnLayerId.parse_module_path(module) for module in modules]
+    parsed = sorted(parsed, key=lambda x: x.unet_absolute_index())
+    enc_layers = [layer for layer in parsed if layer.block_type == BlockType.DOWN]
+    dec_layers = [layer for layer in parsed if layer.block_type == BlockType.UP]
+    mid_layers = [layer for layer in parsed if layer.block_type == BlockType.MID]
+    return enc_layers, mid_layers, dec_layers
 
 
 class HookManager:
