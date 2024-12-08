@@ -288,6 +288,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     n_vertices,
                     kf_vert_xys,
                     kf_vert_indices,
+                    mode="bilinear",
                     aggregation_type="mean",
                 )
 
@@ -296,6 +297,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     n_vertices,
                     kf_vert_xys,
                     kf_vert_indices,
+                    mode="bilinear",
                     aggregation_type="first",
                 )
 
@@ -317,7 +319,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         aggregated_features: Dict[str, Tuple[Float[Tensor, "b v d"], int]],
     ) -> Dict[str, Float[Tensor, "b f d h w"]]:
         """
-        Aggregate features in saved_post_attn across keyframe poses and render them for all poses
+        render feature images for all modules
         """
 
         # if not doing post attn injection, skip
@@ -351,8 +353,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return all_feature_images
 
-    def log_tensors_artifact(self):
-        self.gr_data_artifact.close_h5_file()
+    def log_data_artifact(self):
+        self.gr_data_artifact.end_recording()
         self.gr_data_artifact.log_if_enabled(delete_folder=False)
 
     @torch.no_grad()
@@ -386,7 +388,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         gr_artifact = GrDataArtifact.init_from_config(gr_save_config)
         self.gr_data_artifact = gr_artifact
         self.attn_processor.gr_data_artifact = gr_artifact
-        gr_artifact.begin_recording(self.scheduler, n_frames)
+        self.gr_data_artifact.begin_recording(self.scheduler, n_frames)
 
         # setup generator
         generator = torch.Generator(device=self.device)
@@ -438,8 +440,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 )
             )
 
-            # TODO save kf post attn features
-            # self.gr_data_artifact.save_kf_post_attn(t)
+            # save kf post attn features and indices
+            self.gr_data_artifact.gr_writer.write_kf_indices(t, kf_indices)
             self.gr_data_artifact.gr_writer.write_kf_post_attn(t, post_attn_features)
 
             # unify spatial features across keyframes as vertex features
@@ -459,7 +461,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
             # do inference in chunks
             noise_preds = []
-
             for chunk_indices in tqdm(chunks_indices, desc="Chunks"):
                 # render chunk feature images
                 chunk_feature_images = self.render_feature_images(
@@ -483,7 +484,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     pre_attn_features,
                     chunk_feature_images,
                 )
-
                 noise_preds.append(noise_pred)
 
             # concatenate predictions

@@ -67,7 +67,7 @@ def run(cfg: RunGenerativeRenderingConfig):
     )
 
     if cfg.save_tensors.enabled:
-        pipe.log_tensors_artifact()
+        pipe.log_data_artifact()
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)

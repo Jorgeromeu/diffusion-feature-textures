@@ -8,9 +8,26 @@ from moviepy.editor import ImageSequenceClip
 from PIL.Image import Image
 
 
+def transpose_list_of_lists(lol: List[List]):
+    return list(map(list, zip(*lol)))
+
+
+def image_hw(image):
+    if isinstance(image, Image):
+        return image.height, image.width
+
+
 def display_ims_grid(
-    images: List[List[Image]], scale=2, col_titles=None, row_titles=None
+    images: List[List[Image]],
+    scale=2.5,
+    col_titles=None,
+    row_titles=None,
+    transpose_images=False,
 ):
+    images = images.copy()
+    if transpose_images:
+        images = transpose_list_of_lists(images)
+
     n_rows = len(images)
     n_cols = len(images[0])
 
@@ -23,9 +40,8 @@ def display_ims_grid(
     _, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
     if not isinstance(axs, np.ndarray):
         axs = np.array([axs])
-    axs.reshape(n_rows, n_cols)
 
-    print(axs.shape)
+    axs = axs.reshape(n_rows, n_cols)
 
     for row_i in range(n_rows):
         for col_i in range(n_cols):

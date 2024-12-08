@@ -32,13 +32,26 @@ class GrSaveConfig:
 class GrDataWriter(DiffusionDataWriter):
     """
     Class to write attention data
+    time_t/
+        kf_indices
+        layer/
+            kf_spatial_features
+            vert_features
+            frame_i/
+                rendered
     """
 
     def __init__(self, diff_data, data_path="gr_data"):
         super().__init__(diff_data, data_path)
 
+    def _time_path(self, t: int):
+        return f"{self.data_path}/time_{t}"
+
+    def _kf_indices_path(self, t: int):
+        return f"{self._time_path(t)}/kf_indices"
+
     def _layer_path(self, t: int, layer: str):
-        return f"{self.data_path}/time_{t}/{layer}"
+        return f"{self._time_path(t)}/{layer}"
 
     def _vert_features_path(self, t: int, layer: str):
         return f"{self._layer_path(t, layer)}/vert_features"
@@ -50,6 +63,10 @@ class GrDataWriter(DiffusionDataWriter):
         return f"{self._layer_path(t, layer)}/frame_{frame_i}/rendered"
 
     # writing
+
+    def write_kf_indices(self, t: int, kf_indices: Tensor):
+        path = self._kf_indices_path(t)
+        write_tensor_as_dataset(self.diff_data.h5_write_fp, path, kf_indices)
 
     def write_vertex_features(self, t: int, vert_features: Dict[str, Tensor]):
         for layer, features in vert_features.items():
@@ -70,6 +87,10 @@ class GrDataWriter(DiffusionDataWriter):
 
     def read_kf_post_attn(self, t: int, layer: str) -> Dict[str, Tensor]:
         path = self._kf_features_path(t, layer)
+        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+
+    def read_kf_indices(self, t: int) -> Tensor:
+        path = self._kf_indices_path(t)
         return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
 
     def read_vertex_features(self, t: int, layer: str) -> Dict[str, Tensor]:
