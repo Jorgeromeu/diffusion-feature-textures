@@ -74,7 +74,8 @@ def project_vertices_to_features(
 
     # extract features for each projected vertex
     visible_point_features = sample_feature_map_ndc(
-        feature_map.cpu(), visible_points_ndc[:, 0:2].cpu(), mode
+        feature_map,
+        visible_points_ndc[:, 0:2], mode
     ).to(verts)
 
     # construct vertex features tensor
@@ -138,8 +139,8 @@ def aggregate_features_precomputed_vertex_positions(
         frame_vert_xys = vertex_positions[frame]
         frame_vert_indices = vertex_indices[frame]
         frame_vert_features = sample_feature_map_ndc(
-            feature_map.cpu(),
-            frame_vert_xys.cpu(),
+            feature_map,
+            frame_vert_xys,
             mode=mode,
         ).to(vert_features)
 

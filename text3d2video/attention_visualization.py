@@ -193,23 +193,6 @@ def compute_attn_weights(qrys, keys, temperature=1, device="cuda"):
         return attn_weights.cpu()
 
 
-def get_attn_weights(attn_features, head_idx=0):
-    """
-    Compute attention weights for a given head
-    :param attn_features: AttnFeatures object
-    :param head_idx: index of the head
-    :return: (b, t_q, t_kv) tensor of attention weights
-    """
-
-    # get attn features for layer/time/head
-    keys = attn_features.keys_mh[:, :, head_idx, :]
-    qrys = attn_features.qrys_mh[:, :, head_idx, :]
-
-    # compute attn weights
-    attn_weights = compute_attn_weights(qrys, keys)
-    return attn_weights
-
-
 def plot_qry_weights(
     ax_qry: Axes,
     ax_kv: Axes,
@@ -280,3 +263,38 @@ def make_gridspec_figure(
     )
 
     return fig, gs
+
+
+def plot_attention_weights(
+    ax_qry: Axes,
+    ax_kv: Axes,
+    qry: Tensor,
+    key: Tensor,
+    layer_res: int,
+    qry_coord: Tensor,
+    qry_im,
+    kv_im=None,
+):
+    qry_grid_size = (layer_res, layer_res)
+
+    # plot query image and marker
+    ax_qry.imshow(qry_im)
+    add_pixel_marker(ax_qry, qry_coord, qry_im.size, qry_grid_size)
+
+    # get query pixel coordinate
+    qry_pix = coord_to_pixel(qry_coord, qry_grid_size)
+    qry_pix_1d = pixel_coord_flattened(qry_pix, qry_grid_size)
+
+    # compute attn weights
+    attn_weights = compute_attn_weights(qry.unsqueeze(0), key.unsqueeze(0))[0]
+    weights = attn_weights[qry_pix_1d, :]
+    weights = reshape_concatenated(weights.unsqueeze(-1), layer_res=layer_res)[0]
+
+    # plot weights
+    plot_image_and_weight(ax_kv, kv_im, weights, interpolation="nearest", alpha=0.8)
+
+
+def plot_qry_and_coord(ax_qry: Axes, qry_im: Image, qry_coord: Tensor, layer_res: int):
+    qry_grid_size = (layer_res, layer_res)
+    ax_qry.imshow(qry_im)
+    add_pixel_marker(ax_qry, qry_coord, qry_im.size, qry_grid_size)

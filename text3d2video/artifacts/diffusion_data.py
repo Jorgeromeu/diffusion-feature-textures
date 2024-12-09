@@ -121,24 +121,25 @@ class LatentsWriter(DiffusionDataWriter):
     Class to write latents to diffusion data
     """
 
-    def __init__(self, diff_data: DiffusionData, data_path: str = "latents"):
+    enabled: bool
+
+    def __init__(
+        self, diff_data: DiffusionData, enabled=True, data_path: str = "latents"
+    ):
         super().__init__(diff_data, data_path)
+        self.enabled = enabled
 
     def _latent_path(self, t: int, frame_i: int):
         return f"{self.data_path}/time_{t}/frame_{frame_i}"
 
     def write_latent(self, t: int, frame_i: int, latent: Tensor):
         assert_tensor_shape(latent, ("C", "H", "W"))
-
-        if not self.diff_data.should_save(t=t, frame_i=frame_i):
-            return
-        path = self._latent_path(t, frame_i)
-        write_tensor_as_dataset(self.diff_data.h5_write_fp, path, latent)
+        if self.enabled and self.diff_data.should_save(t=t, frame_i=frame_i):
+            path = self._latent_path(t, frame_i)
+            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, latent)
 
     def write_latents_batched(self, t: int, latents: Tensor):
         assert_tensor_shape(latents, ("B", "C", "H", "W"))
-        assert latents.shape
-
         for i in self.diff_data.save_frame_indices:
             self.write_latent(t, i, latents[i])
 

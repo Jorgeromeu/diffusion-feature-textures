@@ -65,23 +65,21 @@ class GrDataWriter(DiffusionDataWriter):
     # writing
 
     def write_kf_indices(self, t: int, kf_indices: Tensor):
-        path = self._kf_indices_path(t)
-        write_tensor_as_dataset(self.diff_data.h5_write_fp, path, kf_indices)
+        if self.diff_data.should_save(t=t):
+            path = self._kf_indices_path(t)
+            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, kf_indices)
 
     def write_vertex_features(self, t: int, vert_features: Dict[str, Tensor]):
         for layer, features in vert_features.items():
-            path = self._vert_features_path(t, layer)
-            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
+            if self.diff_data.should_save(t=t, attn_path=layer):
+                path = self._vert_features_path(t, layer)
+                write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
 
     def write_kf_post_attn(self, t: int, post_attn_features: Dict[str, Tensor]):
         for layer, features in post_attn_features.items():
-            path = self._kf_features_path(t, layer)
-            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
-
-    def write_rendered_post_attn(
-        self, t: int, frame_indices: List[int], rendered_features: Dict[str, Tensor]
-    ):
-        pass
+            if self.diff_data.should_save(t=t, attn_path=layer):
+                path = self._kf_features_path(t, layer)
+                write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
 
     # reading
 
@@ -95,7 +93,6 @@ class GrDataWriter(DiffusionDataWriter):
 
     def read_vertex_features(self, t: int, layer: str) -> Dict[str, Tensor]:
         path = self._vert_features_path(t, layer)
-        print(path)
         vert_features = read_tensor_from_dataset(self.diff_data.h5_file_path, path)
         return vert_features
 
@@ -106,6 +103,7 @@ class GrDataArtifact(ArtifactWrapper):
     # config for saving
     config: GrSaveConfig
     diffusion_data: DiffusionData
+    # diffusion data writers
     attn_writer: AttnFeaturesWriter
     latents_writer: LatentsWriter
     gr_writer: GrDataWriter
@@ -126,7 +124,9 @@ class GrDataArtifact(ArtifactWrapper):
         )
 
         art.diffusion_data = DiffusionData(diffusion_data_cfg, art.h5_file_path())
-        art.latents_writer = LatentsWriter(art.diffusion_data)
+        art.latents_writer = LatentsWriter(
+            art.diffusion_data, enabled=config.save_latents
+        )
         art.attn_writer = AttnFeaturesWriter(
             art.diffusion_data,
             save_q=config.save_q,

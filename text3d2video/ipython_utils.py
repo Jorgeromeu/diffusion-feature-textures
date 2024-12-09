@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from typing import List
 
@@ -10,11 +11,6 @@ from PIL.Image import Image
 
 def transpose_list_of_lists(lol: List[List]):
     return list(map(list, zip(*lol)))
-
-
-def image_hw(image):
-    if isinstance(image, Image):
-        return image.height, image.width
 
 
 def display_ims_grid(

@@ -3,7 +3,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import torch
 from omegaconf import DictConfig, OmegaConf
+from torch import Tensor
 
 import wandb
 from wandb import Artifact
@@ -75,54 +77,6 @@ def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
         if artifact.type == artifact_type:
             return artifact
     return None
-
-
-def cleanup_artifact_collection(
-    api: wandb.Api,
-    artifact_name: str,
-    artifact_type: str,
-    delete_log_runs: bool = True,
-    keep_latest: bool = True,
-):
-    artifacts = api.artifacts(
-        artifact_type, f"romeu/diffusion-3D-features/{artifact_name}"
-    )
-
-    if artifacts is None:
-        print(f"{artifact_name}: No artifacts found")
-        return
-
-    print(f"{artifact_name}: Found {len(artifacts)} artifacts")
-
-    for artifact in artifacts:
-        # if keep latest ignore the run
-        if keep_latest and "latest" in artifact.aliases:
-            continue
-
-        # delete the run that logged the artifact
-        if delete_log_runs:
-            logging_run = artifact.logged_by()
-            logging_run.delete()
-
-        # delete the artifact
-        artifact.delete(delete_aliases=True)
-
-
-def delete_artifact_collection(
-    api: wandb.Api,
-    artifact_name: str,
-    artifact_type: str,
-):
-    collection = api.artifact_collection(
-        artifact_type, f"romeu/diffusion-3D-features/{artifact_name}"
-    )
-
-    if collection is None:
-        print(f"{artifact_name}: No artifacts found")
-        return
-
-    print(f"{artifact_name}: Deleting artifacts")
-    collection.delete()
 
 
 class ArtifactWrapper:
@@ -206,3 +160,17 @@ class ArtifactWrapper:
 
     def logged_by(self):
         return self.wandb_artifact.logged_by()
+
+
+class SimpleArtifact(ArtifactWrapper):
+    """
+    Minimal example for an artifact class
+    """
+
+    wandb_artifact_type = "simple"
+
+    def write_tensor(self, data: Tensor):
+        torch.save(data, self.folder / "data.pt")
+
+    def read_tensor(self):
+        return torch.load(self.folder / "data.pt")
