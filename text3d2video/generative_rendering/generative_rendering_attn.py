@@ -6,6 +6,7 @@ import torch
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
+from torch import Tensor
 
 from text3d2video.artifacts.gr_data import GrDataArtifact
 from text3d2video.attention_utils import (
@@ -38,9 +39,11 @@ class GenerativeRenderingAttn:
     # gr data
     gr_data_artifact: GrDataArtifact
 
+    chunk_frame_indices: Tensor
+
     # save features here in extraction mode, and use them in injection mode
-    pre_attn_features: Dict[str, Float[torch.Tensor, "b t c"]] = {}
-    post_attn_features: Dict[str, Float[torch.Tensor, "b f t c"]] = {}
+    pre_attn_features: Dict[str, Float[Tensor, "b t c"]] = {}
+    post_attn_features: Dict[str, Float[Tensor, "b f t c"]] = {}
 
     # state variables
     cur_timestep = 0
@@ -54,7 +57,6 @@ class GenerativeRenderingAttn:
         gr_config: GenerativeRenderingConfig,
         unet_chunk_size=2,
         mode=GrAttnMode.FEATURE_INJECTION,
-        gr_data_artifact=None,
     ):
         """
         :param unet_chunk_size:
@@ -64,7 +66,6 @@ class GenerativeRenderingAttn:
         self.unet_chunk_size = unet_chunk_size
         self.gr_config = gr_config
         self.mode = mode
-        self.gr_data_artifact = gr_data_artifact
 
         self.pre_attn_features = {}
         self.post_attn_features = {}
@@ -81,10 +82,10 @@ class GenerativeRenderingAttn:
             and self.gr_config.do_post_attn_injection
         )
 
-    def save_pre_attn_features(self, kv_hidden_states: torch.Tensor):
+    def save_pre_attn_features(self, kv_hidden_states: Tensor):
         self.pre_attn_features[self._cur_module_path] = kv_hidden_states
 
-    def save_post_attn_features(self, attn_out_square: torch.Tensor):
+    def save_post_attn_features(self, attn_out_square: Tensor):
         self.post_attn_features[self._cur_module_path] = attn_out_square
 
     # functionality
@@ -93,9 +94,9 @@ class GenerativeRenderingAttn:
         self,
         attn: Attention,
         module_path: str,
-        hidden_states: Float[torch.Tensor, "b t d"],
-        encoder_hidden_states: Float[torch.Tensor, "b t d"],
-    ) -> Float[torch.Tensor, "b t d"]:
+        hidden_states: Float[Tensor, "b t d"],
+        encoder_hidden_states: Float[Tensor, "b t d"],
+    ) -> Float[Tensor, "b t d"]:
         # if encoder hidden states are provided use them for cross attention
         if self._is_cross_attn:
             hidden_states = encoder_hidden_states
@@ -161,7 +162,7 @@ class GenerativeRenderingAttn:
 
         return blended
 
-    def call_init(self, attn: Attention, encoder_hidden_states: torch.Tensor):
+    def call_init(self, attn: Attention, encoder_hidden_states: Tensor):
         self._cur_module_path = get_module_path(self.unet, attn)
         self._is_cross_attn = encoder_hidden_states is not None
         self._is_self_attn = not self._is_cross_attn
@@ -209,9 +210,15 @@ class GenerativeRenderingAttn:
 
         if self.mode == GrAttnMode.FEATURE_INJECTION:
             # save qkv
-            self.gr_data_artifact.save_qkv(
-                self.cur_timestep, query, key, value, self._cur_module_path
+            self.gr_data_artifact.attn_writer.write_qkv_batched(
+                self.cur_timestep,
+                self._cur_module_path,
+                query,
+                key,
+                value,
+                self.chunk_frame_indices,
             )
+            attn_out_square = self.post_attn_injection(attn_out_square)
 
         # reshape back to 2d
         attn_out = rearrange(attn_out_square, "b f d h w -> (b f) (h w) d")

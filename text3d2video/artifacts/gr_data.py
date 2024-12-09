@@ -21,12 +21,14 @@ class GrSaveConfig:
     enabled: bool
     n_frames: int
     n_timesteps: int
+    out_artifact: str
+    module_paths: list[str]
     save_latents: bool
     save_q: bool
     save_k: bool
     save_v: bool
-    out_artifact: str
-    module_paths: list[str]
+    save_kf_post_attn: bool
+    save_aggregated_features: bool
 
 
 class GrDataWriter(DiffusionDataWriter):
@@ -41,8 +43,19 @@ class GrDataWriter(DiffusionDataWriter):
                 rendered
     """
 
-    def __init__(self, diff_data, data_path="gr_data"):
+    save_kf_post_attn: bool
+    save_aggregated_features: bool
+
+    def __init__(
+        self,
+        diff_data,
+        save_kf_post_attn=True,
+        save_aggregated_features=True,
+        data_path="gr_data",
+    ):
         super().__init__(diff_data, data_path)
+        self.save_kf_post_attn = save_kf_post_attn
+        self.save_aggregated_features = save_aggregated_features
 
     def _time_path(self, t: int):
         return f"{self.data_path}/time_{t}"
@@ -71,13 +84,19 @@ class GrDataWriter(DiffusionDataWriter):
 
     def write_vertex_features(self, t: int, vert_features: Dict[str, Tensor]):
         for layer, features in vert_features.items():
-            if self.diff_data.should_save(t=t, attn_path=layer):
+            if (
+                self.diff_data.should_save(t=t, attn_path=layer)
+                and self.save_aggregated_features
+            ):
                 path = self._vert_features_path(t, layer)
                 write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
 
     def write_kf_post_attn(self, t: int, post_attn_features: Dict[str, Tensor]):
         for layer, features in post_attn_features.items():
-            if self.diff_data.should_save(t=t, attn_path=layer):
+            if (
+                self.diff_data.should_save(t=t, attn_path=layer)
+                and self.save_kf_post_attn
+            ):
                 path = self._kf_features_path(t, layer)
                 write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
 
@@ -134,7 +153,11 @@ class GrDataArtifact(ArtifactWrapper):
             save_v=config.save_v,
         )
 
-        art.gr_writer = GrDataWriter(art.diffusion_data)
+        art.gr_writer = GrDataWriter(
+            art.diffusion_data,
+            save_kf_post_attn=config.save_kf_post_attn,
+            save_aggregated_features=config.save_aggregated_features,
+        )
         return art
 
     def begin_recording(self, scheduler: SchedulerMixin, n_frames: int):
@@ -144,13 +167,6 @@ class GrDataArtifact(ArtifactWrapper):
 
     def end_recording(self):
         self.diffusion_data.end_recording()
-
-    def save_latents(self, t: int, latents: Tensor):
-        if self.config.save_latents:
-            self.latents_writer.write_latents_batched(t, latents)
-
-    def save_qkv(self, t: int, q: Tensor, k: Tensor, v: Tensor, layer: str):
-        self.attn_writer.write_qkv_batched(t, layer, q, k, v)
 
     # Reading methods
 

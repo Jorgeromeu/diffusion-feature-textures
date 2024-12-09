@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
+import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
@@ -175,18 +176,32 @@ class AttnFeaturesWriter(DiffusionDataWriter):
         path = self._seq_path(t, frame_i, layer, seq_name)
         write_tensor_as_dataset(self.diff_data.h5_write_fp, path, seq)
 
-    def write_qkv_batched(self, t: int, layer: str, q: Tensor, k: Tensor, v: Tensor):
+    def write_qkv_batched(
+        self,
+        t: int,
+        layer: str,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        chunk_frame_indices=None,
+    ):
         assert_tensor_shape(q, ("B", "T", "D"))
         assert_tensor_shape(k, ("B", "T", "D"))
         assert_tensor_shape(v, ("B", "T", "D"))
 
+        if chunk_frame_indices is None:
+            chunk_frame_indices = torch.arange(q.shape[0])
+
         for frame_i in self.diff_data.save_frame_indices:
+            idx_in_chunk = (chunk_frame_indices == frame_i).nonzero(as_tuple=True)[0]
+            idx_in_chunk = int(idx_in_chunk)
+
             if self.save_q:
-                self.write_seq(t, frame_i, layer, "qry", q[frame_i])
+                self.write_seq(t, frame_i, layer, "qry", q[idx_in_chunk])
             if self.save_k:
-                self.write_seq(t, frame_i, layer, "key", k[frame_i])
+                self.write_seq(t, frame_i, layer, "key", k[idx_in_chunk])
             if self.save_v:
-                self.write_seq(t, frame_i, layer, "val", v[frame_i])
+                self.write_seq(t, frame_i, layer, "val", v[idx_in_chunk])
 
     # reading
 

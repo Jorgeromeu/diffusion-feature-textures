@@ -42,13 +42,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     gr_config: GenerativeRenderingConfig
     noise_init_config: NoiseInitializationConfig
 
-    # save config
-    gr_save_config = GrSaveConfig
+    # diffusion data artifact
     gr_data_artifact: GrDataArtifact = None
-
-    # indices to save tensors for
-    save_frame_indices: List[int]
-    save_timesteps: List[int]
 
     def __init__(
         self,
@@ -372,7 +367,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # setup configs for use throughout pipeline
         self.gr_config = generative_rendering_config
         self.noise_init_config = noise_initialization_config
-        self.gr_save_config = gr_save_config
 
         # set up attention processor
         self.attn_processor = GenerativeRenderingAttn(
@@ -384,10 +378,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(self.gr_config.num_inference_steps)
         n_frames = len(frames)
 
-        # setup save tensors
-        gr_artifact = GrDataArtifact.init_from_config(gr_save_config)
-        self.gr_data_artifact = gr_artifact
-        self.attn_processor.gr_data_artifact = gr_artifact
+        # setup diffusion data
+        data_artifact = GrDataArtifact.init_from_config(gr_save_config)
+        self.gr_data_artifact = data_artifact
+        self.attn_processor.gr_data_artifact = data_artifact
         self.gr_data_artifact.begin_recording(self.scheduler, n_frames)
 
         # setup generator
@@ -414,7 +408,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-            self.gr_data_artifact.save_latents(t, latents)
+            self.gr_data_artifact.latents_writer.write_latents_batched(t, latents)
 
             # update timestep
             self.attn_processor.cur_timestep = t
@@ -475,7 +469,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 chunk_embeddings = stacked_text_embeddings[:, chunk_indices]
                 chunk_depth_maps = [depth_maps[i] for i in chunk_indices.tolist()]
 
-                self.attn_processor.chunk_indices = chunk_indices
+                self.attn_processor.chunk_frame_indices = chunk_indices
                 noise_pred = self.model_forward_feature_injection(
                     chunk_latents,
                     chunk_embeddings,
@@ -499,7 +493,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
-        self.gr_data_artifact.save_latents(0, latents)
+        self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
 
         # decode latents in chunks
         decoded_imgs = []
