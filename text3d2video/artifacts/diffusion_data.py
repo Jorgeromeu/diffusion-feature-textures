@@ -8,7 +8,6 @@ from torch import Tensor
 
 from text3d2video.h5_util import read_tensor_from_dataset, write_tensor_as_dataset
 from text3d2video.util import assert_tensor_shape, ordered_sample
-from text3d2video.wandb_util import ArtifactWrapper
 
 
 @dataclass
@@ -116,6 +115,20 @@ class DiffusionDataWriter:
         self.diff_data = diff_data
         self.data_path = data_path
 
+    def write_tensor(
+        self,
+        path: str,
+        data: Tensor,
+        timestep: int = None,
+        frame_i: int = None,
+        attn_path: str = None,
+    ):
+        if self.diff_data.should_save(t=timestep, frame_i=frame_i, attn_path=attn_path):
+            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, data)
+
+    def read_tensor(self, path: str):
+        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+
 
 class LatentsWriter(DiffusionDataWriter):
     """
@@ -135,9 +148,9 @@ class LatentsWriter(DiffusionDataWriter):
 
     def write_latent(self, t: int, frame_i: int, latent: Tensor):
         assert_tensor_shape(latent, ("C", "H", "W"))
-        if self.enabled and self.diff_data.should_save(t=t, frame_i=frame_i):
+        if self.enabled:
             path = self._latent_path(t, frame_i)
-            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, latent)
+            self.write_tensor(path, latent, timestep=t, frame_i=frame_i)
 
     def write_latents_batched(self, t: int, latents: Tensor):
         assert_tensor_shape(latents, ("B", "C", "H", "W"))
@@ -146,7 +159,7 @@ class LatentsWriter(DiffusionDataWriter):
 
     def read_latent(self, t: int, frame_i: int):
         path = self._latent_path(t, frame_i)
-        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return self.read_tensor(path)
 
 
 class AttnFeaturesWriter(DiffusionDataWriter):
@@ -169,12 +182,8 @@ class AttnFeaturesWriter(DiffusionDataWriter):
 
     def write_seq(self, t: int, frame_i: int, layer: str, seq_name: str, seq: Tensor):
         assert_tensor_shape(seq, ("T", "D"))
-
-        if not self.diff_data.should_save(t=t, frame_i=frame_i, attn_path=layer):
-            return
-
         path = self._seq_path(t, frame_i, layer, seq_name)
-        write_tensor_as_dataset(self.diff_data.h5_write_fp, path, seq)
+        self.write_tensor(path, seq, frame_i=frame_i, attn_path=layer, timestep=t)
 
     def write_qkv_batched(
         self,
@@ -194,6 +203,9 @@ class AttnFeaturesWriter(DiffusionDataWriter):
 
         for frame_i in self.diff_data.save_frame_indices:
             idx_in_chunk = (chunk_frame_indices == frame_i).nonzero(as_tuple=True)[0]
+            if len(idx_in_chunk) == 0:
+                continue
+
             idx_in_chunk = int(idx_in_chunk)
 
             if self.save_q:
@@ -207,12 +219,12 @@ class AttnFeaturesWriter(DiffusionDataWriter):
 
     def read_qry(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "qry")
-        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return self.read_tensor(path)
 
     def read_key(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "key")
-        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return self.read_tensor(path)
 
     def read_val(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "val")
-        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return self.read_tensor(path)

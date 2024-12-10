@@ -1,5 +1,5 @@
 import itertools
-from typing import Callable, List
+from typing import Callable, Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -74,8 +74,7 @@ def project_vertices_to_features(
 
     # extract features for each projected vertex
     visible_point_features = sample_feature_map_ndc(
-        feature_map,
-        visible_points_ndc[:, 0:2], mode
+        feature_map, visible_points_ndc[:, 0:2], mode
     ).to(verts)
 
     # construct vertex features tensor
@@ -200,20 +199,26 @@ def blend_features(
     return original_background + blended_masked
 
 
-def assert_tensor_shape(t: Tensor, shape: tuple[int, ...]):
+def assert_valid_tensor_shape(shape: Tuple):
+    for expected_len in shape:
+        assert isinstance(
+            expected_len, (int, type(None), str)
+        ), f"Dimension length must be int, None or str, received {expected_len}"
+
+
+def assert_tensor_shape(
+    t: Tensor, shape: tuple[int, ...], named_dim_sizes: dict[str, int] = None
+):
     error_str = f"Expected tensor of shape {shape}, got {t.shape}"
 
-    for dim_len in shape:
-        assert isinstance(
-            dim_len, (int, type(None), str)
-        ), "Shape must be int, None, or str"
+    assert_valid_tensor_shape(shape)
+    assert t.ndim == len(shape), f"{error_str}, wrong number of dimensions"
 
-    assert t.ndim == len(shape), error_str
+    if named_dim_sizes is None:
+        named_dim_sizes = {}
 
-    named_dim_sizes = {}
-
-    for i, expected_len in enumerate(shape):
-        dim_len = t.shape[i]
+    for dim_i, expected_len in enumerate(shape):
+        true_len = t.shape[dim_i]
 
         # any len is allowed for None
         if expected_len is None:
@@ -221,12 +226,22 @@ def assert_tensor_shape(t: Tensor, shape: tuple[int, ...]):
 
         # assert same length as other dims with same key
         if isinstance(expected_len, str):
-            # save named dim size
+            # if symbol length not saved, save it
             if expected_len not in named_dim_sizes:
-                named_dim_sizes[expected_len] = dim_len
+                named_dim_sizes[expected_len] = true_len
                 continue
 
-            assert named_dim_sizes[expected_len] == dim_len, error_str
+            expected_named_dim_size = named_dim_sizes[expected_len]
+            assert (
+                named_dim_sizes[expected_len] == true_len
+            ), f"{error_str}, expected {expected_named_dim_size} for dimension {expected_len}, got {true_len}"
 
-        # assert dim length for numeric
-        assert dim_len == expected_len, error_str
+    return named_dim_sizes
+
+
+def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
+    if named_dim_sizes is None:
+        named_dim_sizes = {}
+
+    for tensor, shape in tensors:
+        named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)

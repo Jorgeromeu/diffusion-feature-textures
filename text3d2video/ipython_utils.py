@@ -19,6 +19,7 @@ def display_ims_grid(
     col_titles=None,
     row_titles=None,
     transpose_images=False,
+    title=None,
 ):
     images = images.copy()
     if transpose_images:
@@ -33,7 +34,7 @@ def display_ims_grid(
     if col_titles is not None:
         assert len(col_titles) == n_cols
 
-    _, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
     if not isinstance(axs, np.ndarray):
         axs = np.array([axs])
 

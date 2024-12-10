@@ -13,6 +13,7 @@ from text3d2video.artifacts.diffusion_data import (
     LatentsWriter,
 )
 from text3d2video.h5_util import read_tensor_from_dataset, write_tensor_as_dataset
+from text3d2video.util import assert_tensor_shape
 from text3d2video.wandb_util import ArtifactWrapper
 
 
@@ -40,7 +41,8 @@ class GrDataWriter(DiffusionDataWriter):
             kf_spatial_features
             vert_features
             frame_i/
-                rendered
+                pre_injection
+                post_injection
     """
 
     save_kf_post_attn: bool
@@ -72,48 +74,85 @@ class GrDataWriter(DiffusionDataWriter):
     def _kf_features_path(self, t: int, layer: str):
         return f"{self._layer_path(t, layer)}/kf_spatial_features"
 
-    def _rendered_feature_path(self, t: int, frame_i: int, layer: str):
-        return f"{self._layer_path(t, layer)}/frame_{frame_i}/rendered"
+    def _post_attn_pre_injection_path(self, t, frame_i, layer: str):
+        return f"{self._layer_path(t, layer)}/frame_{frame_i}/pre_injection"
+
+    def _post_attn_post_injection_path(self, t, frame_i, layer: str):
+        return f"{self._layer_path(t, layer)}/frame_{frame_i}/post_injection"
 
     # writing
 
     def write_kf_indices(self, t: int, kf_indices: Tensor):
-        if self.diff_data.should_save(t=t):
-            path = self._kf_indices_path(t)
-            write_tensor_as_dataset(self.diff_data.h5_write_fp, path, kf_indices)
+        path = self._kf_indices_path(t)
+        self.write_tensor(path, kf_indices, timestep=t)
 
     def write_vertex_features(self, t: int, vert_features: Dict[str, Tensor]):
         for layer, features in vert_features.items():
-            if (
-                self.diff_data.should_save(t=t, attn_path=layer)
-                and self.save_aggregated_features
-            ):
+            if self.save_aggregated_features:
                 path = self._vert_features_path(t, layer)
-                write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
+                self.write_tensor(path, features, timestep=t, attn_path=layer)
 
     def write_kf_post_attn(self, t: int, post_attn_features: Dict[str, Tensor]):
         for layer, features in post_attn_features.items():
-            if (
-                self.diff_data.should_save(t=t, attn_path=layer)
-                and self.save_kf_post_attn
-            ):
+            if self.save_kf_post_attn:
                 path = self._kf_features_path(t, layer)
-                write_tensor_as_dataset(self.diff_data.h5_write_fp, path, features)
+                self.write_tensor(path, features, timestep=t, attn_path=layer)
+
+    def write_post_attn_pre_injection(
+        self, t: int, layer: str, feature_maps, chunk_indices: Tensor
+    ):
+        assert_tensor_shape(feature_maps, ("B", "T", "d", "H", "W"))
+
+        for frame_i in self.diff_data.save_frame_indices:
+            idx_in_chunk = (chunk_indices == frame_i).nonzero(as_tuple=True)[0]
+            if len(idx_in_chunk) == 0:
+                continue
+            idx_in_chunk = int(idx_in_chunk)
+
+            feature_map = feature_maps[0, idx_in_chunk, :, :, :]
+            path = self._post_attn_pre_injection_path(t, frame_i, layer)
+            self.write_tensor(
+                path, feature_map, timestep=t, frame_i=frame_i, attn_path=layer
+            )
+
+    def write_post_attn_post_injection(
+        self, t: int, layer: str, feature_maps, chunk_indices: Tensor
+    ):
+        assert_tensor_shape(feature_maps, ("B", "T", "d", "H", "W"))
+
+        for frame_i in self.diff_data.save_frame_indices:
+            idx_in_chunk = (chunk_indices == frame_i).nonzero(as_tuple=True)[0]
+            if len(idx_in_chunk) == 0:
+                continue
+            idx_in_chunk = int(idx_in_chunk)
+
+            feature_map = feature_maps[0, idx_in_chunk, :, :, :]
+            path = self._post_attn_post_injection_path(t, frame_i, layer)
+            self.write_tensor(
+                path, feature_map, timestep=t, frame_i=frame_i, attn_path=layer
+            )
 
     # reading
 
     def read_kf_post_attn(self, t: int, layer: str) -> Dict[str, Tensor]:
         path = self._kf_features_path(t, layer)
-        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return self.read_tensor(path)
 
     def read_kf_indices(self, t: int) -> Tensor:
         path = self._kf_indices_path(t)
-        return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
+        return self.read_tensor(path)
 
     def read_vertex_features(self, t: int, layer: str) -> Dict[str, Tensor]:
         path = self._vert_features_path(t, layer)
-        vert_features = read_tensor_from_dataset(self.diff_data.h5_file_path, path)
-        return vert_features
+        return self.read_tensor(path)
+
+    def read_post_attn_pre_injection(self, t: int, frame_i: int, layer: str):
+        path = self._post_attn_pre_injection_path(t, frame_i, layer)
+        return self.read_tensor(path)
+
+    def read_post_attn_post_injection(self, t: int, frame_i: int, layer: str):
+        path = self._post_attn_post_injection_path(t, frame_i, layer)
+        return self.read_tensor(path)
 
 
 class GrDataArtifact(ArtifactWrapper):

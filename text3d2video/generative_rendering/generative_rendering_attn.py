@@ -218,7 +218,21 @@ class GenerativeRenderingAttn:
                 value,
                 self.chunk_frame_indices,
             )
+            # save pre_injection features
+            self.gr_data_artifact.gr_writer.write_post_attn_pre_injection(
+                self.cur_timestep,
+                self._cur_module_path,
+                attn_out_square,
+                self.chunk_frame_indices,
+            )
             attn_out_square = self.post_attn_injection(attn_out_square)
+            # save post injection features
+            self.gr_data_artifact.gr_writer.write_post_attn_post_injection(
+                self.cur_timestep,
+                self._cur_module_path,
+                attn_out_square,
+                self.chunk_frame_indices,
+            )
 
         # reshape back to 2d
         attn_out = rearrange(attn_out_square, "b f d h w -> (b f) (h w) d")
