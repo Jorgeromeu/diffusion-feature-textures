@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import hydra
 import torch
 from diffusers import ControlNetModel
@@ -7,12 +9,30 @@ from hydra.utils import instantiate
 import text3d2video.wandb_util as wbu
 import wandb
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.configs import RunGenerativeRenderingConfig
+from text3d2video.generative_rendering.configs import (
+    AnimationConfig,
+    GenerativeRenderingConfig,
+    NoiseInitializationConfig,
+    RunConfig,
+)
 from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 from text3d2video.util import ordered_sample
+
+
+@dataclass
+class RunGenerativeRenderingConfig:
+    out_artifact: str
+    prompt: str
+    animation: AnimationConfig
+    run: RunConfig
+    save_tensors: GrSaveConfig
+    noise_initialization: NoiseInitializationConfig
+    generative_rendering: GenerativeRenderingConfig
+
 
 cs = ConfigStore.instance()
 cs.store(name="generative_rendering", node=RunGenerativeRenderingConfig)
@@ -56,6 +76,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         pipe.scheduler.config
     )
 
+    # inference
     video_frames = pipe(
         cfg.prompt,
         mesh_frames,
@@ -64,7 +85,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
         noise_initialization_config=cfg.noise_initialization,
-        save_config=cfg.save_tensors,
+        gr_save_config=cfg.save_tensors,
     )
 
     if cfg.save_tensors.enabled:

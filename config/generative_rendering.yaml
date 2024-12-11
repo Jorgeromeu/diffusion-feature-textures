@@ -2,16 +2,16 @@ defaults:
   - hydra: default
   - run: default
   - model: stable_diffusion_v1_5
-  - animation: rumba
   - noise_initialization: uv
 
 animation:
+  artifact_tag: "human_rotation_full:latest"
   n_frames: 20
 
 run:
   job_type: "generate_video"
 
-prompt: "Deadpool"
+prompt: "Deadpool, simple white background"
 out_artifact: "video"
 
 save_tensors:
@@ -48,7 +48,7 @@ save_tensors:
 
 generative_rendering:
   resolution: 512
-  seed: 0
+  seed: 1
   attend_to_self_kv: true
   do_pre_attn_injection: true
   do_post_attn_injection: true

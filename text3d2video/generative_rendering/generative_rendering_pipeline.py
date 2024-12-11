@@ -18,10 +18,9 @@ from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from text3d2video.artifacts.gr_data import GrDataArtifact
+from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
-    GrSaveConfig,
     NoiseInitializationConfig,
 )
 from text3d2video.generative_rendering.generative_rendering_attn import (

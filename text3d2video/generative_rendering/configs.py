@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from text3d2video.artifacts.gr_data import GrSaveConfig
-
 
 @dataclass
 class RunConfig:
@@ -47,14 +45,3 @@ class GenerativeRenderingConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: list[str]
-
-
-@dataclass
-class RunGenerativeRenderingConfig:
-    prompt: str
-    animation: AnimationConfig
-    out_artifact: str
-    run: RunConfig
-    save_tensors: GrSaveConfig
-    noise_initialization: NoiseInitializationConfig
-    generative_rendering: GenerativeRenderingConfig

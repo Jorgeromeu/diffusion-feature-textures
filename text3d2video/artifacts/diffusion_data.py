@@ -4,7 +4,6 @@ from pathlib import Path
 import h5py
 import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
-from networkx import numeric_assortativity_coefficient
 from torch import Tensor
 
 from text3d2video.h5_util import (

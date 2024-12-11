@@ -189,12 +189,12 @@ class ArtifactWrapper:
 
             if delete_localfolder:
                 self._delete_localdir()
-
-        logging.info(
-            "Skipping logging %s artifact at %s",
-            self.wandb_artifact.name,
-            str(self.folder.absolute()),
-        )
+        else:
+            logging.info(
+                "Skipping logging %s artifact at %s",
+                self.wandb_artifact.name,
+                str(self.folder.absolute()),
+            )
 
     def logged_by(self):
         return self.wandb_artifact.logged_by()

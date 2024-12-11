@@ -7,7 +7,6 @@ from torch import Tensor
 from text3d2video.artifacts.diffusion_data import (
     AttnFeaturesWriter,
     DiffusionData,
-    DiffusionDataCfg,
     DiffusionDataWriter,
     LatentsWriter,
 )
