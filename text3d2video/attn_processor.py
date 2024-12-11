@@ -32,6 +32,7 @@ class MultiFrameAttnProcessor:
     # config fields
     attend_to_self = True
     target_frame_indices = [0]
+    temperature = 1
 
     # state variables
     cur_timestep = 0

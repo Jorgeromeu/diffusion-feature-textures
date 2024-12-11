@@ -1,5 +1,5 @@
 import itertools
-from typing import Callable, List
+from typing import Callable, Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -20,71 +20,30 @@ def group_list_by(lst: List, key: Callable):
     return [list(content) for _, content in groupby_result]
 
 
+def ordered_sample_indices(lst, n):
+    """
+    Sample n elements from a list in order, return indices
+    """
+
+    if n == 0:
+        return []
+    if n == 1:
+        return [0]
+    if n >= len(lst):
+        return list(range(len(lst)))
+    # Calculate the step size based on list length and number of samples
+    step = (len(lst) - 1) / (n - 1)
+    # Use the calculated step to select indices
+    indices = [round(i * step) for i in range(n)]
+    return indices
+
+
 def ordered_sample(lst, n):
     """
     Sample n elements from a list in order.
     """
-
-    step_size = len(lst) // (n - 1)
-    # Get the sample by slicing the list
-    sample = [lst[i * step_size] for i in range(n - 1)]
-    sample.append(lst[-1])  # Add the last element
-    return sample
-
-
-def pixel_coords_uv(
-    res=100,
-):
-    xs = torch.linspace(0, 1, res)
-    ys = torch.linspace(1, 0, res)
-    x, y = torch.meshgrid(xs, ys, indexing="xy")
-
-    return torch.stack([x, y])
-
-
-def ndc_grid(resolution=100, corner_aligned=False):
-    """
-    Return a 2xHxH tensor where each pixel has the NDC coordinates of the pixel
-    :param resolution:
-    :param corner_aligned
-    :return:
-    """
-
-    u = 1 if corner_aligned else 1 - (1 / resolution)
-
-    xs = torch.linspace(u, -u, resolution)
-    ys = torch.linspace(u, -u, resolution)
-    x, y = torch.meshgrid(xs, ys, indexing="xy")
-
-    # stack to two-channel image
-    xy = torch.stack([x, y])
-
-    return xy
-
-
-def reproject_features(cameras: CamerasBase, depth: Tensor, feature_map: Tensor):
-    H, _ = depth.shape
-
-    # 2D grid with ndc coordinate at each pixel
-    xy_ndc = ndc_grid(H).to(feature_map)
-
-    # add depth channel
-    xy_depth = torch.stack([xy_ndc[0, ...], xy_ndc[1, ...], depth], dim=-1)
-
-    # mask selects all pixels that hit that correspond to a face
-    mask = depth != -1
-
-    # get NDC coords of points that hit the mesh
-    # and their corresponding features from the feature map
-    xy_depth_points = xy_depth[mask]
-    point_features = feature_map[mask]
-
-    # reproject NDC points back into 3D space
-    world_coords = cameras[0].unproject_points(
-        xy_depth_points, world_coordinates=True, scaled_depth_input=False
-    )
-
-    return world_coords, point_features
+    indices = ordered_sample_indices(lst, n)
+    return [lst[i] for i in indices]
 
 
 def project_vertices_to_features(
@@ -114,8 +73,8 @@ def project_vertices_to_features(
     visible_points_ndc = cam.transform_points_ndc(visible_verts).cpu()
 
     # extract features for each projected vertex
-    visible_point_features = sample_feature_map(
-        feature_map.cpu(), visible_points_ndc[:, 0:2].cpu(), mode
+    visible_point_features = sample_feature_map_ndc(
+        feature_map, visible_points_ndc[:, 0:2], mode
     ).to(verts)
 
     # construct vertex features tensor
@@ -137,16 +96,13 @@ def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
 
     vert_xys = []
     vert_indices = []
-
     packed_vert_cnt = 0
 
     for view in range(len(meshes)):
         pix_to_face = fragments.pix_to_face[view]
         mask = pix_to_face > 0
-
         visible_face_indices = pix_to_face[mask]
         visible_face_indices = visible_face_indices.unique()
-
         visible_faces = meshes.faces_packed()[visible_face_indices]
 
         visible_vert_indices = torch.unique(visible_faces)
@@ -154,6 +110,7 @@ def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
 
         visible_verts_ndc = cameras[view].transform_points_ndc(visible_verts)
         visible_verts_xy = visible_verts_ndc[:, 0:2]
+        visible_verts_xy[:, 0] *= -1
 
         vert_indices.append(visible_vert_indices - packed_vert_cnt)
         vert_xys.append(visible_verts_xy)
@@ -180,9 +137,9 @@ def aggregate_features_precomputed_vertex_positions(
         # get features for each vertex, for given view
         frame_vert_xys = vertex_positions[frame]
         frame_vert_indices = vertex_indices[frame]
-        frame_vert_features = sample_feature_map(
-            feature_map.cpu(),
-            frame_vert_xys.cpu(),
+        frame_vert_features = sample_feature_map_ndc(
+            feature_map,
+            frame_vert_xys,
             mode=mode,
         ).to(vert_features)
 
@@ -206,14 +163,21 @@ def aggregate_features_precomputed_vertex_positions(
     return vert_features
 
 
-def sample_feature_map(feature_map: Tensor, coords: Tensor, mode="nearest"):
-    batched_feature_map = rearrange(feature_map, "c h w -> 1 c h w").to(torch.float32)
-    coords[:, 0] *= -1
+def sample_feature_map_ndc(feature_map: Tensor, coords: Tensor, mode="nearest"):
+    """
+    Sample the feature map at the given coordinates
+    :param feature_map: (C, H, W) feature map
+    :param coords: (N, 2) coordinates in the range [-1, 1] (NDC)
+    :param mode: interpolation mode
+    :return: (N, C) sampled features
+    """
+    coords = coords.clone()
     coords[:, 1] *= -1
+    batched_feature_map = rearrange(feature_map, "c h w -> 1 c h w").to(torch.float32)
     grid = rearrange(coords, "n d -> 1 1 n d")
     out = F.grid_sample(batched_feature_map, grid, align_corners=True, mode=mode)
     out_features = rearrange(out, "1 f 1 n -> n f")
-    return out_features
+    return out_features.to(feature_map)
 
 
 def blend_features(
@@ -233,3 +197,51 @@ def blend_features(
 
     # return blended features, where features_rendered is not zero
     return original_background + blended_masked
+
+
+def assert_valid_tensor_shape(shape: Tuple):
+    for expected_len in shape:
+        assert isinstance(
+            expected_len, (int, type(None), str)
+        ), f"Dimension length must be int, None or str, received {expected_len}"
+
+
+def assert_tensor_shape(
+    t: Tensor, shape: tuple[int, ...], named_dim_sizes: dict[str, int] = None
+):
+    error_str = f"Expected tensor of shape {shape}, got {t.shape}"
+
+    assert_valid_tensor_shape(shape)
+    assert t.ndim == len(shape), f"{error_str}, wrong number of dimensions"
+
+    if named_dim_sizes is None:
+        named_dim_sizes = {}
+
+    for dim_i, expected_len in enumerate(shape):
+        true_len = t.shape[dim_i]
+
+        # any len is allowed for None
+        if expected_len is None:
+            continue
+
+        # assert same length as other dims with same key
+        if isinstance(expected_len, str):
+            # if symbol length not saved, save it
+            if expected_len not in named_dim_sizes:
+                named_dim_sizes[expected_len] = true_len
+                continue
+
+            expected_named_dim_size = named_dim_sizes[expected_len]
+            assert (
+                named_dim_sizes[expected_len] == true_len
+            ), f"{error_str}, expected {expected_named_dim_size} for dimension {expected_len}, got {true_len}"
+
+    return named_dim_sizes
+
+
+def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
+    if named_dim_sizes is None:
+        named_dim_sizes = {}
+
+    for tensor, shape in tensors:
+        named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)

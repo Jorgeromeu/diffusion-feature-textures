@@ -135,6 +135,7 @@ class ControlNetPipeline(DiffusionPipeline):
         controlnet_conditioning_scale=1.0,
         generator=None,
         initial_latents: torch.Tensor = None,
+        guess_mode=False,
     ):
         # number of images being generated
         batch_size = len(prompts)
@@ -171,7 +172,7 @@ class ControlNetPipeline(DiffusionPipeline):
                 encoder_hidden_states=controlnet_prompt_embeds,
                 controlnet_cond=processed_control_image,
                 conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=False,
+                guess_mode=guess_mode,
                 return_dict=False,
             )
 

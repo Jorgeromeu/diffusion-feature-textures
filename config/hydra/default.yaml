@@ -1,0 +1,4 @@
+run:
+  dir: .
+job:
+  chdir: false

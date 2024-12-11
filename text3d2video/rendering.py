@@ -41,7 +41,7 @@ class FeatureShader(nn.Module):
         self.device = device
         self.blend_params = blend_params
 
-    def forward(self, fragments, meshes: Meshes):
+    def forward(self, fragments, meshes: Meshes, **kwargs):
         # get the vertex features
         texels = meshes.sample_textures(fragments)
 

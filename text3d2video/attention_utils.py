@@ -1,3 +1,4 @@
+from math import sqrt
 from typing import List
 
 import torch.nn.functional as F
@@ -7,7 +8,9 @@ from jaxtyping import Float
 from torch import Tensor
 
 
-def memory_efficient_attention(attn: Attention, key, query, value, attention_mask):
+def memory_efficient_attention(
+    attn: Attention, key, query, value, attention_mask, temperature=1.0
+):
     """
     Attention operation with F.scaled_dot_product_attention
     """
@@ -27,9 +30,19 @@ def memory_efficient_attention(attn: Attention, key, query, value, attention_mas
     if attn.norm_k is not None:
         key = attn.norm_k(key)
 
+    d_kv = key.shape[-1]
+
+    scale = 1 / (temperature * sqrt(d_kv))
+
     # pylint: disable=not-callable
     hidden_states = F.scaled_dot_product_attention(
-        query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        query,
+        key,
+        value,
+        attn_mask=attention_mask,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=scale,
     )
 
     hidden_states = hidden_states.transpose(1, 2).reshape(

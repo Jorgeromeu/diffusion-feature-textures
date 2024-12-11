@@ -8,22 +8,55 @@ from moviepy.editor import ImageSequenceClip
 from PIL.Image import Image
 
 
-def display_ims_grid(images: List[List[Image]], scale=1):
+def transpose_list_of_lists(lol: List[List]):
+    return list(map(list, zip(*lol)))
+
+
+def display_ims_grid(
+    images: List[List[Image]],
+    scale=2.5,
+    col_titles=None,
+    row_titles=None,
+    transpose_images=False,
+    title=None,
+):
+    images = images.copy()
+    if transpose_images:
+        images = transpose_list_of_lists(images)
+
     n_rows = len(images)
     n_cols = len(images[0])
 
-    _, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
+    if row_titles is not None:
+        assert len(row_titles) == n_rows
+
+    if col_titles is not None:
+        assert len(col_titles) == n_cols
+
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
+    if not isinstance(axs, np.ndarray):
+        axs = np.array([axs])
+
+    axs = axs.reshape(n_rows, n_cols)
 
     for row_i in range(n_rows):
         for col_i in range(n_cols):
-            axs[row_i, col_i].imshow(images[row_i][col_i])
-            axs[row_i, col_i].axis("off")
+            ax = axs[row_i, col_i]
+            ax.imshow(images[row_i][col_i])
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            if row_i == 0 and col_titles is not None:
+                ax.set_title(col_titles[col_i])
+
+            if col_i == 0 and row_titles is not None:
+                ax.set_ylabel(row_titles[row_i])
 
     plt.tight_layout()
     plt.show()
 
 
-def display_ims(images: List[Image], scale=1):
+def display_ims(images: List[Image], scale=2):
     if len(images) == 1:
         _, ax = plt.subplots(1, 1, figsize=(scale, scale))
         ax.imshow(images[0])

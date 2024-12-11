@@ -6,8 +6,9 @@ import torch
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
-from rerun import Tensor
+from torch import Tensor
 
+from text3d2video.artifacts.gr_data import GrDataArtifact
 from text3d2video.attention_utils import (
     extend_across_frame_dim,
     extended_attn_kv_hidden_states,
@@ -20,45 +21,84 @@ from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.util import blend_features
 
 
-class AttentionMode(Enum):
+class GrAttnMode(Enum):
     FEATURE_EXTRACTION: str = "extraction"
     FEATURE_INJECTION: str = "injection"
 
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.value == other.value
+        return False
+
 
 class GenerativeRenderingAttn:
-    # generative rendering config
+    # attn processor config
     gr_config: GenerativeRenderingConfig
-    attn_mode: AttentionMode = AttentionMode.FEATURE_INJECTION
+    mode: GrAttnMode = GrAttnMode.FEATURE_INJECTION
 
-    # save features here
-    saved_pre_attn: Dict[str, Float[torch.Tensor, "b t c"]] = {}
-    saved_post_attn: Dict[str, Float[torch.Tensor, "b f t c"]] = {}
+    # gr data
+    gr_data_artifact: GrDataArtifact
 
-    post_attn_feature_images: Dict[str, Float[torch.Tensor, "b d h w"]] = {}
+    chunk_frame_indices: Tensor
 
-    module_path: str
+    # save features here in extraction mode, and use them in injection mode
+    pre_attn_features: Dict[str, Float[Tensor, "b t c"]] = {}
+    post_attn_features: Dict[str, Float[Tensor, "b f t c"]] = {}
 
-    def __init__(self, unet, unet_chunk_size=2):
+    # state variables
+    cur_timestep = 0
+    _cur_module_path: str
+    _is_cross_attn: bool
+    _is_self_attn: bool
+
+    def __init__(
+        self,
+        unet,
+        gr_config: GenerativeRenderingConfig,
+        unet_chunk_size=2,
+        mode=GrAttnMode.FEATURE_INJECTION,
+    ):
         """
         :param unet_chunk_size:
             number of batches for each generated image, 2 for classifier free guidance
         """
         self.unet = unet
         self.unet_chunk_size = unet_chunk_size
+        self.gr_config = gr_config
+        self.mode = mode
 
-    def clear_saved_features(self):
-        self.saved_pre_attn = {}
-        self.saved_post_attn = {}
+        self.pre_attn_features = {}
+        self.post_attn_features = {}
+
+    def should_save_pre_attn(self):
+        return (
+            self._cur_module_path in self.gr_config.module_paths
+            and self.gr_config.do_pre_attn_injection
+        )
+
+    def should_save_post_attn(self):
+        return (
+            self._cur_module_path in self.gr_config.module_paths
+            and self.gr_config.do_post_attn_injection
+        )
+
+    def save_pre_attn_features(self, kv_hidden_states: Tensor):
+        self.pre_attn_features[self._cur_module_path] = kv_hidden_states
+
+    def save_post_attn_features(self, attn_out_square: Tensor):
+        self.post_attn_features[self._cur_module_path] = attn_out_square
+
+    # functionality
 
     def get_kv_hidden_states(
         self,
         attn: Attention,
         module_path: str,
-        hidden_states: Float[torch.Tensor, "b t d"],
-        encoder_hidden_states: Float[torch.Tensor, "b t d"],
-    ) -> Float[torch.Tensor, "b t d"]:
+        hidden_states: Float[Tensor, "b t d"],
+        encoder_hidden_states: Float[Tensor, "b t d"],
+    ) -> Float[Tensor, "b t d"]:
         # if encoder hidden states are provided use them for cross attention
-        if encoder_hidden_states is not None:
+        if self._is_cross_attn:
             hidden_states = encoder_hidden_states
             if attn.norm_cross is not None:
                 hidden_states = attn.norm_cross(hidden_states)
@@ -66,7 +106,11 @@ class GenerativeRenderingAttn:
 
         n_frames = hidden_states.shape[0] // self.unet_chunk_size
 
-        if self.attn_mode == AttentionMode.FEATURE_EXTRACTION:
+        if self.mode == GrAttnMode.FEATURE_EXTRACTION:
+            # if not saving pre attn, do normal self attention
+            if not self.should_save_pre_attn():
+                return hidden_states
+
             # concatenate hidden states from all frames into one
             ext_hidden_states = extended_attn_kv_hidden_states(
                 hidden_states, chunk_size=self.unet_chunk_size
@@ -78,19 +122,23 @@ class GenerativeRenderingAttn:
             # repeat along frame-dimension
             return extend_across_frame_dim(ext_hidden_states, n_frames)
 
-        if self.attn_mode == AttentionMode.FEATURE_INJECTION:
-            saved_hidden_states = self.saved_pre_attn.get(module_path)
+        if self.mode == GrAttnMode.FEATURE_INJECTION:
+            injected_hidden_states = self.pre_attn_features.get(module_path)
 
-            # if no pre_attn features passed, use current hidden states
-            if saved_hidden_states is None or not self.gr_config.do_pre_attn_injection:
+            # if nothing passed, do normal self attention
+            if injected_hidden_states is None:
                 return hidden_states
 
             # repeat across frame dimension
-            saved_hidden_states = extend_across_frame_dim(saved_hidden_states, n_frames)
+            saved_hidden_states = extend_across_frame_dim(
+                injected_hidden_states, n_frames
+            )
 
             if self.gr_config.attend_to_self_kv:
                 # concatenate current hidden states
-                hidden_states = torch.cat([hidden_states, saved_hidden_states], dim=1)
+                saved_hidden_states = torch.cat(
+                    [hidden_states, saved_hidden_states], dim=1
+                )
 
             return saved_hidden_states
 
@@ -98,11 +146,18 @@ class GenerativeRenderingAttn:
 
     def post_attn_injection(self, attn_out_square):
         # get feature images for current module
-        feature_images = self.post_attn_feature_images.get(self.module_path)
+        feature_images = self.post_attn_features.get(self._cur_module_path)
 
-        # skip blending
-        if feature_images is None or not self.gr_config.do_post_attn_injection:
+        # if nothing present, skip injection
+        if feature_images is None:
             return attn_out_square
+
+        self.gr_data_artifact.gr_writer.write_post_attn_renders(
+            self.cur_timestep,
+            self._cur_module_path,
+            feature_images,
+            self.chunk_frame_indices,
+        )
 
         # blend rendered and current features
         blended = blend_features(
@@ -114,28 +169,10 @@ class GenerativeRenderingAttn:
 
         return blended
 
-    def save_post_attn_features(self, attn_out_square: Tensor):
-        save_features = (
-            self.module_path in self.gr_config.module_paths
-            and self.gr_config.do_post_attn_injection,
-        )
-
-        if save_features:
-            self.saved_post_attn[self.module_path] = attn_out_square
-
-    def save_pre_attn_features(self, hidden_states: Tensor):
-        # save hidden states for later use
-        save_pre_attn_features = (
-            self.attn_mode
-            and self.module_path in self.gr_config.module_paths
-            and self.gr_config.do_pre_attn_injection
-        )
-
-        if save_pre_attn_features:
-            self.saved_pre_attn[self.module_path] = hidden_states
-
-    def call_init(self, attn: Attention):
-        self.module_path = get_module_path(self.unet, attn)
+    def call_init(self, attn: Attention, encoder_hidden_states: Tensor):
+        self._cur_module_path = get_module_path(self.unet, attn)
+        self._is_cross_attn = encoder_hidden_states is not None
+        self._is_self_attn = not self._is_cross_attn
 
     def __call__(
         self,
@@ -151,13 +188,13 @@ class GenerativeRenderingAttn:
         :param attention_mask: attention mask
         """
 
-        self.call_init(attn)
+        self.call_init(attn, encoder_hidden_states)
 
         query = attn.to_q(hidden_states)
 
         # get hidden states for k/v computation
         kv_hidden_states = self.get_kv_hidden_states(
-            attn, self.module_path, hidden_states, encoder_hidden_states
+            attn, self._cur_module_path, hidden_states, encoder_hidden_states
         )
 
         key = attn.to_k(kv_hidden_states)
@@ -175,10 +212,41 @@ class GenerativeRenderingAttn:
         )
 
         # save post-attn features
-        if self.attn_mode == AttentionMode.FEATURE_EXTRACTION:
+        if self.mode == GrAttnMode.FEATURE_EXTRACTION and self.should_save_post_attn():
             self.save_post_attn_features(attn_out_square)
-        elif self.attn_mode == AttentionMode.FEATURE_INJECTION:
+
+        if self.mode == GrAttnMode.FEATURE_INJECTION:
+            # save qkv
+
+            # unstack batch-frame dimension
+            n_frames = hidden_states.shape[0] // self.unet_chunk_size
+            unstacked_q = rearrange(query, "(b f) t c -> b f t c", f=n_frames)
+            unstacked_k = rearrange(key, "(b f) t c -> b f t c", f=n_frames)
+            unstacked_v = rearrange(value, "(b f) t c -> b f t c", f=n_frames)
+
+            self.gr_data_artifact.attn_writer.write_qkv_batched(
+                self.cur_timestep,
+                self._cur_module_path,
+                unstacked_q,
+                unstacked_k,
+                unstacked_v,
+                chunk_frame_indices=self.chunk_frame_indices,
+            )
+            # save pre_injection features
+            self.gr_data_artifact.gr_writer.write_post_attn_pre_injection(
+                self.cur_timestep,
+                self._cur_module_path,
+                attn_out_square,
+                self.chunk_frame_indices,
+            )
             attn_out_square = self.post_attn_injection(attn_out_square)
+            # save post injection features
+            self.gr_data_artifact.gr_writer.write_post_attn_post_injection(
+                self.cur_timestep,
+                self._cur_module_path,
+                attn_out_square,
+                self.chunk_frame_indices,
+            )
 
         # reshape back to 2d
         attn_out = rearrange(attn_out_square, "b f d h w -> (b f) (h w) d")

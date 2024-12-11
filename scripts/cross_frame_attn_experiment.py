@@ -2,20 +2,22 @@ from dataclasses import dataclass
 from typing import List
 
 import hydra
+import matplotlib
 import torch
 from diffusers import ControlNetModel
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from matplotlib import pyplot as plt
 from PIL.Image import Image
-from pytorch3d.io import load_obj, load_objs_as_meshes
 
 import text3d2video.wandb_util as wbu
 import wandb
+from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.artifacts.attn_features_artifact import AttentionFeaturesArtifact
 from text3d2video.attn_processor import MultiFrameAttnProcessor, SaveConfig
-from text3d2video.camera_placement import turntable_cameras
+from text3d2video.camera_placement import turntable_cams
 from text3d2video.generative_rendering.configs import (
+    AnimationConfig,
     NoiseInitializationConfig,
     RunConfig,
 )
@@ -23,6 +25,8 @@ from text3d2video.pipelines.controlnet_pipeline import ControlNetPipeline
 from text3d2video.rendering import render_depth_map
 from text3d2video.util import ordered_sample
 from text3d2video.uv_noise import prepare_latents
+
+matplotlib.use("Agg")
 
 
 def plot_images(images: List[Image], target_frame_indices: List[int]):
@@ -67,6 +71,7 @@ class CrossFrameAttnExperimentCfg:
 class RunCrossFrameAttnExperimentCfg:
     run: RunConfig
     save_config: SaveCfg
+    animation: AnimationConfig
     noise_initialization: NoiseInitializationConfig
     cross_frame_attn_experiment: CrossFrameAttnExperimentCfg
 
@@ -103,25 +108,26 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
         pipe.scheduler.config
     )
 
-    # setup mesh and cameras
-    mesh_path = "data/meshes/cat.obj"
-    device = torch.device("cuda")
-    mesh = load_objs_as_meshes([mesh_path], device=device)
+    # read animation
 
-    _, faces, aux = load_obj(mesh_path)
-    verts_uvs = aux.verts_uvs
-    faces_uvs = faces.textures_idx
+    # read animation
+    animation = AnimationArtifact.from_wandb_artifact_tag(
+        cfg.animation.artifact_tag, download=cfg.run.download_artifacts
+    )
+    frame_nums = animation.frame_nums(cfg.animation.n_frames)
+    meshes = animation.load_frames(frame_nums)
+    cameras = animation.cameras(frame_nums)
+    verts_uvs, faces_uvs = animation.texture_data()
 
     dist = 2
     n_cameras = cfg.cross_frame_attn_experiment.n_views
-    cameras = turntable_cameras(
+    cameras = turntable_cams(
         n_cameras,
         dist=dist,
         start_angle=0,
         stop_angle=90,
         device=device,
     )
-    meshes = mesh.extend(len(cameras))
 
     # render depth maps
     depth_maps = render_depth_map(meshes, cameras)
@@ -145,6 +151,8 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
 
     tensors_multidict = out_artifact.create_features_diskdict()
 
+    attn_processor = MultiFrameAttnProcessor(pipe.unet)
+
     def pre_step(t, i):
         attn_processor.cur_timestep = t
         attn_processor.cur_timestep_idx = i
@@ -159,7 +167,6 @@ def run(cfg: RunCrossFrameAttnExperimentCfg):
     )
     save_cfg.module_pahts = cfg.save_config.module_paths
 
-    attn_processor = MultiFrameAttnProcessor(pipe.unet)
     attn_processor.save_cfg = save_cfg
     attn_processor.target_frame_indices = (
         cfg.cross_frame_attn_experiment.target_frame_indices

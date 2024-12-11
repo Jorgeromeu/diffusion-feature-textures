@@ -11,21 +11,6 @@ class RunConfig:
     tags: list[str]
 
 
-@dataclass
-class RerunConfig:
-    enabled: bool
-    module_paths: list[str]
-    n_frames: int
-
-
-@dataclass
-class SaveConfig:
-    enabled: bool
-    save_latents: bool
-    n_frames: int
-    out_artifact: str
-
-
 class NoiseInitializationMethod(Enum):
     RANDOM = "RANDOM"
     FIXED = "FIXED"
@@ -36,6 +21,12 @@ class NoiseInitializationMethod(Enum):
 class NoiseInitializationConfig:
     method: NoiseInitializationMethod
     uv_texture_res = -1
+
+
+@dataclass
+class AnimationConfig:
+    n_frames: int
+    artifact_tag: str
 
 
 # pylint: disable=too-many-instance-attributes
@@ -54,14 +45,3 @@ class GenerativeRenderingConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: list[str]
-
-
-@dataclass
-class RunGenerativeRenderingConfig:
-    prompt: str
-    out_artifact: str
-    run: RunConfig
-    rerun: RerunConfig
-    save_tensors: SaveConfig
-    noise_initialization: NoiseInitializationConfig
-    generative_rendering: GenerativeRenderingConfig
