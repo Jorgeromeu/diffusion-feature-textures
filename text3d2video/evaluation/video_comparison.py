@@ -67,7 +67,7 @@ def make_comparison_vid(
             row_run = row[0]
             animation = wbu.first_used_artifact_of_type(row_run, "animation")
             animation = AnimationArtifact.from_wandb_artifact(
-                animation, download=download
+                animation, re_download=download
             )
 
             n_frames = OmegaConf.create(row_run.config).animation.n_frames
@@ -87,7 +87,7 @@ def make_comparison_vid(
                 continue
 
             video_artifact = VideoArtifact.from_wandb_artifact(
-                video_artifact, download=download
+                video_artifact, re_download=download
             )
             clip = video_artifact.get_moviepy_clip()
 

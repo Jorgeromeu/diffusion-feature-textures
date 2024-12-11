@@ -2,11 +2,10 @@ import shutil
 from pathlib import Path
 from typing import List
 
-import torch
 import torchvision.transforms.functional as TF
 from diffusers import UNet2DConditionModel
 from einops import rearrange
-from pytorch3d.renderer import TexturesVertex
+from pytorch3d.renderer import CamerasBase, TexturesVertex
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
@@ -89,6 +88,24 @@ def view_vert_features(mesh: Meshes, vert_ft_rgb: Tensor, render_res=200, n_fram
     render_mesh.textures = TexturesVertex(
         vert_ft_rgb.expand(len(cameras), -1, -1).cuda()
     )
+
+    renders = renderer(render_mesh)
+    renders_pil = [TF.to_pil_image(rearrange(r, "h w c -> c h w")) for r in renders]
+
+    return renders_pil
+
+
+def render_vert_features(
+    meshes: Meshes, cameras: CamerasBase, vert_ft: Tensor, render_res=200
+):
+    n_renders = len(cameras)
+    assert len(cameras) == len(meshes)
+
+    # render
+    renderer = make_feature_renderer(cameras, render_res, "cuda")
+    render_mesh = meshes.clone()
+
+    render_mesh.textures = TexturesVertex(vert_ft.expand(n_renders, -1, -1).cuda())
 
     renders = renderer(render_mesh)
     renders_pil = [TF.to_pil_image(rearrange(r, "h w c -> c h w")) for r in renders]

@@ -152,6 +152,13 @@ class GenerativeRenderingAttn:
         if feature_images is None:
             return attn_out_square
 
+        self.gr_data_artifact.gr_writer.write_post_attn_renders(
+            self.cur_timestep,
+            self._cur_module_path,
+            feature_images,
+            self.chunk_frame_indices,
+        )
+
         # blend rendered and current features
         blended = blend_features(
             attn_out_square,
@@ -210,13 +217,20 @@ class GenerativeRenderingAttn:
 
         if self.mode == GrAttnMode.FEATURE_INJECTION:
             # save qkv
+
+            # unstack batch-frame dimension
+            n_frames = hidden_states.shape[0] // self.unet_chunk_size
+            unstacked_q = rearrange(query, "(b f) t c -> b f t c", f=n_frames)
+            unstacked_k = rearrange(key, "(b f) t c -> b f t c", f=n_frames)
+            unstacked_v = rearrange(value, "(b f) t c -> b f t c", f=n_frames)
+
             self.gr_data_artifact.attn_writer.write_qkv_batched(
                 self.cur_timestep,
                 self._cur_module_path,
-                query,
-                key,
-                value,
-                self.chunk_frame_indices,
+                unstacked_q,
+                unstacked_k,
+                unstacked_v,
+                chunk_frame_indices=self.chunk_frame_indices,
             )
             # save pre_injection features
             self.gr_data_artifact.gr_writer.write_post_attn_pre_injection(

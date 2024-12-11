@@ -6,8 +6,12 @@ import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
-from text3d2video.h5_util import read_tensor_from_dataset, write_tensor_as_dataset
-from text3d2video.util import assert_tensor_shape, ordered_sample
+from text3d2video.h5_util import (
+    print_datasets,
+    read_tensor_from_dataset,
+    write_tensor_as_dataset,
+)
+from text3d2video.util import assert_tensor_shape, assert_tensor_shapes, ordered_sample
 
 
 @dataclass
@@ -20,7 +24,7 @@ class DiffusionDataCfg:
 
 class DiffusionData:
     """
-    Class to manage saving diffusion data
+    Class to manage reading and writing data extracted during diffusion inference
     """
 
     config: DiffusionDataCfg
@@ -71,6 +75,9 @@ class DiffusionData:
             self.config.enabled and valid_timestep and valid_frame and valid_attn_path
         )
 
+    def print_datasets(self, prefix: str = ""):
+        print_datasets(self.h5_file_path, parent_path=prefix)
+
     @property
     def save_times(self):
         """
@@ -109,6 +116,10 @@ class DiffusionData:
 
 
 class DiffusionDataWriter:
+    """
+    Abstract base class for a diffusion data writer
+    """
+
     diff_data: DiffusionData
 
     def __init__(self, diff_data: DiffusionData, data_path: str):
@@ -161,6 +172,14 @@ class LatentsWriter(DiffusionDataWriter):
         path = self._latent_path(t, frame_i)
         return self.read_tensor(path)
 
+    def read_latents_at_frame(self, frame_i: int):
+        times = self.diff_data.save_times
+        return torch.stack([self.read_latent(t, frame_i) for t in times])
+
+    def read_latents_at_time(self, t: int):
+        frame_indices = self.diff_data.save_frame_indices
+        return torch.stack([self.read_latent(t, frame_i) for frame_i in frame_indices])
+
 
 class AttnFeaturesWriter(DiffusionDataWriter):
     """
@@ -192,28 +211,27 @@ class AttnFeaturesWriter(DiffusionDataWriter):
         q: Tensor,
         k: Tensor,
         v: Tensor,
-        chunk_frame_indices=None,
+        chunk_frame_indices: Tensor = None,
     ):
-        assert_tensor_shape(q, ("B", "T", "D"))
-        assert_tensor_shape(k, ("B", "T", "D"))
-        assert_tensor_shape(v, ("B", "T", "D"))
-
         if chunk_frame_indices is None:
             chunk_frame_indices = torch.arange(q.shape[0])
 
-        for frame_i in self.diff_data.save_frame_indices:
-            idx_in_chunk = (chunk_frame_indices == frame_i).nonzero(as_tuple=True)[0]
-            if len(idx_in_chunk) == 0:
-                continue
+        assert_tensor_shapes(
+            [
+                (q, ("B", "F", "T_q", "D_qk")),
+                (k, ("B", "F", "T_kv", "D_qk")),
+                (v, ("B", "F", "T_kv", "D_v")),
+                (chunk_frame_indices, ("F",)),
+            ]
+        )
 
-            idx_in_chunk = int(idx_in_chunk)
-
+        for tensor_idx, frame_i in enumerate(chunk_frame_indices):
             if self.save_q:
-                self.write_seq(t, frame_i, layer, "qry", q[idx_in_chunk])
+                self.write_seq(t, frame_i, layer, "qry", q[0, tensor_idx, ...])
             if self.save_k:
-                self.write_seq(t, frame_i, layer, "key", k[idx_in_chunk])
+                self.write_seq(t, frame_i, layer, "key", k[0, tensor_idx, ...])
             if self.save_v:
-                self.write_seq(t, frame_i, layer, "val", v[idx_in_chunk])
+                self.write_seq(t, frame_i, layer, "val", v[0, tensor_idx, ...])
 
     # reading
 

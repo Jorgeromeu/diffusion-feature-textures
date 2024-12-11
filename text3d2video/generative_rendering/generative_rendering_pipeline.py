@@ -241,11 +241,15 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         t: int,
         pre_attn_features: Dict[str, Float[Tensor, "b f t d"]],
         feature_images: Dict[str, Float[Tensor, "b f d h w"]],
+        frame_indices: Tensor,
     ):
-        # pass features to attn processor
+        # set attn processor mode
         self.attn_processor.mode = GrAttnMode.FEATURE_INJECTION
+        # pass features to attn processor
         self.attn_processor.post_attn_features = feature_images
         self.attn_processor.pre_attn_features = pre_attn_features
+        # pass frame indices to attn processor
+        self.attn_processor.chunk_frame_indices = frame_indices
 
         noise_pred = self.model_forward(latents, text_embeddings, depth_maps, t)
 
@@ -350,7 +354,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
     def log_data_artifact(self):
         self.gr_data_artifact.end_recording()
-        self.gr_data_artifact.log_if_enabled(delete_folder=False)
+        self.gr_data_artifact.log_if_enabled(delete_localfolder=False)
 
     @torch.no_grad()
     def __call__(
@@ -455,21 +459,20 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
             # do inference in chunks
             noise_preds = []
-            for chunk_indices in tqdm(chunks_indices, desc="Chunks"):
+            for chunk_frame_indices in tqdm(chunks_indices, desc="Chunks"):
                 # render chunk feature images
                 chunk_feature_images = self.render_feature_images(
-                    cameras[chunk_indices],
-                    frames[chunk_indices],
+                    cameras[chunk_frame_indices],
+                    frames[chunk_frame_indices],
                     aggregated_3d_features,
                 )
 
                 # Diffusion step #2 with pre and post attn feature injection
                 # get chunk inputs
-                chunk_latents = latents_stacked[:, chunk_indices]
-                chunk_embeddings = stacked_text_embeddings[:, chunk_indices]
-                chunk_depth_maps = [depth_maps[i] for i in chunk_indices.tolist()]
+                chunk_latents = latents_stacked[:, chunk_frame_indices]
+                chunk_embeddings = stacked_text_embeddings[:, chunk_frame_indices]
+                chunk_depth_maps = [depth_maps[i] for i in chunk_frame_indices.tolist()]
 
-                self.attn_processor.chunk_frame_indices = chunk_indices
                 noise_pred = self.model_forward_feature_injection(
                     chunk_latents,
                     chunk_embeddings,
@@ -477,6 +480,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                     t,
                     pre_attn_features,
                     chunk_feature_images,
+                    chunk_frame_indices,
                 )
                 noise_preds.append(noise_pred)
 
@@ -497,8 +501,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # decode latents in chunks
         decoded_imgs = []
-        for chunk_indices in chunks_indices:
-            chunk_latents = latents[chunk_indices]
+        for chunk_frame_indices in chunks_indices:
+            chunk_latents = latents[chunk_frame_indices]
             chunk_images = self.latents_to_images(chunk_latents, generator)
             decoded_imgs.extend(chunk_images)
 

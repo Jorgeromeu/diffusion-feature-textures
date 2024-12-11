@@ -1,6 +1,5 @@
 import logging
 import shutil
-import tempfile
 from pathlib import Path
 
 import torch
@@ -10,10 +9,13 @@ from torch import Tensor
 import wandb
 from wandb import Artifact
 
+# path to store local artifact data before logging to wandb
+ARTIFACTS_LOCAL_PATH = "/tmp/local_artifacts/"
+
 
 def setup_run(cfg: DictConfig):
     """
-    Setup wandb run and log config
+    Setup wandb run and log its config
     """
 
     run_config = cfg.run
@@ -82,78 +84,114 @@ def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
 class ArtifactWrapper:
     """
     Wrapper over wandb artifact to ease reading/writing from artifacts
+    Holds reference to:
+        - artifact local folder
+        - wandb_artifact object
     """
 
     # the type id of the wandb artifact class
     wandb_artifact_type: str
+
+    # artifact wrapper stores artifact and its local folder
     wandb_artifact: Artifact = None
+    folder: Path
 
     def __init__(self, folder: Path = None, artifact: Artifact = None):
         self.folder = folder
         self.wandb_artifact = artifact
 
-    def setup_tempdir(self):
-        self.folder = Path(tempfile.mkdtemp())
+    def setup_localdir(self):
+        artifact_name = self.wandb_artifact.name
+        localdir_path = (
+            Path(ARTIFACTS_LOCAL_PATH)
+            / self.wandb_artifact_type
+            / self.wandb_artifact.name
+        )
+
+        self.folder = localdir_path
+
+        if self.folder.exists():
+            shutil.rmtree(self.folder)
+        self.folder.mkdir(exist_ok=True, parents=True)
+
         logging.info(
             "Created %s artifact at %s",
+            artifact_name,
+            str(self.folder.absolute()),
+        )
+
+    def _delete_localdir(self):
+        shutil.rmtree(self.folder)
+        logging.info(
+            "Deleted %s local artifact folder at %s",
             self.wandb_artifact.name,
             str(self.folder.absolute()),
         )
 
-    def delete_folder(self):
-        shutil.rmtree(self.folder)
-        logging.info(
-            "Deleted %s artifact at %s",
-            self.wandb_artifact.name,
-            str(self.folder.absolute()),
-        )
+    # Construcors
 
     @classmethod
     def create_empty_artifact(cls, name: str):
+        """
+        Create artifact, and initialize empty directory
+        """
         artifact = Artifact(name, type=cls.wandb_artifact_type)
         wrapper = cls(artifact=artifact)
-        wrapper.setup_tempdir()
+        wrapper.setup_localdir()
         return wrapper
 
     @classmethod
+    def create_empty_artifact_from_folder(cls, folder: Path, name: str):
+        """
+        Create artifact, initialize from local folder
+        """
+        artifact = Artifact(name, type=cls.wandb_artifact_type)
+        return cls(folder=folder, artifact=artifact)
+
+    @classmethod
     def from_wandb_artifact(cls, artifact: Artifact, download=False):
-        folder = Path(artifact._default_root())
-        if not folder.exists():
+        """
+        Create from logged artifact
+        """
+        # pylint: disable=protected-access
+        downloaded_folder = Path(artifact._default_root())
+
+        # if folder not present download
+        if not downloaded_folder.exists():
             artifact.download()
 
+        # if download flag present, force redownload
         if download:
             artifact.download()
 
-        # pylint: disable=protected-access
-        folder = Path(artifact._default_root())
-        wrapper = cls(folder=folder, artifact=artifact)
+        # set up artifact wrapper
+        wrapper = cls(folder=downloaded_folder, artifact=artifact)
         return wrapper
 
     @classmethod
     def from_wandb_artifact_tag(cls, artifact_tag: str, download=False):
+        """
+        Create from logged artifact tag
+        """
         artifact = get_artifact(artifact_tag)
         return cls.from_wandb_artifact(artifact, download)
 
-    @classmethod
-    def from_folder(cls, folder: Path):
-        return cls(folder=folder, artifact=None)
-
-    def log_if_enabled(self, aliases=None, delete_folder=True):
+    def log_if_enabled(self, aliases=None, delete_localfolder=False):
         if aliases is None:
             aliases = []
 
+        # add directory to artifact
         self.wandb_artifact.add_dir(self.folder)
 
         if wandb_is_enabled():
             logging.info("Logging artifact %s", self.wandb_artifact.name)
             wandb.log_artifact(self.wandb_artifact, aliases)
 
-            if delete_folder:
-                self.delete_folder()
-            return
+            if delete_localfolder:
+                self._delete_localdir()
 
         logging.info(
-            "Skippinglogging %s artifact at %s",
+            "Skipping logging %s artifact at %s",
             self.wandb_artifact.name,
             str(self.folder.absolute()),
         )

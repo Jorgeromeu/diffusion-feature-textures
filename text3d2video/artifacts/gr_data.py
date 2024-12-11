@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict
 
-import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
@@ -12,8 +11,7 @@ from text3d2video.artifacts.diffusion_data import (
     DiffusionDataWriter,
     LatentsWriter,
 )
-from text3d2video.h5_util import read_tensor_from_dataset, write_tensor_as_dataset
-from text3d2video.util import assert_tensor_shape
+from text3d2video.util import assert_tensor_shapes
 from text3d2video.wandb_util import ArtifactWrapper
 
 
@@ -80,6 +78,9 @@ class GrDataWriter(DiffusionDataWriter):
     def _post_attn_post_injection_path(self, t, frame_i, layer: str):
         return f"{self._layer_path(t, layer)}/frame_{frame_i}/post_injection"
 
+    def _post_attn_render_path(self, t, frame_i, layer: str):
+        return f"{self._layer_path(t, layer)}/frame_{frame_i}/render"
+
     # writing
 
     def write_kf_indices(self, t: int, kf_indices: Tensor):
@@ -101,15 +102,13 @@ class GrDataWriter(DiffusionDataWriter):
     def write_post_attn_pre_injection(
         self, t: int, layer: str, feature_maps, chunk_indices: Tensor
     ):
-        assert_tensor_shape(feature_maps, ("B", "T", "d", "H", "W"))
+        assert_tensor_shapes(
+            [(feature_maps, ("B", "T", "d", "H", "W")), (chunk_indices, ("T"))]
+        )
 
-        for frame_i in self.diff_data.save_frame_indices:
-            idx_in_chunk = (chunk_indices == frame_i).nonzero(as_tuple=True)[0]
-            if len(idx_in_chunk) == 0:
-                continue
-            idx_in_chunk = int(idx_in_chunk)
-
-            feature_map = feature_maps[0, idx_in_chunk, :, :, :]
+        for tensor_idx, frame_i in enumerate(chunk_indices):
+            feature_map = feature_maps[0, tensor_idx, :, :, :]
+            path = self._post_attn_post_injection_path(t, frame_i, layer)
             path = self._post_attn_pre_injection_path(t, frame_i, layer)
             self.write_tensor(
                 path, feature_map, timestep=t, frame_i=frame_i, attn_path=layer
@@ -118,16 +117,27 @@ class GrDataWriter(DiffusionDataWriter):
     def write_post_attn_post_injection(
         self, t: int, layer: str, feature_maps, chunk_indices: Tensor
     ):
-        assert_tensor_shape(feature_maps, ("B", "T", "d", "H", "W"))
+        assert_tensor_shapes(
+            [(feature_maps, ("B", "T", "d", "H", "W")), (chunk_indices, ("T"))]
+        )
 
-        for frame_i in self.diff_data.save_frame_indices:
-            idx_in_chunk = (chunk_indices == frame_i).nonzero(as_tuple=True)[0]
-            if len(idx_in_chunk) == 0:
-                continue
-            idx_in_chunk = int(idx_in_chunk)
-
-            feature_map = feature_maps[0, idx_in_chunk, :, :, :]
+        for tensor_idx, frame_i in enumerate(chunk_indices):
+            feature_map = feature_maps[0, tensor_idx, :, :, :]
             path = self._post_attn_post_injection_path(t, frame_i, layer)
+            self.write_tensor(
+                path, feature_map, timestep=t, frame_i=frame_i, attn_path=layer
+            )
+
+    def write_post_attn_renders(
+        self, t: int, layer: str, feature_maps, chunk_indices: Tensor
+    ):
+        assert_tensor_shapes(
+            [(feature_maps, ("B", "T", "d", "H", "W")), (chunk_indices, ("T"))]
+        )
+
+        for tensor_idx, frame_i in enumerate(chunk_indices):
+            feature_map = feature_maps[0, tensor_idx, :, :, :]
+            path = self._post_attn_render_path(t, frame_i, layer)
             self.write_tensor(
                 path, feature_map, timestep=t, frame_i=frame_i, attn_path=layer
             )
@@ -152,6 +162,10 @@ class GrDataWriter(DiffusionDataWriter):
 
     def read_post_attn_post_injection(self, t: int, frame_i: int, layer: str):
         path = self._post_attn_post_injection_path(t, frame_i, layer)
+        return self.read_tensor(path)
+
+    def read_post_attn_render(self, t: int, frame_i: int, layer: str):
+        path = self._post_attn_render_path(t, frame_i, layer)
         return self.read_tensor(path)
 
 
@@ -208,14 +222,3 @@ class GrDataArtifact(ArtifactWrapper):
         self.diffusion_data.end_recording()
 
     # Reading methods
-
-    def read_latent(self, t: int, frame_i: int) -> Tensor:
-        return self.latents_writer.read_latent(t, frame_i)
-
-    def read_latents_at_frame(self, frame_i: int) -> Tensor:
-        times = self.diffusion_data.save_times
-        return torch.stack([self.read_latent(t, frame_i) for t in times])
-
-    def read_latents_at_timestep(self, t: int) -> Tensor:
-        frame_indices = self.diffusion_data.save_frame_indices
-        return torch.stack([self.read_latent(t, frame_i) for frame_i in frame_indices])

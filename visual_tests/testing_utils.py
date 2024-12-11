@@ -4,13 +4,6 @@ import torchvision.transforms.functional as TF
 from PIL import Image, ImageDraw, ImageFont
 
 
-def random_color():
-    color_float = torch.rand(3)
-    color_int = (color_float * 255).int()
-
-    return tuple(color_int.tolist())
-
-
 def process_color(color):
     if isinstance(color, str):
         return color
