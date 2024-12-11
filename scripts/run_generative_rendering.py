@@ -20,9 +20,12 @@ cs.store(name="generative_rendering", node=RunGenerativeRenderingConfig)
 
 @hydra.main(config_path="../config", config_name="generative_rendering")
 def run(cfg: RunGenerativeRenderingConfig):
+    # init wandb
     do_run = wbu.setup_run(cfg)
     if not do_run:
         return
+
+    # disable gradients
     torch.set_grad_enabled(False)
 
     # read animation
@@ -52,8 +55,6 @@ def run(cfg: RunGenerativeRenderingConfig):
     pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
         pipe.scheduler.config
     )
-
-    pipe.module_paths = cfg.generative_rendering.module_paths
 
     video_frames = pipe(
         cfg.prompt,

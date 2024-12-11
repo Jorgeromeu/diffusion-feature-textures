@@ -213,9 +213,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         Dict[str, Float[torch.Tensor, "b t c"]],
         Dict[str, Float[torch.Tensor, "b f t c"]],
     ]:
-        # set attn processor flags
+        # set attn processor mode
         self.attn_processor.mode = GrAttnMode.FEATURE_EXTRACTION
 
+        # clear saved features
         self.attn_processor.pre_attn_features = {}
         self.attn_processor.post_attn_features = {}
 
@@ -228,6 +229,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             self.attn_processor.post_attn_features,
         )
 
+        # clear saved features
         self.attn_processor.pre_attn_features = {}
         self.attn_processor.post_attn_features = {}
 

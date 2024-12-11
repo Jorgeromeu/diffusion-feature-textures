@@ -28,6 +28,7 @@ class GrSaveConfig:
     save_v: bool
     save_kf_post_attn: bool
     save_aggregated_features: bool
+    save_feature_images: bool
 
 
 class GrDataWriter(DiffusionDataWriter):
@@ -41,21 +42,25 @@ class GrDataWriter(DiffusionDataWriter):
             frame_i/
                 pre_injection
                 post_injection
+                rendered
     """
 
     save_kf_post_attn: bool
     save_aggregated_features: bool
+    save_feature_images: bool
 
     def __init__(
         self,
         diff_data,
         save_kf_post_attn=True,
         save_aggregated_features=True,
+        save_feature_images=True,
         data_path="gr_data",
     ):
         super().__init__(diff_data, data_path)
         self.save_kf_post_attn = save_kf_post_attn
         self.save_aggregated_features = save_aggregated_features
+        self.save_feature_images = save_feature_images
 
     def _time_path(self, t: int):
         return f"{self.data_path}/time_{t}"
@@ -88,16 +93,18 @@ class GrDataWriter(DiffusionDataWriter):
         self.write_tensor(path, kf_indices, timestep=t)
 
     def write_vertex_features(self, t: int, vert_features: Dict[str, Tensor]):
+        if not self.save_aggregated_features:
+            return
         for layer, features in vert_features.items():
-            if self.save_aggregated_features:
-                path = self._vert_features_path(t, layer)
-                self.write_tensor(path, features, timestep=t, attn_path=layer)
+            path = self._vert_features_path(t, layer)
+            self.write_tensor(path, features, timestep=t, attn_path=layer)
 
     def write_kf_post_attn(self, t: int, post_attn_features: Dict[str, Tensor]):
+        if not self.save_kf_post_attn:
+            return
         for layer, features in post_attn_features.items():
-            if self.save_kf_post_attn:
-                path = self._kf_features_path(t, layer)
-                self.write_tensor(path, features, timestep=t, attn_path=layer)
+            path = self._kf_features_path(t, layer)
+            self.write_tensor(path, features, timestep=t, attn_path=layer)
 
     def write_post_attn_pre_injection(
         self, t: int, layer: str, feature_maps, chunk_indices: Tensor
@@ -105,6 +112,9 @@ class GrDataWriter(DiffusionDataWriter):
         assert_tensor_shapes(
             [(feature_maps, ("B", "T", "d", "H", "W")), (chunk_indices, ("T"))]
         )
+
+        if not self.save_feature_images:
+            return
 
         for tensor_idx, frame_i in enumerate(chunk_indices):
             feature_map = feature_maps[0, tensor_idx, :, :, :]
@@ -121,6 +131,9 @@ class GrDataWriter(DiffusionDataWriter):
             [(feature_maps, ("B", "T", "d", "H", "W")), (chunk_indices, ("T"))]
         )
 
+        if not self.save_feature_images:
+            return
+
         for tensor_idx, frame_i in enumerate(chunk_indices):
             feature_map = feature_maps[0, tensor_idx, :, :, :]
             path = self._post_attn_post_injection_path(t, frame_i, layer)
@@ -134,6 +147,9 @@ class GrDataWriter(DiffusionDataWriter):
         assert_tensor_shapes(
             [(feature_maps, ("B", "T", "d", "H", "W")), (chunk_indices, ("T"))]
         )
+
+        if not self.save_feature_images:
+            return
 
         for tensor_idx, frame_i in enumerate(chunk_indices):
             feature_map = feature_maps[0, tensor_idx, :, :, :]
@@ -187,15 +203,17 @@ class GrDataArtifact(ArtifactWrapper):
     def init_from_config(cls, config: GrSaveConfig):
         art = GrDataArtifact.create_empty_artifact(config.out_artifact)
         art.config = config
-        # set up diffusion data object
-        diffusion_data_cfg = DiffusionDataCfg(
+
+        # diffusion data
+        art.diffusion_data = DiffusionData(
+            art.h5_file_path(),
             enabled=config.enabled,
-            n_save_steps=config.n_timesteps,
-            n_save_frames=config.n_frames,
             attn_paths=config.module_paths,
+            n_save_frames=config.n_frames,
+            n_save_steps=config.n_timesteps,
         )
 
-        art.diffusion_data = DiffusionData(diffusion_data_cfg, art.h5_file_path())
+        # writers
         art.latents_writer = LatentsWriter(
             art.diffusion_data, enabled=config.save_latents
         )

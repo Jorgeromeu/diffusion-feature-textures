@@ -4,6 +4,7 @@ from pathlib import Path
 import h5py
 import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
+from networkx import numeric_assortativity_coefficient
 from torch import Tensor
 
 from text3d2video.h5_util import (
@@ -27,15 +28,31 @@ class DiffusionData:
     Class to manage reading and writing data extracted during diffusion inference
     """
 
-    config: DiffusionDataCfg
+    enabled: bool
+    n_save_steps: int
+    n_save_frames: int
+    attn_paths: list[str]
+
     _save_step_times: list[int]
     _save_frame_indices: list[int]
     h5_file_path: Path
     h5_write_fp: h5py.File
 
-    def __init__(self, config: DiffusionDataCfg, h5_file_path: Path):
-        self.config = config
+    def __init__(
+        self,
+        h5_file_path: Path,
+        enabled=True,
+        n_save_steps: int = -1,
+        n_save_frames: int = -1,
+        attn_paths: list[str] = [],
+    ):
         self.h5_file_path = h5_file_path
+
+        # save config
+        self.enabled = enabled
+        self.n_save_steps = n_save_steps
+        self.n_save_frames = n_save_frames
+        self.attn_paths = attn_paths
 
         # intiialize to empty
         self._save_frame_indices = []
@@ -45,19 +62,17 @@ class DiffusionData:
         self.h5_write_fp = None
 
     def calculate_save_steps(self, scheduler: SchedulerMixin):
-        n_save_steps = self.config.n_save_steps
+        n_save_steps = self.n_save_steps
         all_timesteps = [int(t) for t in scheduler.timesteps]
 
         if n_save_steps == -1:
             self._save_step_times = all_timesteps
             return
 
-        self._save_step_times = ordered_sample(
-            all_timesteps[:-1], self.config.n_save_steps
-        )
+        self._save_step_times = ordered_sample(all_timesteps[:-1], self.n_save_steps)
 
     def calculate_save_frames(self, n_frames: int):
-        n_save_frames = self.config.n_save_frames
+        n_save_frames = self.n_save_frames
         all_frame_indices = list(range(n_frames))
 
         if n_save_frames == -1:
@@ -69,11 +84,9 @@ class DiffusionData:
     def should_save(self, t: int = None, frame_i: int = None, attn_path: str = None):
         valid_timestep = t is None or t in self.save_times
         valid_frame = frame_i is None or frame_i in self.save_frame_indices
-        valid_attn_path = attn_path is None or attn_path in self.config.attn_paths
+        valid_attn_path = attn_path is None or attn_path in self.attn_paths
 
-        return (
-            self.config.enabled and valid_timestep and valid_frame and valid_attn_path
-        )
+        return self.enabled and valid_timestep and valid_frame and valid_attn_path
 
     def print_datasets(self, prefix: str = ""):
         print_datasets(self.h5_file_path, parent_path=prefix)
@@ -104,7 +117,7 @@ class DiffusionData:
         """
         Return the module paths at which we save data
         """
-        return self.config.attn_paths
+        return self.attn_paths
 
     def begin_recording(self):
         self.h5_write_fp = h5py.File(self.h5_file_path, "w")
