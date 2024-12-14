@@ -7,7 +7,7 @@ from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
 import wandb
-from text3d2video.artifacts.anim_artifact import AnimArtifact
+from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.camera_placement import (
     sideways_orthographic_cameras,
     turntable_cams,
@@ -21,7 +21,7 @@ def log_animation(
     artifact_name: str, static_path: Path, cameras: FoVPerspectiveCameras
 ):
     wandb.init(project="diffusion-3D-features", job_type="log_artifact")
-    artifact = AnimArtifact.create_empty_artifact(artifact_name)
+    artifact = AnimationArtifact.create_empty_artifact(artifact_name)
 
     # read obj
     verts, faces, aux = load_obj(static_path)

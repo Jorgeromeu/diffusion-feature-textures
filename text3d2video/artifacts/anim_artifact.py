@@ -10,7 +10,7 @@ from text3d2video.util import ordered_sample
 from text3d2video.wandb_util import ArtifactWrapper
 
 
-class AnimArtifact(ArtifactWrapper):
+class AnimationArtifact(ArtifactWrapper):
     wandb_artifact_type = "animation"
 
     # path methods
