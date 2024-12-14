@@ -64,8 +64,8 @@ def log_pt3d_fov_camera(
     label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100
 ):
     rr.log(label, pt3d_fov_camera(cameras, batch_idx, res))
-    cam_trans = cameras.get_world_to_view_transform().inverse()
-    rr.log(label, pt3d_transform(cam_trans, batch_idx))
+    c2w = cameras.get_world_to_view_transform().inverse()
+    rr.log(label, pt3d_transform(c2w, batch_idx))
 
 
 def pt3d_fov_camera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
