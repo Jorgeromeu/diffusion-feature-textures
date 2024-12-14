@@ -11,7 +11,7 @@ from text3d2video.wandb_util import ArtifactWrapper
 
 
 class AnimArtifact(ArtifactWrapper):
-    wandb_artifact_type = "anim"
+    wandb_artifact_type = "animation"
 
     # path methods
     def _meshes_path(self) -> Path:

@@ -68,18 +68,27 @@ def normalize_depth_map(depth):
     return depth
 
 
-def make_rasterizer(cameras, resolution=512):
+def make_rasterizer(cameras=None, resolution=512):
     raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
     return rasterizer
 
 
-def render_depth_map(meshes, cameras, resolution=512):
-    rasterizer = make_rasterizer(cameras, resolution)
-    fragments = rasterizer(meshes)
-    depth_maps = fragments.zbuf
-    depth_maps = normalize_depth_map(depth_maps)
-    return [TF.to_pil_image(depth_map[:, :, 0]) for depth_map in depth_maps]
+def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
+    rasterizer = make_rasterizer(resolution)
+    indices = torch.arange(0, len(meshes))
+
+    all_depth_maps = []
+    for chunk_indices in torch.split(indices, chunk_size):
+        chunk_meshes = meshes[chunk_indices]
+        chunk_cameras = cameras[chunk_indices]
+        fragments = rasterizer(chunk_meshes, cameras=chunk_cameras)
+        depth_maps = fragments.zbuf
+        depth_maps = normalize_depth_map(depth_maps)
+        depth_maps = [TF.to_pil_image(depth_map[:, :, 0]) for depth_map in depth_maps]
+        all_depth_maps.extend(depth_maps)
+
+    return all_depth_maps
 
 
 def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
