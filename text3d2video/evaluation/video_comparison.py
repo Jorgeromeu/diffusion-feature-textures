@@ -5,9 +5,7 @@ from moviepy.editor import CompositeVideoClip, TextClip, clips_array
 from omegaconf import OmegaConf
 
 import text3d2video.wandb_util as wbu
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
-from text3d2video.artifacts.video_artifact import VideoArtifact, pil_frames_to_clip
-from text3d2video.rendering import render_depth_map
+from text3d2video.artifacts.video_artifact import VideoArtifact
 from wandb.apis.public import Run
 
 
@@ -52,7 +50,6 @@ def make_comparison_vid(
     info_fun_bottom: Callable[[Run, VideoArtifact], VideoLabel] = None,
     title: str = None,
     download=True,
-    show_guidance_video=False,
 ):
     # ensure vids is rectangular
     for row in runs:
@@ -63,22 +60,6 @@ def make_comparison_vid(
     for row in runs:
         row_clips = []
 
-        if show_guidance_video:
-            row_run = row[0]
-            animation = wbu.first_used_artifact_of_type(row_run, "animation")
-            animation = AnimationArtifact.from_wandb_artifact(
-                animation, re_download=download
-            )
-
-            n_frames = OmegaConf.create(row_run.config).animation.n_frames
-            frame_nums = animation.frame_nums(n_frames)
-            frames = animation.load_frames(frame_nums, device="cpu")
-            cameras = animation.cameras(frame_nums)
-            depth_maps = render_depth_map(frames, cameras)
-
-            depth_video = pil_frames_to_clip(depth_maps, fps=10)
-            row_clips.append(depth_video)
-
         for run in row:
             video_artifact = wbu.first_logged_artifact_of_type(run, "video")
 
@@ -87,7 +68,7 @@ def make_comparison_vid(
                 continue
 
             video_artifact = VideoArtifact.from_wandb_artifact(
-                video_artifact, re_download=download
+                video_artifact, download=download
             )
             clip = video_artifact.get_moviepy_clip()
 
@@ -116,7 +97,7 @@ def make_comparison_vid(
                 fontsize=30,
                 color="Black",
                 bg_color="white",
-                font="CMU-Serif",
+                font="CMU-Serif-Bold",
                 align="Center",
             )
             .set_position(("center", "top"))

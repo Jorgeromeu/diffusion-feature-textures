@@ -40,7 +40,6 @@ def turntable_cams(
     endpoint=True,
 ) -> FoVPerspectiveCameras:
     azim = np.linspace(start_angle, stop_angle, n, endpoint=endpoint)
-    print(azim)
     elev = [0] * n
     dists = [dist] * n
     R, T = look_at_view_transform(dists, elev, azim)
