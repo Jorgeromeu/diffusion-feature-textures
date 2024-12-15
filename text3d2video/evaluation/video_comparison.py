@@ -68,7 +68,7 @@ def make_comparison_vid(
                 continue
 
             video_artifact = VideoArtifact.from_wandb_artifact(
-                video_artifact, re_download=download
+                video_artifact, download=download
             )
             clip = video_artifact.get_moviepy_clip()
 
@@ -97,7 +97,7 @@ def make_comparison_vid(
                 fontsize=30,
                 color="Black",
                 bg_color="white",
-                font="CMU-Serif",
+                font="CMU-Serif-Bold",
                 align="Center",
             )
             .set_position(("center", "top"))

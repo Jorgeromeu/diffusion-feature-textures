@@ -38,17 +38,13 @@ def feature_map(feature_map: np.array):
     return rr.Tensor(feature_map, dim_names=dim_names)
 
 
-def pt3d_setup():
-    rr.log("/", PT3D_ViewCoords, static=True)
-
-
 def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     # extract verts and faces from idx-th mesh in batch
     verts = meshes.verts_list()[batch_idx].cpu()
     faces = meshes.faces_list()[batch_idx].cpu()
     vertex_normals = meshes.verts_normals_list()[batch_idx].cpu()
 
-    # # TODO figure out hw to render textures...
+    # # TODO figure out how to render textures...
     # tex = meshes.textures.maps_padded()[batch_idx].cpu().numpy()
     # uv = meshes.textures.verts_uvs_padded()[0].cpu().numpy()
 
@@ -64,8 +60,8 @@ def log_pt3d_fov_camera(
     label: str, cameras: FoVPerspectiveCameras, batch_idx=0, res=100
 ):
     rr.log(label, pt3d_fov_camera(cameras, batch_idx, res))
-    cam_trans = cameras.get_world_to_view_transform().inverse()
-    rr.log(label, pt3d_transform(cam_trans, batch_idx))
+    c2w = cameras.get_world_to_view_transform().inverse()
+    rr.log(label, pt3d_transform(c2w, batch_idx))
 
 
 def pt3d_fov_camera(cameras: FoVPerspectiveCameras, batch_idx=0, res=100):
@@ -86,3 +82,7 @@ def pt3d_transform(transforms: Transform3d, batch_idx=0):
     translation = matrix[batch_idx, 3, 0:3].cpu()
     rotation = matrix[batch_idx, 0:3, 0:3].cpu().inverse()
     return rr.Transform3D(translation=translation, mat3x3=rotation)
+
+
+def fov_to_focal_length(fov, res=100):
+    return int(res / (2 * np.tan(fov * np.pi / 360)))
