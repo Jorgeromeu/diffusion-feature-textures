@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import rerun as rr
+import rerun.blueprint as rrb
 import torch
-from numpy import mat
 from pxr import Usd, UsdGeom
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
@@ -10,6 +10,7 @@ from torch import Tensor
 
 import text3d2video.rerun_util as ru
 from text3d2video.rendering import render_depth_map
+from text3d2video.util import ordered_sample
 
 
 def triangulate_usd_mesh(face_counts: Tensor, face_indices: Tensor):
@@ -73,12 +74,34 @@ def apply_frame_convention_conversion(matrix_or_point):
     return matrix_or_point @ conventionTransform.T
 
 
+# Blender to Pt3d conventions
+P_blender_world_to_pt3d_world = Tensor([[-1, 0, 0], [0, 0, 1], [0, 1, 0]])
+P_blender_cam_to_pt3d_cam = Tensor([[-1, 0, 0], [0, 1, 0], [0, 0, -1]])
+
+BLENDER_world_convention = rr.ViewCoordinates.RFU
+BLENDER_cam_convention = rr.ViewCoordinates.RUB
+
 if __name__ == "__main__":
     usd_file = Path("/home/jorge/untitled.usdc")
 
+    blender_xyz = rr.ViewCoordinates.RUB
+    pt3d_xyz = rr.ViewCoordinates.LUF
+
+    blueprint = rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(name="3D"),
+            rrb.Spatial2DView(
+                name="2D", contents=["/camera/render"], origin=["camera"]
+            ),
+        ),
+        collapse_panels=True,
+    )
+
     # init rerun
     rr.init("view_animation", spawn=True)
+    rr.send_blueprint(blueprint)
     seq = ru.TimeSequence("frames")
+    rr.log("/", BLENDER_world_convention, static=True)
 
     # open usd file
     stage = Usd.Stage.Open(str(usd_file))
@@ -101,7 +124,10 @@ if __name__ == "__main__":
     # iterate over frames
     start_time = int(stage.GetStartTimeCode())
     end_time = int(stage.GetEndTimeCode())
-    for frame in range(start_time, end_time + 1):
+
+    frames = list(range(start_time, end_time + 1))
+
+    for frame in ordered_sample(frames, 100):
         xform_cache = UsdGeom.XformCache(time=frame)
 
         # get camera extrinsics
@@ -113,19 +139,21 @@ if __name__ == "__main__":
         height = camera.GetVerticalApertureAttr().Get()
         width = camera.GetHorizontalApertureAttr().Get()
 
-        resolution = 512
+        resolution = 100
 
+        scaling_factor = resolution / height
+        cam_height = resolution
+        cam_width = resolution
+        focal_length = focal_length * scaling_factor
         # log camera
         cam_t, scale, cam_r = decompose_transform_srt(c2w)
-        blender_xyz = rr.ViewCoordinates.RUB
-        pt3d_xyz = rr.ViewCoordinates.LUF
         rr.log(
             "camera",
             rr.Pinhole(
-                height=resolution,
-                width=resolution,
-                focal_length=resolution * focal_length,
-                camera_xyz=pt3d_xyz,
+                height=cam_height,
+                width=cam_width,
+                focal_length=focal_length,
+                camera_xyz=blender_xyz,
             ),
         )
         rr.log(
@@ -139,22 +167,39 @@ if __name__ == "__main__":
 
         # get vert positions at frame
         verts = Tensor(mesh.GetPointsAttr().Get(frame)).float()
-        verts = apply_transform_homogeneous(verts, m2w)
+        verts_world = apply_transform_homogeneous(verts, m2w)
 
-        mesh_pt3d = Meshes(verts=[verts], faces=[faces])
-        rr.log("mesh", ru.pt3d_mesh(mesh_pt3d))
-
-        # get w2c transform
-        w2c = c2w.inverse()
-        t_w2c, _, r_w2c = decompose_transform_srt(w2c)
-        cam_pt3d = FoVPerspectiveCameras(
-            R=r_w2c.T.unsqueeze(0), T=t_w2c.unsqueeze(0), fov=60
+        # log mesh
+        mesh_pt3d = Meshes(verts=[verts_world], faces=[faces])
+        verts = mesh_pt3d.verts_list()[0].cpu()
+        faces = mesh_pt3d.faces_list()[0].cpu()
+        normals = mesh_pt3d.verts_normals_list()[0].cpu()
+        rr.log(
+            "mesh",
+            rr.Mesh3D(
+                vertex_positions=verts, triangle_indices=faces, vertex_normals=normals
+            ),
         )
 
-        depth_map = render_depth_map(mesh_pt3d.cuda(), cam_pt3d.cuda(), resolution=512)[
-            0
-        ]
+        # world coordinates in pt3d
+        verts_world_pt3d = verts_world @ P_blender_world_to_pt3d_world.T
+        mesh_pt3d = Meshes(verts=[verts_world_pt3d], faces=[faces])
 
-        rr.log("camera", rr.Image(depth_map))
+        cam_r_pt3d = P_blender_world_to_pt3d_world @ cam_r @ P_blender_cam_to_pt3d_cam
+        cam_t_pt3d = P_blender_world_to_pt3d_world @ cam_t
+
+        c2w_pt3d = assemble_transform_srt(cam_t_pt3d, torch.ones(3), cam_r_pt3d)
+
+        w2c_pt3d = c2w_pt3d.inverse()
+        t_w2c, _, r_w2c = decompose_transform_srt(w2c_pt3d)
+
+        cam_pt3d = FoVPerspectiveCameras(
+            R=r_w2c.T.unsqueeze(0), T=t_w2c.unsqueeze(0), fov=40
+        )
+
+        render = render_depth_map(
+            mesh_pt3d.cuda(), cam_pt3d.cuda(), resolution=resolution
+        )[0]
+        rr.log("camera/render", rr.Image(render))
 
         seq.step()

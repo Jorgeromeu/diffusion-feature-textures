@@ -86,3 +86,7 @@ def pt3d_transform(transforms: Transform3d, batch_idx=0):
     translation = matrix[batch_idx, 3, 0:3].cpu()
     rotation = matrix[batch_idx, 0:3, 0:3].cpu().inverse()
     return rr.Transform3D(translation=translation, mat3x3=rotation)
+
+
+def fov_to_focal_length(fov, res=100):
+    return int(res / (2 * np.tan(fov * np.pi / 360)))
