@@ -4,7 +4,7 @@ from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
 import text3d2video.rerun_util as ru
-from scripts.view_animation_usd import decompose_transform_srt
+from scripts.log_animation_usd import decompose_transform_srt
 from text3d2video.artifacts.animation_artifact import AnimationArtifact
 from text3d2video.rendering import render_depth_map
 

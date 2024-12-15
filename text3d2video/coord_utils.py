@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
 
+# matrices from https://mkari.de/coord-converter/
 BLENDER_WORLD_TO_PT3D_WORLD = Tensor([[-1, 0, 0], [0, 0, 1], [0, 1, 0]])
 BLENDER_CAM_TO_PT3D_CAM = Tensor([[-1, 0, 0], [0, 1, 0], [0, 0, -1]])
 

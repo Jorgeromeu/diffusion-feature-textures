@@ -75,7 +75,7 @@ def make_rasterizer(cameras=None, resolution=512):
 
 
 def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
-    rasterizer = make_rasterizer(resolution)
+    rasterizer = make_rasterizer(resolution=resolution)
     indices = torch.arange(0, len(meshes))
 
     all_depth_maps = []
