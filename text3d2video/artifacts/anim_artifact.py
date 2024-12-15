@@ -1,0 +1,82 @@
+from pathlib import Path
+from typing import Tuple
+
+import torch
+from pytorch3d.renderer import CamerasBase
+from pytorch3d.structures import Meshes
+from torch import Tensor
+
+from text3d2video.util import ordered_sample
+from text3d2video.wandb_util import ArtifactWrapper
+
+
+class AnimationArtifact(ArtifactWrapper):
+    wandb_artifact_type = "animation"
+
+    # path methods
+    def _meshes_path(self) -> Path:
+        return self.folder / "meshes.pt"
+
+    def _cams_path(self) -> Path:
+        return self.folder / "cams.pt"
+
+    def _verts_uvs_path(self) -> Path:
+        return self.folder / "verts_uvs.pt"
+
+    def _faces_uvs_path(self) -> Path:
+        return self.folder / "faces_uvs.pt"
+
+    # writing
+
+    def write_frames(self, cams: CamerasBase, meshes: Meshes):
+        assert len(cams) == len(meshes), "Number of cameras and meshes must match"
+        torch.save(cams, self._cams_path())
+        torch.save(meshes, self._meshes_path())
+
+    def write_uv_data(self, verts_uvs: Tensor, faces_uvs: Tensor):
+        torch.save(verts_uvs, self._verts_uvs_path())
+        torch.save(faces_uvs, self._faces_uvs_path())
+
+    # reading
+
+    def frame_indices(self, sample_n=None):
+        """
+        Returns indices of frames to render.
+        if sample_n is not None, sample N evenly spaced frames
+        """
+        meshes = torch.load(self._meshes_path())
+        indices = list(range(len(meshes)))
+        if sample_n is not None:
+            indices = ordered_sample(indices, sample_n)
+        return indices
+
+    def uv_data(self) -> Tuple[Tensor, Tensor]:
+        """
+        Returns the UV data for the mesh.
+        :return: Tuple of (verts_uvs, faces_uvs)
+        """
+        verts_uvs = torch.load(self._verts_uvs_path())
+        faces_uvs = torch.load(self._faces_uvs_path())
+        return verts_uvs, faces_uvs
+
+    def load_frames(
+        self, indices=None, device: str = "cuda"
+    ) -> Tuple[CamerasBase, Meshes]:
+        cams = torch.load(self._cams_path())
+        meshes = torch.load(self._meshes_path())
+
+        if indices is not None:
+            cams = cams[indices]
+            meshes = meshes[indices]
+        return cams.to(device), meshes.to(device)
+
+    # default pose mesh, TODO move to separate artifact
+
+    def _unposed_path(self) -> Path:
+        return self.folder / "unposed.pt"
+
+    def load_unposed_mesh(self, device: str = "cuda") -> Meshes:
+        return torch.load(self._unposed_path()).to(device)
+
+    def write_unposed(self, unposed: Meshes):
+        torch.save(unposed, self._unposed_path())

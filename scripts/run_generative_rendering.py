@@ -1,4 +1,6 @@
+import warnings
 from dataclasses import dataclass
+from logging import warning
 
 import hydra
 import torch
@@ -8,7 +10,7 @@ from hydra.utils import instantiate
 
 import text3d2video.wandb_util as wbu
 import wandb
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.generative_rendering.configs import (
@@ -45,6 +47,9 @@ def run(cfg: RunGenerativeRenderingConfig):
     if not do_run:
         return
 
+    # supress warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+
     # disable gradients
     torch.set_grad_enabled(False)
 
@@ -52,10 +57,9 @@ def run(cfg: RunGenerativeRenderingConfig):
     animation = AnimationArtifact.from_wandb_artifact_tag(
         cfg.animation.artifact_tag, download=cfg.run.download_artifacts
     )
-    frame_nums = animation.frame_nums(cfg.animation.n_frames)
-    mesh_frames = animation.load_frames(frame_nums)
-    cameras = animation.cameras(frame_nums)
-    uv_verts, uv_faces = animation.texture_data()
+    frame_indices = animation.frame_indices(cfg.animation.n_frames)
+    cameras, mesh_frames = animation.load_frames(frame_indices)
+    uv_verts, uv_faces = animation.uv_data()
 
     # load pipeline
     device = torch.device("cuda")
