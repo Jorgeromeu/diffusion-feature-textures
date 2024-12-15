@@ -5,15 +5,14 @@ from pytorch3d.structures import Meshes
 
 import text3d2video.rerun_util as ru
 from scripts.log_animation_usd import decompose_transform_srt
-from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.rendering import render_depth_map
 
 animation = AnimationArtifact.from_wandb_artifact_tag("human_rotation_full:latest")
-animation = AnimationArtifact.from_wandb_artifact_tag("rumba:latest")
+animation = AnimationArtifact.from_wandb_artifact_tag("booty:latest")
 
-frame_indices = animation.frame_nums(30)
-meshes = animation.load_frames(frame_indices)
-cameras = animation.cameras(frame_indices)
+frame_indices = animation.frame_indices()
+cameras, meshes = animation.load_frames()
 
 PT3D_camera_convention = rr.ViewCoordinates.LUF
 PT3D_world_convention = rr.ViewCoordinates.LUF

@@ -69,14 +69,3 @@ class AnimationArtifact(ArtifactWrapper):
             cams = cams[indices]
             meshes = meshes[indices]
         return cams.to(device), meshes.to(device)
-
-    # default pose mesh, TODO move to separate artifact
-
-    def _unposed_path(self) -> Path:
-        return self.folder / "unposed.pt"
-
-    def load_unposed_mesh(self, device: str = "cuda") -> Meshes:
-        return torch.load(self._unposed_path()).to(device)
-
-    def write_unposed(self, unposed: Meshes):
-        torch.save(unposed, self._unposed_path())

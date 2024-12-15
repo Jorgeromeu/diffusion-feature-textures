@@ -1,6 +1,5 @@
 import warnings
 from dataclasses import dataclass
-from logging import warning
 
 import hydra
 import torch

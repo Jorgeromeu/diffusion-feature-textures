@@ -36,7 +36,6 @@ def log_animation(
     # write data
     artifact.write_frames(cameras, meshes)
     artifact.write_uv_data(verts_uvs, faces_uvs)
-    artifact.write_unposed(mesh)
 
     # render depth clip
     depth_maps = render_depth_map(meshes.cuda(), cameras.cuda(), chunk_size=10)

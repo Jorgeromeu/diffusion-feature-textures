@@ -1,17 +1,13 @@
-from pathlib import Path
 
 import click
 import rerun as rr
 import rerun.blueprint as rrb
 import torch
-from isort import file
 from pxr import Usd, UsdGeom
 from pytorch3d.renderer import FoVPerspectiveCameras, join_cameras_as_batch
 from pytorch3d.structures import Meshes, join_meshes_as_batch
-from sympy import N
 from torch import Tensor
 from tqdm import tqdm
-from traitlets import default
 
 import text3d2video.rerun_util as ru
 import wandb
@@ -139,9 +135,6 @@ def create_animation_from_usd(
         # mesh world coordinates in pt3d space at frame
         verts_world_pt3d = verts_world @ BLENDER_WORLD_TO_PT3D_WORLD.T
         mesh_pt3d = Meshes(verts=[verts_world_pt3d], faces=[triangle_indices])
-
-        if i == 0:
-            anim.write_unposed(mesh_pt3d)
 
         # c2w in pt3d space
         cam_r_pt3d = BLENDER_WORLD_TO_PT3D_WORLD @ cam_r @ BLENDER_CAM_TO_PT3D_CAM
