@@ -1,41 +1,40 @@
-OPENCV2PT3D = {
-    "flip_x": True,
-    "flip_y": True,
-    "flip_z": False,
-}
+import torch
+from torch import Tensor
 
-BLENDER2PT3D = {
-    "flip_x": True,
-    "flip_y": False,
-    "flip_z": True,
-}
+BLENDER_WORLD_TO_PT3D_WORLD = Tensor([[-1, 0, 0], [0, 0, 1], [0, 1, 0]])
+BLENDER_CAM_TO_PT3D_CAM = Tensor([[-1, 0, 0], [0, 1, 0], [0, 0, -1]])
 
 
-def flip_rotation_axes(rot_mx, flip_x, flip_y, flip_z):
-    flipped_mx = rot_mx.clone()
+def decompose_transform_srt(transform: Tensor, transposed=False):
+    """
+    Decompose a 4x4 homogeneous transform matrix representing a 3D transformation into its translation, scale and rotation components. Applied in the order: scale -> rotation -> translation.
+    NOTE: only works for non-negative uniform scales
+    """
 
-    if flip_x:
-        flipped_mx[1:3, :] = -flipped_mx[1:3, :]
+    transform = transform.clone()
 
-    if flip_y:
-        flipped_mx[[0, 2], :] = -flipped_mx[[0, 2], :]
+    if transposed:
+        transform = transform.t()
 
-    if flip_z:
-        flipped_mx[:, [0, 1]] = -flipped_mx[:, [0, 1]]
+    translation = transform[0:3, 3]
+    mat_3x3 = transform[0:3, 0:3]
+    scale_x = torch.norm(mat_3x3[0])
+    scale_y = torch.norm(mat_3x3[1])
+    scale_z = torch.norm(mat_3x3[2])
+    scale = torch.stack([scale_x, scale_y, scale_z])
+    rotation = mat_3x3 / scale
+    return translation, scale, rotation
 
-    return flipped_mx
+
+def assemble_transform_srt(translation: Tensor, scale: Tensor, rotation: Tensor):
+    mat_3x3 = rotation * scale
+    transform = torch.eye(4)
+    transform[0:3, 3] = translation
+    transform[0:3, 0:3] = mat_3x3
+    return transform
 
 
-def flip_translation_vector(trans_vec, flip_x=False, flip_y=False, flip_z=False):
-    flipped_vec = trans_vec.clone()
-
-    if flip_x:
-        flipped_vec[0] = -flipped_vec[0]
-
-    if flip_y:
-        flipped_vec[1] = -flipped_vec[1]
-
-    if flip_z:
-        flipped_vec[2] = -flipped_vec[2]
-
-    return flipped_vec
+def apply_transform_homogeneous(vertices: Tensor, transform: Tensor):
+    verts_homog = torch.cat([vertices, torch.ones(vertices.shape[0], 1)], dim=1)
+    vertices = verts_homog @ transform.t()
+    return vertices[:, :3]

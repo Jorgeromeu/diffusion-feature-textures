@@ -7,6 +7,7 @@ bpy.ops.wm.usd_export(
     export_cameras=True,
     export_animation=True,
     export_uvmaps=True,
+    rename_uvmaps=True,
     export_normals=True,
     # ensure triangle mesh
     triangulate_meshes=True,

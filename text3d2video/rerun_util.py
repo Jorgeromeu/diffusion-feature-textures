@@ -38,17 +38,13 @@ def feature_map(feature_map: np.array):
     return rr.Tensor(feature_map, dim_names=dim_names)
 
 
-def pt3d_setup():
-    rr.log("/", PT3D_ViewCoords, static=True)
-
-
 def pt3d_mesh(meshes: Meshes, batch_idx=0, vertex_colors=None):
     # extract verts and faces from idx-th mesh in batch
     verts = meshes.verts_list()[batch_idx].cpu()
     faces = meshes.faces_list()[batch_idx].cpu()
     vertex_normals = meshes.verts_normals_list()[batch_idx].cpu()
 
-    # # TODO figure out hw to render textures...
+    # # TODO figure out how to render textures...
     # tex = meshes.textures.maps_padded()[batch_idx].cpu().numpy()
     # uv = meshes.textures.verts_uvs_padded()[0].cpu().numpy()
 
