@@ -125,7 +125,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             dtype=self.dtype,
         )
 
-    def latents_to_images(self, latents: torch.FloatTensor, generator=None):
+    def decode_latents(self, latents: torch.FloatTensor, generator=None):
         # scale latents
         latents_scaled = latents / self.vae.config.scaling_factor
 
@@ -504,7 +504,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         decoded_imgs = []
         for chunk_frame_indices in chunks_indices:
             chunk_latents = latents[chunk_frame_indices]
-            chunk_images = self.latents_to_images(chunk_latents, generator)
+            chunk_images = self.decode_latents(chunk_latents, generator)
             decoded_imgs.extend(chunk_images)
 
         self.gr_data_artifact.end_recording()

@@ -28,6 +28,11 @@ class AnimationConfig:
     n_frames: int
     artifact_tag: str
 
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.value == other.value
+        return False
+
 
 # pylint: disable=too-many-instance-attributes
 @dataclass

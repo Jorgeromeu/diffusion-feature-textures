@@ -128,9 +128,9 @@ def multiview_cameras(
     return cameras
 
 
-def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
+def front_camera(n=1, fov=35, device="cuda") -> FoVPerspectiveCameras:
     R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
-    cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
+    cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=fov)
     return cameras
 
 
