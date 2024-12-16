@@ -5,9 +5,13 @@ import torch
 from pytorch3d.renderer import (
     FoVOrthographicCameras,
     FoVPerspectiveCameras,
+    join_cameras_as_batch,
     look_at_view_transform,
 )
 from pytorch3d.structures import Meshes
+from scipy.spatial.transform import Rotation
+
+from text3d2video.coord_utils import assemble_transform_srt, decompose_transform_srt
 
 
 def turntable_cameras(
@@ -18,9 +22,14 @@ def turntable_cameras(
     fov=60,
     device: str = "cuda",
     endpoint=True,
+    vertical=False,
 ) -> FoVPerspectiveCameras:
     azim = np.linspace(start_angle, stop_angle, n, endpoint=endpoint)
     elev = [0] * n
+
+    if vertical:
+        azim, elev = elev, azim
+
     dists = [dist] * n
     R, T = look_at_view_transform(dists, elev, azim)
     return FoVPerspectiveCameras(device=device, R=R, T=T, fov=fov)
@@ -58,6 +67,22 @@ def z_movement_cameras(n: int = 10, z_0=2, z_1=4, device: str = "cuda"):
     T[:, 2] = line
 
     cameras = FoVPerspectiveCameras(device=device, R=R, T=T)
+
+    return cameras
+
+
+def fov_zoom(n: int = 10, z=1, fov_0=80, fov_1=20, device: str = "cuda"):
+    r = torch.eye(3)
+    r[0, 0] = -1
+    r[2, 2] = -1
+
+    R = r.repeat(n, 1, 1)
+    T = torch.zeros(n, 3)
+    T[:, 2] = z
+
+    fovs = torch.linspace(fov_0, fov_1, n)
+
+    cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=fovs)
 
     return cameras
 
@@ -107,3 +132,23 @@ def front_camera(n=1, device="cuda") -> FoVPerspectiveCameras:
     R, T = look_at_view_transform(dist=[2] * n, azim=[0] * n, elev=[0] * n)
     cameras = FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
     return cameras
+
+
+def front_view_rotating(
+    dist=1, n: int = 10, start_angle=0, stop_angle=360, device: str = "cuda"
+) -> FoVPerspectiveCameras:
+    t = torch.Tensor([0, 0, dist])
+    angles = torch.linspace(start_angle, stop_angle, n)
+    cams = []
+    for angle in angles:
+        r = Rotation.from_euler("yz", [180, angle], degrees=True)
+        r = torch.Tensor(r.as_matrix())
+        c2w = assemble_transform_srt(t, torch.ones(3), r)
+        w2c = c2w.inverse()
+        t_w2c, _, r_w2c = decompose_transform_srt(w2c)
+        cam = FoVPerspectiveCameras(
+            T=t_w2c.unsqueeze(0), R=r_w2c.unsqueeze(0), device=device
+        )
+        cams.append(cam)
+
+    return join_cameras_as_batch(cams)

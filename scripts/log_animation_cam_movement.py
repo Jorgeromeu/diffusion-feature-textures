@@ -1,4 +1,3 @@
-import tempfile
 from pathlib import Path
 
 import click
@@ -72,6 +71,21 @@ def cli(ctx, artifact_name, mesh_path, n_frames):
 @click.option("--stop_angle", type=float, default=360)
 @click.pass_context
 def turntable(ctx, dist, start_angle, stop_angle):
+    artifact_name = ctx.obj["artifact_name"]
+    mesh_path = ctx.obj["mesh_path"]
+    n_frames = ctx.obj["n_frames"]
+    cams = turntable_cameras(
+        n=n_frames, dist=dist, start_angle=start_angle, stop_angle=stop_angle
+    )
+    log_animation(artifact_name, mesh_path, cams)
+
+
+@click.command()
+@click.option("--dist", type=float, default=2)
+@click.option("--start_angle", type=float, default=0)
+@click.option("--stop_angle", type=float, default=360)
+@click.pass_context
+def turntable_vertical(ctx, dist, start_angle, stop_angle):
     artifact_name = ctx.obj["artifact_name"]
     mesh_path = ctx.obj["mesh_path"]
     n_frames = ctx.obj["n_frames"]
