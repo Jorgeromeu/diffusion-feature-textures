@@ -11,7 +11,7 @@ animation:
 run:
   job_type: "generate_video"
 
-prompt: "Deadpool, simple white background"
+prompt: "Deadpool, Simple White Background"
 out_artifact: "video"
 
 save_tensors:
@@ -55,7 +55,7 @@ generative_rendering:
   feature_blend_alpha: 1.0
   mean_features_weight: 0.5
   chunk_size: 5
-  num_keyframes: 4
+  num_keyframes: 5
   num_inference_steps: 10
   guidance_scale: 7.5
   controlnet_conditioning_scale: 1.0

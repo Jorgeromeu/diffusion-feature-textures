@@ -10,27 +10,7 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 
 
-def turntable_loop_cameras(
-    n: int, dist: float = 2, device: str = "cuda"
-) -> FoVPerspectiveCameras:
-    azim = np.linspace(0, 360, n, endpoint=False)
-    elev = [0] * n
-    dists = [dist] * n
-    R, T = look_at_view_transform(dists, elev, azim)
-    return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
-
-
 def turntable_cameras(
-    n: int, dist: float = 2, start_angle=0, stop_angle=360, device: str = "cuda"
-) -> FoVPerspectiveCameras:
-    azim = torch.linspace(start_angle, stop_angle, n)
-    elev = [0] * n
-    dists = [dist] * n
-    R, T = look_at_view_transform(dists, elev, azim)
-    return FoVPerspectiveCameras(device=device, R=R, T=T, fov=60)
-
-
-def turntable_cams(
     n: int,
     dist: float = 2,
     start_angle=0,
@@ -58,7 +38,10 @@ def sideways_orthographic_cameras(n: int = 10, x_0=1, x_1=-1, device: str = "cud
     T[:, 2] = 2
     T[:, 0] = line
 
-    cameras = FoVOrthographicCameras(device=device, R=R, T=T)
+    s = 1.6
+    s_xyz = [(s, s, s)] * n
+
+    cameras = FoVOrthographicCameras(device=device, R=R, T=T, scale_xyz=s_xyz)
 
     return cameras
 

@@ -6,11 +6,12 @@ from pytorch3d.io import load_obj
 from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
+import text3d2video.wandb_util as wbu
 import wandb
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.camera_placement import (
     sideways_orthographic_cameras,
-    turntable_cams,
+    turntable_cameras,
     z_movement_cameras,
 )
 from text3d2video.rendering import render_depth_map
@@ -42,19 +43,22 @@ def log_animation(
     clip = pil_frames_to_clip(depth_maps, duration=2)
 
     # log depth clip
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as f:
-        temp_filename = f.name
-        clip.write_videofile(temp_filename, codec="libx264", fps=10)
-        wandb.log({"animation": wandb.Video(temp_filename)})
+    wbu.log_moviepy_clip("animation", clip)
 
     artifact.log_if_enabled()
     wandb.finish()
 
 
 @click.group()
-@click.option("--artifact_name", type=str, required=True)
-@click.option("--mesh_path", type=click.Path(exists=True), required=True)
-@click.option("--n_frames", type=int, required=False, default=100)
+@click.argument("artifact_name", type=str, required=True)
+@click.argument("obj_path", type=click.Path(exists=True), required=True)
+@click.option(
+    "--n_frames",
+    type=int,
+    required=False,
+    default=100,
+    help="Number of frames to sample",
+)
 @click.pass_context
 def cli(ctx, artifact_name, mesh_path, n_frames):
     ctx.obj["artifact_name"] = artifact_name
@@ -71,7 +75,7 @@ def turntable(ctx, dist, start_angle, stop_angle):
     artifact_name = ctx.obj["artifact_name"]
     mesh_path = ctx.obj["mesh_path"]
     n_frames = ctx.obj["n_frames"]
-    cams = turntable_cams(
+    cams = turntable_cameras(
         n=n_frames, dist=dist, start_angle=start_angle, stop_angle=stop_angle
     )
     log_animation(artifact_name, mesh_path, cams)

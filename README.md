@@ -9,7 +9,7 @@ Controllable 4D-guided video generation with T2I diffusion models using 3D consi
 - `scripts` contains the main entrypoints to our program
 - `text3d2video` contains reusable functions defined in our library
 
-## Getting Started
+## Environment setup
 
 First create and activate a conda environment
 

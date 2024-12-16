@@ -1,8 +1,10 @@
 import logging
 import shutil
+import tempfile
 from pathlib import Path
 
 import torch
+from moviepy.editor import ImageSequenceClip
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
@@ -79,6 +81,13 @@ def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
         if artifact.type == artifact_type:
             return artifact
     return None
+
+
+def log_moviepy_clip(name, clip: ImageSequenceClip, fps=10):
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as f:
+        temp_filename = f.name
+        clip.write_videofile(temp_filename, codec="libx264", fps=fps)
+        wandb.log({name: wandb.Video(temp_filename)})
 
 
 class ArtifactWrapper:

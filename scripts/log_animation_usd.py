@@ -1,4 +1,3 @@
-
 import click
 import rerun as rr
 import rerun.blueprint as rrb
@@ -172,7 +171,7 @@ def create_animation_from_usd(
 
 @click.command()
 @click.argument("artifact_name", type=str)
-@click.argument("filename", type=click.Path(exists=True))
+@click.argument("usd_file", type=click.Path(exists=True))
 @click.option(
     "--n_frames",
     type=int,

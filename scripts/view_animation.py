@@ -4,8 +4,8 @@ from pytorch3d.renderer import FoVPerspectiveCameras
 from pytorch3d.structures import Meshes
 
 import text3d2video.rerun_util as ru
-from scripts.log_animation_usd import decompose_transform_srt
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
+from text3d2video.coord_utils import decompose_transform_srt
 from text3d2video.rendering import render_depth_map
 
 animation = AnimationArtifact.from_wandb_artifact_tag("human_rotation_full:latest")
@@ -25,7 +25,8 @@ blueprint = rrb.Blueprint(
     ),
     collapse_panels=True,
 )
-rr.init("view_animation_pt3d", spawn=True)
+rr.init("view_animation_pt3d")
+rr.serve()
 rr.send_blueprint(blueprint)
 seq = ru.TimeSequence("animation")
 
