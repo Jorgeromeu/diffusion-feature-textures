@@ -1,11 +1,15 @@
 from dataclasses import dataclass
 from enum import Enum
 
+from git import Optional
+from torch import NoneType
+
 
 @dataclass
 class RunConfig:
-    job_type: str
     wandb: bool
+    job_type: Optional[str]
+    group: Optional[str]
     instant_exit: bool
     download_artifacts: bool
     tags: list[str]

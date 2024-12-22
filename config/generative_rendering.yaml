@@ -5,7 +5,7 @@ defaults:
   - noise_initialization: uv
 
 animation:
-  artifact_tag: "human_rotation_full:latest"
+  artifact_tag: "booty:latest"
   n_frames: 20
 
 run:

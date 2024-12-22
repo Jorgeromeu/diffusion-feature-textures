@@ -1,4 +1,5 @@
 job_type: null
+group: ~
 wandb: true
 instant_exit: false
 download_artifacts: false

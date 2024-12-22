@@ -9,18 +9,18 @@ from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 
 import wandb
+from text3d2video.generative_rendering.configs import RunConfig
 from wandb import Artifact
 
 # path to store local artifact data before logging to wandb
 ARTIFACTS_LOCAL_PATH = "/tmp/local_artifacts/"
 
 
-def setup_run(cfg: DictConfig):
+def setup_run(run_config: RunConfig, cfg: DictConfig):
     """
     Setup wandb run and log its config
     """
 
-    run_config = cfg.run
     wandb_mode = "online" if run_config.wandb else "disabled"
 
     wandb.init(
@@ -28,15 +28,15 @@ def setup_run(cfg: DictConfig):
         job_type=run_config.job_type,
         mode=wandb_mode,
         tags=run_config.tags,
+        group=run_config.group,
     )
 
-    # add config
+    # update run config config
     wandb.config.update(
         OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     )
 
     do_run = True
-
     if run_config.instant_exit:
         print("Instant exit enabled")
         wandb.finish()

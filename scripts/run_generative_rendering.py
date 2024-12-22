@@ -42,7 +42,7 @@ cs.store(name="generative_rendering", node=RunGenerativeRenderingConfig)
 @hydra.main(config_path="../config", config_name="generative_rendering")
 def run(cfg: RunGenerativeRenderingConfig):
     # init wandb
-    do_run = wbu.setup_run(cfg)
+    do_run = wbu.setup_run(cfg.run, cfg)
     if not do_run:
         return
 
@@ -107,7 +107,10 @@ def run(cfg: RunGenerativeRenderingConfig):
 
     # save video artifact
     video_artifact.log_if_enabled()
+
+    run = wandb.run
     wandb.finish()
+    return run
 
 
 if __name__ == "__main__":
