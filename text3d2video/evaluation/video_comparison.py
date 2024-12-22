@@ -6,6 +6,7 @@ from omegaconf import OmegaConf
 
 import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.video_artifact import VideoArtifact
+from text3d2video.ipython_utils import transpose_list_of_lists
 from wandb.apis.public import Run
 
 
@@ -119,49 +120,95 @@ def make_comparison_vid(
     return array_clip
 
 
+def add_title_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
+    title_clip = (
+        TextClip(
+            title,
+            fontsize=30,
+            color="Black",
+            bg_color="white",
+            font="Droid-Sans",
+            align="Center",
+        )
+        .set_position(("center", "top"))
+        .set_duration(clip.duration)
+        .set_fps(clip.fps)
+    )
+    title_clip = title_clip.margin(
+        top=10, left=10, right=10, bottom=10, color=(255, 255, 255)
+    )
+
+    # add margin
+    # pylint: disable=no-member
+    new_clip = clip.margin(top=title_clip.h, left=0, right=0, color=(255, 255, 255))
+    new_clip = CompositeVideoClip([new_clip, title_clip])
+    return new_clip
+
+
+def add_xlabel_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
+    title_clip = (
+        TextClip(
+            title,
+            fontsize=30,
+            color="Black",
+            bg_color="white",
+            font="Droid-Sans",
+            align="Center",
+        )
+        .rotate(90.01)
+        .set_position(("left", "center"))
+        .set_duration(clip.duration)
+        .set_fps(clip.fps)
+    )
+    title_clip = title_clip.margin(
+        top=10, left=10, right=10, bottom=10, color=(255, 255, 255)
+    )
+
+    # add margin
+    # pylint: disable=no-member
+    new_clip = clip.margin(left=title_clip.w, right=0, color=(255, 255, 255))
+    new_clip = CompositeVideoClip([new_clip, title_clip])
+    return new_clip
+
+
 def video_grid(
     clips: List[List[ImageSequenceClip]],
     title: str = None,
+    x_labels: List[str] = None,
+    y_labels: List[str] = None,
 ):
     # ensure vids is rectangular
     for row in clips:
         assert len(row) == len(clips[0]), "All rows must have the same number of clips"
 
-    clips_grid = []
-    for row in clips:
-        row_clips = []
+    clips = clips.copy()
 
-        for clip in row:
-            row_clips.append(clip)
+    # add x-labels
+    if x_labels is not None:
+        assert len(x_labels) == len(
+            clips[0]
+        ), "Number of x_labels must match number of clips"
 
-        clips_grid.append(row_clips)
+        titled_top_clips = []
+        for i, clip in enumerate(clips[0]):
+            titled = add_title_to_clip(clip, x_labels[i])
+            titled_top_clips.append(titled)
+        clips[0] = titled_top_clips
 
-    array_clip = clips_array(clips_grid)
+    # add y-labels
+    if y_labels is not None:
+        clips = transpose_list_of_lists(clips)
+        if y_labels is not None:
+            titled_top_clips = []
+            for i, clip in enumerate(clips[0]):
+                titled = add_xlabel_to_clip(clip, y_labels[i])
+                titled_top_clips.append(titled)
+        clips[0] = titled_top_clips
+        clips = transpose_list_of_lists(clips)
+
+    array_clip = clips_array(clips)
 
     if title is not None:
-        title_clip = (
-            TextClip(
-                title,
-                fontsize=30,
-                color="Black",
-                bg_color="white",
-                font="CMU-Serif-Bold",
-                align="Center",
-            )
-            .set_position(("center", "top"))
-            .set_duration(array_clip.duration)
-            .set_fps(array_clip.fps)
-        )
-        title_clip = title_clip.margin(
-            top=10, left=10, right=10, bottom=10, color=(255, 255, 255)
-        )
-
-        # add margin
-        # pylint: disable=no-member
-        array_clip = array_clip.margin(
-            top=title_clip.h, left=0, right=0, color=(255, 255, 255)
-        )
-
-        array_clip = CompositeVideoClip([array_clip, title_clip])
+        array_clip = add_title_to_clip(array_clip, title)
 
     return array_clip
