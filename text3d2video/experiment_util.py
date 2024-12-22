@@ -13,9 +13,11 @@ def equivalent_configs(cfg1: DictConfig, cfg2: DictConfig) -> bool:
     cfg1_norun = cfg1.copy()
     cfg2_norun = cfg2.copy()
 
-    # dont take run into account
-    del cfg1_norun.run
-    del cfg2_norun.run
+    # ignore run
+    if "run" in cfg1:
+        cfg1_norun.run = cfg1.run.copy()
+    if "run" in cfg2:
+        cfg2_norun.run = cfg2.run.copy()
 
     return dictconfig_equivalence(cfg1_norun, cfg2_norun)
 
@@ -57,7 +59,7 @@ class WandbExperiment:
         existing_cfgs = [OmegaConf.create(r.config) for r in existing_runs]
 
         # delete existing runs that are not in the new configs
-        delete_runs = []
+        delete_runs: List[Run] = []
         for run, cfg in zip(existing_runs, existing_cfgs):
             run_valid = any([equivalent_configs(cfg, e) for e in new_cfgs])
             if not run_valid:
@@ -65,7 +67,7 @@ class WandbExperiment:
 
         print(f"Deleting {len(delete_runs)} runs")
         for run in delete_runs:
-            run.delete()
+            run.delete(delete_artifacts=True)
 
         # execute new runs that are not in the existing runs
         exec_configs = []
@@ -78,14 +80,15 @@ class WandbExperiment:
         for cfg in exec_configs:
             self.execute_run(cfg, group)
 
-    def find_latest_group(self) -> str:
+    @classmethod
+    def find_latest_group(cls) -> str:
         """
         Find the latest group name for this experiment
         """
 
         api = wandb.Api()
         project_name = "diffusion-3D-features"
-        experient_filter = {"tags": self.experiment_name}
+        experient_filter = {"tags": cls.experiment_name}
         runs = api.runs(project_name, filters=experient_filter)
         runs = list(runs)
         if len(runs) == 0:
@@ -93,14 +96,18 @@ class WandbExperiment:
         latest_group = runs[-1].group
         return latest_group
 
-    def get_runs_in_group(self, group: str) -> List[Run]:
+    @classmethod
+    def get_runs_in_group(cls, group: str = None) -> List[Run]:
         """
         Get all runs in a group
         """
 
+        if group is None:
+            group = cls.find_latest_group()
+
         api = wandb.Api()
         project_name = "diffusion-3D-features"
-        filter = {"tags": self.experiment_name, "group": group}
+        filter = {"tags": cls.experiment_name, "group": group}
         runs = api.runs(project_name, filters=filter)
         runs = list(runs)
         return runs

@@ -98,7 +98,7 @@ def make_comparison_vid(
                 fontsize=30,
                 color="Black",
                 bg_color="white",
-                font="CMU-Serif-Bold",
+                font="Helvetica",
                 align="Center",
             )
             .set_position(("center", "top"))
@@ -127,7 +127,7 @@ def add_title_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
             fontsize=30,
             color="Black",
             bg_color="white",
-            font="Droid-Sans",
+            font="Helvetica",
             align="Center",
         )
         .set_position(("center", "top"))
@@ -152,7 +152,7 @@ def add_xlabel_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip
             fontsize=30,
             color="Black",
             bg_color="white",
-            font="Droid-Sans",
+            font="Helvetica",
             align="Center",
         )
         .rotate(90.01)

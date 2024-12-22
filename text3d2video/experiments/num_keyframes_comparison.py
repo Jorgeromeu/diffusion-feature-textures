@@ -38,16 +38,18 @@ class NKeyframesExperiment(WandbExperiment):
 
         return configs
 
-    def plot_results(self, group: str):
+    @classmethod
+    def plot_results(self, group: str, labels=True):
         runs = self.get_runs_in_group(group)
 
+        # sort by number of keyframes
         def kf_fun(run):
             cfg: RunGenerativeRenderingConfig = OmegaConf.create(run.config)
             return cfg.generative_rendering.num_keyframes
 
-        runs = list(runs)
         runs = sorted(runs, key=kf_fun)
 
+        # get videos
         vids = []
         for r in runs:
             vid = wbu.first_logged_artifact_of_type(
@@ -58,4 +60,6 @@ class NKeyframesExperiment(WandbExperiment):
 
         x_labels = [f"KF: {kf_fun(r)}" for r in runs]
 
+        if not labels:
+            x_labels = None
         return video_grid([vids], x_labels=x_labels)
