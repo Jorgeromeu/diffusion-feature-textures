@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.ipython_utils import transpose_list_of_lists
+from text3d2video.util import group_list_by
 from wandb.apis.public import Run
 
 
@@ -17,14 +18,6 @@ class VideoLabel:
     color: str = "White"
     bg_color: str = "Black"
     font: str = "Hack-Regular"
-
-
-def scene_key_fun(run: Run):
-    cfg = OmegaConf.create(run.config)
-    prompt = cfg.prompt
-    animation = cfg.animation.artifact_tag
-    n_frames = cfg.animation.n_frames
-    return frozenset({prompt, animation, n_frames})
 
 
 def add_label_to_clip(clip, label: VideoLabel, position=("left", "top")):
@@ -98,7 +91,7 @@ def make_comparison_vid(
                 fontsize=30,
                 color="Black",
                 bg_color="white",
-                font="Helvetica",
+                font="Droid-Sans",
                 align="Center",
             )
             .set_position(("center", "top"))
@@ -127,7 +120,7 @@ def add_title_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
             fontsize=30,
             color="Black",
             bg_color="white",
-            font="Helvetica",
+            font="Droid-Sans",
             align="Center",
         )
         .set_position(("center", "top"))
@@ -145,14 +138,14 @@ def add_title_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
     return new_clip
 
 
-def add_xlabel_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
+def add_ylabel_to_clip(clip: ImageSequenceClip, title: str) -> ImageSequenceClip:
     title_clip = (
         TextClip(
             title,
             fontsize=30,
             color="Black",
             bg_color="white",
-            font="Helvetica",
+            font="Droid-Sans",
             align="Center",
         )
         .rotate(90.01)
@@ -177,6 +170,10 @@ def video_grid(
     x_labels: List[str] = None,
     y_labels: List[str] = None,
 ):
+    """
+    Arrange a grid of moviepy clips into a single clip as a grid, with optional x and y labels
+    """
+
     # ensure vids is rectangular
     for row in clips:
         assert len(row) == len(clips[0]), "All rows must have the same number of clips"
@@ -201,7 +198,7 @@ def video_grid(
         if y_labels is not None:
             titled_top_clips = []
             for i, clip in enumerate(clips[0]):
-                titled = add_xlabel_to_clip(clip, y_labels[i])
+                titled = add_ylabel_to_clip(clip, y_labels[i])
                 titled_top_clips.append(titled)
         clips[0] = titled_top_clips
         clips = transpose_list_of_lists(clips)
@@ -212,3 +209,58 @@ def video_grid(
         array_clip = add_title_to_clip(array_clip, title)
 
     return array_clip
+
+
+def runs_grid(runs: List[List[Run]], x_label_fun=None, y_label_fun=None, labels=True):
+    """
+    Arrange a grid of runs into a single moviepy clip, with optional x and y labels
+    """
+
+    # get top row and left col to get labels
+    x_labels = None
+    if x_label_fun is not None:
+        col_runs = runs[0]
+        x_labels = [x_label_fun(r) for r in col_runs]
+
+    y_labels = None
+    if y_label_fun is not None:
+        row_runs = [group[0] for group in runs]
+        y_labels = [y_label_fun(r) for r in row_runs]
+
+    vids = []
+    for group in runs:
+        group_vids = []
+        for r in group:
+            vid = wbu.first_logged_artifact_of_type(
+                r, VideoArtifact.wandb_artifact_type
+            )
+            vid = VideoArtifact.from_wandb_artifact(vid)
+            group_vids.append(vid.get_moviepy_clip())
+        vids.append(group_vids)
+
+    if not labels:
+        x_labels = None
+        y_labels = None
+
+    return video_grid(vids, x_labels=x_labels, y_labels=y_labels)
+
+
+def group_and_sort(
+    entries: List,
+    group_fun: Callable,
+    sort_x_fun: Callable = None,
+    sort_y_fun: Callable = None,
+):
+    # group by group_fun
+    groups = group_list_by(entries, group_fun)
+
+    # horizontal sort
+    if sort_x_fun is not None:
+        for group in groups:
+            group.sort(key=sort_x_fun)
+
+    # vertical sort
+    if sort_y_fun is not None:
+        groups.sort(key=lambda group: sort_y_fun(group[0]))
+
+    return groups

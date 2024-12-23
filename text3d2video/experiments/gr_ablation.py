@@ -9,7 +9,11 @@ import text3d2video.wandb_util as wbu
 from scripts import run_generative_rendering
 from scripts.run_generative_rendering import RunGenerativeRenderingConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.evaluation.video_comparison import video_grid
+from text3d2video.evaluation.video_comparison import (
+    group_and_sort,
+    runs_grid,
+    video_grid,
+)
 from text3d2video.experiment_util import WandbExperiment
 from text3d2video.generative_rendering.configs import (
     NoiseInitializationMethod,
@@ -61,59 +65,34 @@ class GenRenderingAblation(WandbExperiment):
         # read runs
         runs = self.get_runs_in_group(group)
 
-        # group by noise initialization method
-        runs = group_list_by(runs, lambda r: run_config(r).noise_initialization.method)
+        def group_fun(run):
+            cfg = run_config(run)
+            return cfg.noise_initialization.method
 
-        def sort_fun(run):
+        # sort rows by noise initialization method
+        def horizontal_sort(run):
             cfg = run_config(run)
             pre_attn = cfg.generative_rendering.do_pre_attn_injection
             post_attn = cfg.generative_rendering.do_post_attn_injection
             return (pre_attn, post_attn)
 
-        # sort rows by noise initialization method
-        runs = sorted(
-            runs,
-            key=lambda r: run_config(r[0]).noise_initialization.method,
-            reverse=True,
+        # group by noise initialization method
+        runs = group_and_sort(runs, group_fun=group_fun, sort_x_fun=horizontal_sort)
+
+        def col_label_fun(run):
+            cfg = run_config(run)
+            pre_attn = cfg.generative_rendering.do_pre_attn_injection
+            post_attn = cfg.generative_rendering.do_post_attn_injection
+            return f"Pre: {pre_attn}, Post: {post_attn}"
+
+        def row_label_fun(run):
+            noise_names = {
+                NoiseInitializationMethod.UV.value: "UV Noise",
+                NoiseInitializationMethod.RANDOM.value: "Random Noise",
+                NoiseInitializationMethod.FIXED.value: "Fixed Noise",
+            }
+            return noise_names[run_config(run).noise_initialization.method]
+
+        return runs_grid(
+            runs, x_label_fun=col_label_fun, y_label_fun=row_label_fun, labels=labels
         )
-
-        # sort by pre and post attn injection
-        for group in runs:
-            group = sorted(group, key=sort_fun, reverse=True)
-
-        run0 = runs[0][0]
-        prompt = run_config(run0).prompt
-
-        row_runs = [group[0] for group in runs]
-        col_runs = runs[0]
-
-        noise_names = {
-            NoiseInitializationMethod.UV.value: "UV Noise",
-            NoiseInitializationMethod.RANDOM.value: "Random Noise",
-            NoiseInitializationMethod.FIXED.value: "Fixed Noise",
-        }
-
-        row_titles = [
-            noise_names[run_config(r).noise_initialization.method] for r in row_runs
-        ]
-
-        col_titles = []
-        for r in col_runs:
-            cfg = run_config(r)
-            do_pre = cfg.generative_rendering.do_pre_attn_injection
-            do_post = cfg.generative_rendering.do_post_attn_injection
-            col_titles.append(f"Pre-Attn: {do_pre}, Post-Attn: {do_post}")
-
-        # get videos
-        vids = []
-        for group in runs:
-            group_vids = []
-            for r in group:
-                vid = wbu.first_logged_artifact_of_type(
-                    r, VideoArtifact.wandb_artifact_type
-                )
-                vid = VideoArtifact.from_wandb_artifact(vid)
-                group_vids.append(vid.get_moviepy_clip())
-            vids.append(group_vids)
-
-        return video_grid(vids)
