@@ -1,24 +1,19 @@
 import itertools
 
-from httpx import post
 from hydra.compose import compose
 from hydra.initialize import initialize
 from omegaconf import OmegaConf
 
-import text3d2video.wandb_util as wbu
 from scripts import run_generative_rendering
 from scripts.run_generative_rendering import RunGenerativeRenderingConfig
-from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.evaluation.video_comparison import (
     group_and_sort,
     runs_grid,
-    video_grid,
 )
 from text3d2video.experiment_util import WandbExperiment
 from text3d2video.generative_rendering.configs import (
     NoiseInitializationMethod,
 )
-from text3d2video.util import group_list_by
 
 
 class GenRenderingAblation(WandbExperiment):
