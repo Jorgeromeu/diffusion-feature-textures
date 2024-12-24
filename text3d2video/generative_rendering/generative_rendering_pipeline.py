@@ -21,25 +21,24 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
-    NoiseInitializationConfig,
 )
 from text3d2video.generative_rendering.generative_rendering_attn import (
     GenerativeRenderingAttn,
     GrAttnMode,
 )
+from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import make_feature_renderer, render_depth_map
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import (
     aggregate_features_precomputed_vertex_positions,
     project_vertices_to_cameras,
 )
-from text3d2video.uv_noise import prepare_latents
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
     attn_processor: GenerativeRenderingAttn
     gr_config: GenerativeRenderingConfig
-    noise_init_config: NoiseInitializationConfig
+    noise_initializer: NoiseInitializer
 
     # diffusion data artifact
     gr_data_artifact: GrDataArtifact = None
@@ -103,26 +102,21 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
     def prepare_latents(
         self,
-        frames: Meshes,
+        meshes: Meshes,
         cameras: FoVPerspectiveCameras,
         verts_uvs,
         faces_uvs,
         generator=None,
     ):
-        latent_channels = self.unet.config.in_channels
-        latent_res = self.gr_config.resolution // 8
-
-        return prepare_latents(
-            frames,
-            cameras,
-            verts_uvs,
-            faces_uvs,
-            self.noise_init_config,
-            latent_channels=latent_channels,
-            latent_resolution=latent_res,
+        return self.noise_initializer.initial_noise(
+            cameras=cameras,
+            meshes=meshes,
+            verts_uvs=verts_uvs,
+            faces_uvs=faces_uvs,
             generator=generator,
             device=self.device,
             dtype=self.dtype,
+            n_frames=len(meshes),
         )
 
     def decode_latents(self, latents: torch.FloatTensor, generator=None):
@@ -366,12 +360,12 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
         generative_rendering_config: GenerativeRenderingConfig,
-        noise_initialization_config: NoiseInitializationConfig,
+        noise_initializer: NoiseInitializer,
         gr_save_config: GrSaveConfig,
     ):
         # setup configs for use throughout pipeline
         self.gr_config = generative_rendering_config
-        self.noise_init_config = noise_initialization_config
+        self.noise_initializer = noise_initializer
 
         # set up attention processor
         self.attn_processor = GenerativeRenderingAttn(

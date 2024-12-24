@@ -1,8 +1,6 @@
 from dataclasses import dataclass
-from enum import Enum
 
 from git import Optional
-from torch import NoneType
 
 
 @dataclass
@@ -13,18 +11,6 @@ class RunConfig:
     instant_exit: bool
     download_artifacts: bool
     tags: list[str]
-
-
-class NoiseInitializationMethod(Enum):
-    RANDOM = "RANDOM"
-    FIXED = "FIXED"
-    UV = "UV"
-
-
-@dataclass
-class NoiseInitializationConfig:
-    method: NoiseInitializationMethod
-    uv_texture_res = -1
 
 
 @dataclass

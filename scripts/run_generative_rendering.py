@@ -1,5 +1,6 @@
 import warnings
 from dataclasses import dataclass
+from typing import Any
 
 import hydra
 import torch
@@ -15,7 +16,6 @@ from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
     GenerativeRenderingConfig,
-    NoiseInitializationConfig,
     RunConfig,
 )
 from text3d2video.generative_rendering.generative_rendering_pipeline import (
@@ -31,8 +31,8 @@ class RunGenerativeRenderingConfig:
     animation: AnimationConfig
     run: RunConfig
     save_tensors: GrSaveConfig
-    noise_initialization: NoiseInitializationConfig
     generative_rendering: GenerativeRenderingConfig
+    noise_initialization: Any
 
 
 cs = ConfigStore.instance()
@@ -79,6 +79,8 @@ def run(cfg: RunGenerativeRenderingConfig):
         pipe.scheduler.config
     )
 
+    noise_initializer = instantiate(cfg.noise_initialization)
+
     # inference
     video_frames = pipe(
         cfg.prompt,
@@ -87,7 +89,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         uv_verts,
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
-        noise_initialization_config=cfg.noise_initialization,
+        noise_initializer=noise_initializer,
         gr_save_config=cfg.save_tensors,
     )
 

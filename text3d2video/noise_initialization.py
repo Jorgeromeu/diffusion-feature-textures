@@ -1,8 +1,8 @@
 import torch
 from einops import rearrange
-from pytorch3d.renderer import CamerasBase, FoVPerspectiveCameras, TexturesUV
+from pytorch3d.renderer import CamerasBase, TexturesUV
 from pytorch3d.structures import Meshes
-from torch import Generator, Tensor
+from torch import Tensor
 
 from text3d2video.rendering import make_feature_renderer
 
@@ -12,9 +12,9 @@ class NoiseInitializer:
     Base class for noise initialization methods
     """
 
-    def __init__(self, latent_channels: int = 4, latent_resolution: int = 64):
-        self.latent_channels = latent_channels
-        self.latent_resolution = latent_resolution
+    def __init__(self, noise_channels: int = 4, noise_resolution: int = 64):
+        self.noise_channels = noise_channels
+        self.noise_resolution = noise_resolution
 
     def initial_noise(
         self, device="cuda", dtype=torch.float16, generator=None, **kwargs
@@ -33,9 +33,9 @@ class RandomNoiseInitializer(NoiseInitializer):
     ):
         return torch.randn(
             n_frames,
-            self.latent_channels,
-            self.latent_resolution,
-            self.latent_resolution,
+            self.noise_channels,
+            self.noise_resolution,
+            self.noise_resolution,
             generator=generator,
             device=device,
             dtype=dtype,
@@ -52,9 +52,9 @@ class FixedNoiseInitializer(NoiseInitializer):
         **kwargs,
     ):
         noise_0 = torch.randn(
-            self.latent_channels,
-            self.latent_resolution,
-            self.latent_resolution,
+            self.noise_channels,
+            self.noise_resolution,
+            self.noise_resolution,
             generator=generator,
             device=device,
             dtype=dtype,
@@ -63,11 +63,11 @@ class FixedNoiseInitializer(NoiseInitializer):
 
 
 class UVNoiseInitializer(NoiseInitializer):
-    latent_texture_res: int
+    noise_texture_res: int
 
-    def __init__(self, latent_channels=4, latent_resolution=64, latent_texture_res=64):
-        super().__init__(latent_channels, latent_resolution)
-        self.latent_texture_res = latent_texture_res
+    def __init__(self, noise_channels=4, noise_resolution=64, noise_texture_res=64):
+        super().__init__(noise_channels, noise_resolution)
+        self.noise_texture_res = noise_texture_res
 
     def initial_noise(
         self,
@@ -76,9 +76,7 @@ class UVNoiseInitializer(NoiseInitializer):
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
         generator=None,
-        latent_res=64,
-        latent_texture_res=64,
-        latent_channels=4,
+        noise_resolution=64,
         sampling_mode: str = "nearest",
         device="cuda",
         dtype=torch.float16,
@@ -86,9 +84,9 @@ class UVNoiseInitializer(NoiseInitializer):
     ):
         # setup noise texture
         noise_texture_map = torch.randn(
-            latent_texture_res,
-            latent_texture_res,
-            latent_channels,
+            self.noise_texture_res,
+            self.noise_texture_res,
+            self.noise_channels,
             device=device,
             generator=generator,
         )
@@ -104,7 +102,7 @@ class UVNoiseInitializer(NoiseInitializer):
         meshes.textures = noise_texture
 
         # render noise texture for each frame
-        renderer = make_feature_renderer(cameras, latent_res)
+        renderer = make_feature_renderer(cameras, noise_resolution)
         noise_renders = renderer(meshes).to(dtype)
 
         noise_renders = rearrange(noise_renders, "b h w c -> b c h w")
@@ -112,7 +110,11 @@ class UVNoiseInitializer(NoiseInitializer):
 
         # create consistent noise for background
         background_noise = torch.randn(
-            latent_channels, latent_res, latent_res, generator=generator, device=device
+            self.noise_channels,
+            noise_resolution,
+            noise_resolution,
+            generator=generator,
+            device=device,
         ).expand(n_frames, -1, -1, -1)
         background_noise = background_noise.to(device, dtype=dtype)
 

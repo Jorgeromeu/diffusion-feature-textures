@@ -9,6 +9,17 @@ from text3d2video.omegaconf_util import dictconfig_equivalence
 from wandb.apis.public import Run
 
 
+def object_to_instantiate_config(obj: Any) -> DictConfig:
+    """
+    Convert an object to a DictConfig that can be used to instantiate the object
+    """
+    class_path = f"{obj.__module__}.{obj.__class__.__name__}"
+    config = {"_target_": class_path}
+    for key, value in obj.__dict__.items():
+        config[key] = value
+    return OmegaConf.create(config)
+
+
 def equivalent_configs(cfg1: DictConfig, cfg2: DictConfig) -> bool:
     cfg1_norun = cfg1.copy()
     cfg2_norun = cfg2.copy()
@@ -110,4 +121,7 @@ class WandbExperiment:
         filter = {"tags": cls.experiment_name, "group": group}
         runs = api.runs(project_name, filters=filter)
         runs = list(runs)
+
+        assert len(runs) > 0, f"No runs found for group {group}"
+
         return runs

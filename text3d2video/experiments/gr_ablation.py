@@ -10,9 +10,11 @@ from text3d2video.evaluation.video_comparison import (
     group_and_sort,
     runs_grid,
 )
-from text3d2video.experiment_util import WandbExperiment
-from text3d2video.generative_rendering.configs import (
-    NoiseInitializationMethod,
+from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
+from text3d2video.noise_initialization import (
+    FixedNoiseInitializer,
+    RandomNoiseInitializer,
+    UVNoiseInitializer,
 )
 
 
@@ -40,10 +42,15 @@ class GenRenderingAblation(WandbExperiment):
                 cfg.generative_rendering.num_inference_steps = self.n_inference_steps
                 cfg.prompt = self.prompt
 
-                cfg.noise_initialization.method = (
-                    NoiseInitializationMethod.UV
-                    if uv_noise
-                    else NoiseInitializationMethod.RANDOM
+                # cfg.noise_initialization = OmegaConf.create()
+
+                if uv_noise:
+                    noise_initializer = UVNoiseInitializer()
+                else:
+                    noise_initializer = RandomNoiseInitializer()
+
+                cfg.noise_initialization = object_to_instantiate_config(
+                    noise_initializer
                 )
 
                 cfg.generative_rendering.do_pre_attn_injection = pre_attn
@@ -62,7 +69,7 @@ class GenRenderingAblation(WandbExperiment):
 
         def group_fun(run):
             cfg = run_config(run)
-            return cfg.noise_initialization.method
+            return cfg.noise_initialization._target_
 
         # sort rows by noise initialization method
         def horizontal_sort(run):
@@ -81,12 +88,7 @@ class GenRenderingAblation(WandbExperiment):
             return f"Pre: {pre_attn}, Post: {post_attn}"
 
         def row_label_fun(run):
-            noise_names = {
-                NoiseInitializationMethod.UV.value: "UV Noise",
-                NoiseInitializationMethod.RANDOM.value: "Random Noise",
-                NoiseInitializationMethod.FIXED.value: "Fixed Noise",
-            }
-            return noise_names[run_config(run).noise_initialization.method]
+            return "UV"
 
         return runs_grid(
             runs, x_label_fun=col_label_fun, y_label_fun=row_label_fun, labels=labels
