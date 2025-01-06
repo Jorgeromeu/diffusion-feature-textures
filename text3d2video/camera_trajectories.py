@@ -1,11 +1,11 @@
-from pytorch3d.renderer import FoVOrthographicCameras, FoVPerspectiveCameras
-
-from text3d2video.camera_placement import (
-    fov_zoom,
-    front_view_rotating,
-    sideways_orthographic_cameras,
-    turntable_cameras,
+import torch
+from pytorch3d.renderer import (
+    CamerasBase,
+    FoVOrthographicCameras,
+    FoVPerspectiveCameras,
 )
+
+from text3d2video.camera_placement import front_facing_extrinsics, turntable_extrinsics
 
 
 class NamedCameraTrajectory:
@@ -15,61 +15,108 @@ class NamedCameraTrajectory:
 
     name: str
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
         pass
+
+
+ORTH_S = 1.2
+ROTATION_DIST = 1.2
+ORTH_LO = -0.3
+ORTH_HI = 0.3
 
 
 class RotationFull(NamedCameraTrajectory):
     name: str = "rotation"
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-        return turntable_cameras(dist=1.2, n=n, device=device)
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        R, T = turntable_extrinsics(n, dist=ROTATION_DIST)
+        return FoVPerspectiveCameras(R=R, T=T, device=device, fov=60)
 
 
 class RotationPartial(NamedCameraTrajectory):
     name: str = "rotation_partial"
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-        return turntable_cameras(
-            dist=1.2, n=n, start_angle=-30, stop_angle=30, device=device
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        R, T = turntable_extrinsics(
+            n, dist=ROTATION_DIST, start_angle=-30, stop_angle=30
         )
+        return FoVPerspectiveCameras(R=R, T=T, device=device, fov=60)
 
 
 class Rotation90(NamedCameraTrajectory):
     name: str = "rotation_90"
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-        return turntable_cameras(
-            dist=1.2, n=n, start_angle=0, stop_angle=90, device=device
-        )
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        R, T = turntable_extrinsics(n, dist=ROTATION_DIST, start_angle=0, stop_angle=90)
+        return FoVPerspectiveCameras(R=R, T=T, device=device, fov=60)
 
 
-class OrthographicPan(NamedCameraTrajectory):
+class OrthographicPanHorizontal(NamedCameraTrajectory):
     name: str = "orth_pan"
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVOrthographicCameras:
-        return sideways_orthographic_cameras(n=n, x_0=0.6, x_1=-0.5, device=device)
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        s = ORTH_S
+        xs = torch.linspace(ORTH_LO, ORTH_HI, n)
+        R, T = front_facing_extrinsics(xs=xs)
+        return FoVOrthographicCameras(R=R, T=T, device=device, scale_xyz=[(s, s, s)])
+
+
+class OrthographicPanVertical(NamedCameraTrajectory):
+    name: str = "orth_pan_vertical"
+
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        s = ORTH_S
+        ys = torch.linspace(ORTH_LO, ORTH_HI, n)
+        R, T = front_facing_extrinsics(ys=ys)
+        return FoVOrthographicCameras(R=R, T=T, device=device, scale_xyz=[(s, s, s)])
+
+
+class OrthographicPanDiagonal(NamedCameraTrajectory):
+    name: str = "orth_pan_diag"
+
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        s = ORTH_S
+        xs = torch.linspace(ORTH_LO, ORTH_HI, n)
+        ys = torch.linspace(ORTH_LO, ORTH_HI, n)
+        R, T = front_facing_extrinsics(xs=xs, ys=ys)
+        return FoVOrthographicCameras(R=R, T=T, device=device, scale_xyz=[(s, s, s)])
 
 
 class BarrelRoll(NamedCameraTrajectory):
     name: str = "barrel_roll"
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-        return front_view_rotating(dist=1.1, n=n, device=device)
-
-
-class FoVZoom(NamedCameraTrajectory):
-    name: str = "fov_zoom"
-
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-        return fov_zoom(n=n, z=1, fov_0=80, fov_1=20, device=device)
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        s = ORTH_S
+        angles = torch.linspace(0, 360, n)
+        R, T = front_facing_extrinsics(degrees=angles)
+        return FoVOrthographicCameras(R=R, T=T, device=device, scale_xyz=[(s, s, s)])
 
 
 class BarrelRollPartial(NamedCameraTrajectory):
     name: str = "barrel_roll_partial"
 
-    def cameras(self, n: int, device: str = "cuda") -> FoVPerspectiveCameras:
-        span = 15
-        return front_view_rotating(
-            dist=1.1, start_angle=-span, stop_angle=span, n=n, device=device
-        )
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        s = ORTH_S
+        angles = torch.linspace(-30, 30, n)
+        R, T = front_facing_extrinsics(degrees=angles)
+        return FoVOrthographicCameras(R=R, T=T, device=device, scale_xyz=[(s, s, s)])
+
+
+class BarrelRollPartialUpsideDown(NamedCameraTrajectory):
+    name: str = "barrel_roll_partial_upside_down"
+
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        s = ORTH_S
+        diff = 30
+        angles = torch.linspace(180 - diff, 180 + diff, n)
+        R, T = front_facing_extrinsics(degrees=angles)
+        return FoVOrthographicCameras(R=R, T=T, device=device, scale_xyz=[(s, s, s)])
+
+
+class FoVZoom(NamedCameraTrajectory):
+    name: str = "fov_zoom"
+
+    def cameras(self, n: int, device: str = "cuda") -> CamerasBase:
+        fovs = torch.linspace(80, 20, n)
+        R, T = front_facing_extrinsics()
+        return FoVPerspectiveCameras(R=R, T=T, device=device, fov=fovs)

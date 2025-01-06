@@ -1,11 +1,10 @@
 from typing import Any, Callable, List
 
-import codename
 from omegaconf import DictConfig, OmegaConf
 
 import wandb
 from text3d2video.generative_rendering.configs import RunConfig
-from text3d2video.omegaconf_util import dictconfig_equivalence
+from text3d2video.omegaconf_util import dictconfig_diff, dictconfig_equivalence
 from wandb.apis.public import Run
 
 
@@ -20,17 +19,20 @@ def object_to_instantiate_config(obj: Any) -> DictConfig:
     return OmegaConf.create(config)
 
 
-def equivalent_configs(cfg1: DictConfig, cfg2: DictConfig) -> bool:
+def configs_diff(cfg1: DictConfig, cfg2: DictConfig) -> bool:
     cfg1_norun = cfg1.copy()
     cfg2_norun = cfg2.copy()
 
-    # ignore run
     if "run" in cfg1:
-        cfg1_norun.run = cfg1.run.copy()
+        del cfg1_norun.run
     if "run" in cfg2:
-        cfg2_norun.run = cfg2.run.copy()
+        del cfg2_norun.run
 
-    return dictconfig_equivalence(cfg1_norun, cfg2_norun)
+    return dictconfig_diff(cfg1_norun, cfg2_norun)
+
+
+def equivalent_configs(cfg1: DictConfig, cfg2: DictConfig) -> bool:
+    return len(configs_diff(cfg1, cfg2)) == 0
 
 
 class WandbExperiment:
@@ -43,10 +45,13 @@ class WandbExperiment:
         """
         pass
 
-    def execute_run(self, cfg: DictConfig, group: str):
+    def _execute_run(self, cfg: DictConfig, group: str):
         """
         Execute a run with given config, group and experiment name
         """
+
+        # TODO execute each run as a Job rather than calling a function
+
         run_config: RunConfig = cfg.run
         # set experiment tag
         if run_config.tags is None:
@@ -57,39 +62,53 @@ class WandbExperiment:
         # execute
         self.run_fn(cfg)
 
-    def execute_runs(self, group: str = None):
-        if group is None:
-            group = codename.codename(separator="-")
-        print(f"Running {self.experiment_name} with group {group}")
-        for cfg in self.run_configs():
-            self.execute_run(cfg, group)
-
-    def execute_runs_in_place(self, group: str = None):
+    def execute_runs(self, group: str = None, dry_run=False, force_rerun=False):
+        # new runs, and existing runs
         new_cfgs = self.run_configs()
         existing_runs = self.get_runs_in_group(group)
-        existing_cfgs = [OmegaConf.create(r.config) for r in existing_runs]
+        existing_cfgs = [OmegaConf.create(run.config) for run in existing_runs]
 
-        # delete existing runs that are not in the new configs
-        delete_runs: List[Run] = []
-        for run, cfg in zip(existing_runs, existing_cfgs):
-            run_valid = any([equivalent_configs(cfg, e) for e in new_cfgs])
-            if not run_valid:
-                delete_runs.append(run)
+        # find runs to delete
+        del_runs = []
+        keep_runs = []
+        for existing_run in existing_runs:
+            existing_cfg = OmegaConf.create(existing_run.config)
+            in_new = False
+            for new_cfg in new_cfgs:
+                is_equiv = equivalent_configs(existing_cfg, new_cfg)
+                in_new |= is_equiv
+            if not in_new:
+                del_runs.append(existing_run)
+            else:
+                keep_runs.append(existing_run)
 
-        print(f"Deleting {len(delete_runs)} runs")
-        for run in delete_runs:
-            run.delete(delete_artifacts=True)
-
-        # execute new runs that are not in the existing runs
+        # find runs to execute
         exec_configs = []
-        for cfg in new_cfgs:
-            run_exists = any([equivalent_configs(cfg, e) for e in existing_cfgs])
-            if not run_exists:
-                self.execute_run(cfg, group)
+        for new_cfg in new_cfgs:
+            in_existing = False
+            for existing_cfg in existing_cfgs:
+                is_equiv = equivalent_configs(existing_cfg, new_cfg)
+                in_existing |= is_equiv
+            if not in_existing:
+                exec_configs.append(new_cfg)
+
+        if force_rerun:
+            del_runs.extend(keep_runs)
+            keep_configs = [OmegaConf.create(run.config) for run in keep_runs]
+            exec_configs.extend(keep_configs)
+
+        if dry_run:
+            print(f"Would delete {len(del_runs)} runs")
+            print(f"Would execute {len(exec_configs)} new runs")
+            return
+
+        print(f"Deleting {len(del_runs)} runs")
+        for r in del_runs:
+            r.delete(delete_artifacts=True)
 
         print(f"Executing {len(exec_configs)} new runs")
         for cfg in exec_configs:
-            self.execute_run(cfg, group)
+            self._execute_run(cfg, group)
 
     @classmethod
     def find_latest_group(cls) -> str:
@@ -121,7 +140,5 @@ class WandbExperiment:
         filter = {"tags": cls.experiment_name, "group": group}
         runs = api.runs(project_name, filters=filter)
         runs = list(runs)
-
-        assert len(runs) > 0, f"No runs found for group {group}"
 
         return runs

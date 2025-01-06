@@ -12,7 +12,11 @@ from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.camera_trajectories import (
     BarrelRoll,
     BarrelRollPartial,
+    BarrelRollPartialUpsideDown,
     NamedCameraTrajectory,
+    OrthographicPanDiagonal,
+    OrthographicPanHorizontal,
+    OrthographicPanVertical,
 )
 from text3d2video.mesh_processing import normalize_meshes
 from text3d2video.rendering import render_depth_map
@@ -81,7 +85,11 @@ if __name__ == "__main__":
         # Rotation90(),
         # OrthographicPan(),
         # FoVZoom(),
-        BarrelRoll(),
+        # BarrelRoll(),
         BarrelRollPartial(),
+        BarrelRollPartialUpsideDown(),
+        # OrthographicPanHorizontal(),
+        # OrthographicPanVertical(),
+        # OrthographicPanDiagonal(),
     ]
     log_cam_movement_animations(obj_paths, trajectories, N=100)

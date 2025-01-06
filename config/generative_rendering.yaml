@@ -11,7 +11,7 @@ animation:
 run:
   job_type: "generate_video"
 
-prompt: "Deadpool, Simple White Background"
+prompt: "Realistic Deadpool, Simple White Background"
 out_artifact: "video"
 
 save_tensors:

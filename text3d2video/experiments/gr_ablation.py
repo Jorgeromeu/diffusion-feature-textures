@@ -12,7 +12,6 @@ from text3d2video.evaluation.video_comparison import (
 )
 from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
 from text3d2video.noise_initialization import (
-    FixedNoiseInitializer,
     RandomNoiseInitializer,
     UVNoiseInitializer,
 )

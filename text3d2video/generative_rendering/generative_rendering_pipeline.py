@@ -454,7 +454,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
             # do inference in chunks
             noise_preds = []
-            for chunk_frame_indices in tqdm(chunks_indices, desc="Chunks"):
+            for chunk_frame_indices in chunks_indices:
                 # render chunk feature images
                 chunk_feature_images = self.render_feature_images(
                     cameras[chunk_frame_indices],
