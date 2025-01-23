@@ -5,6 +5,8 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from jaxtyping import Float
+from pytorch3d.io import load_obj
+from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     CamerasBase,
     MeshRasterizer,
@@ -12,6 +14,13 @@ from pytorch3d.renderer import (
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
+
+
+def read_obj_uvs(obj_path: str, device="cuda"):
+    _, faces, aux = load_obj(obj_path)
+    verts_uvs = aux.verts_uvs.to(device)
+    faces_uvs = faces.textures_idx.to(device)
+    return verts_uvs, faces_uvs
 
 
 def group_list_by(lst: List, key: Callable):
@@ -245,3 +254,72 @@ def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
 
     for tensor, shape in tensors:
         named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)
+
+
+def project_uvs_to_cameras(
+    meshes: Meshes,
+    cameras: CamerasBase,
+    verts_uvs: Tensor,
+    faces_uvs: Tensor,
+    texture_res: int,
+    render_resolution=1000,
+):
+    """
+    Project visible UV coordinates to camera pixel coordinates
+    :param meshes: Meshes object
+    :param cameras: CamerasBase object
+    :param verts_uvs: (V, 2) UV coordinates
+    :param faces_uvs: (F, 3) face indices for UV coordinates
+    :param texture_res: UV_map resolution
+    :param render_resolution: render resolution
+    """
+
+    # rasterize mesh at high resolution
+    raster_settings = RasterizationSettings(
+        image_size=render_resolution,
+        blur_radius=0.0,
+        faces_per_pixel=1,
+    )
+    rasterizer = MeshRasterizer(raster_settings=raster_settings)
+    fragments = rasterizer(meshes, cameras=cameras)
+
+    # get visible pixels mask
+    mask = fragments.zbuf[:, :, :, 0] > 0
+
+    # 2D coordinate for each pixel
+    xs = torch.linspace(0, 1, render_resolution)
+    ys = torch.linspace(0, 1, render_resolution)
+    pixel_X, pixel_Y = torch.meshgrid(xs, ys)
+    pixel_XYs = torch.stack([pixel_X, pixel_Y], dim=-1).to(verts_uvs)
+
+    # for each face, for each vert, uv coord
+    faces_verts_uvs = verts_uvs[faces_uvs]
+
+    # interpolate uv coordinates, to get a uv at each pixel
+    pixel_uvs = interpolate_face_attributes(
+        fragments.pix_to_face, fragments.bary_coords, faces_verts_uvs
+    )
+    pixel_uvs = pixel_uvs[:, :, :, 0, :]
+
+    uvs = pixel_uvs[mask]
+    xys = pixel_XYs[mask[0]]
+
+    # convert continuous uv coords to discrete pixel coords
+    size = (texture_res, texture_res)
+    uv_pix_coords = uvs.clone()
+    uv_pix_coords[:, 0] = uv_pix_coords[:, 0] * size[0]
+    uv_pix_coords[:, 1] = (1 - uv_pix_coords[:, 1]) * size[1]
+    uv_pix_coords = uv_pix_coords.long()
+
+    # remove duplicates, and get xy coords for each uv pixel
+    uv_pix_coords_unique, coord_pix_indices = unique_with_indices(uv_pix_coords, dim=0)
+    pix_xy_coords = xys[coord_pix_indices, :]
+
+    return pix_xy_coords, uv_pix_coords_unique
+
+
+def unique_with_indices(tensor: Tensor, dim: int = 0):
+    unique, inverse = torch.unique(tensor, sorted=True, return_inverse=True, dim=dim)
+    perm = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
+    inverse, perm = inverse.flip([0]), perm.flip([0])
+    return unique, inverse.new_empty(unique.size(0)).scatter_(0, inverse, perm)
