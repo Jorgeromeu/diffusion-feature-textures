@@ -1,6 +1,5 @@
 import math
 
-import numpy as np
 import torch
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
@@ -92,19 +91,18 @@ def front_facing_extrinsics(degrees=0, xs=0, ys=0, zs=1.5):
 
 
 def turntable_extrinsics(
-    n: int,
-    dist: float = 2,
-    start_angle=0,
-    stop_angle=360,
-    endpoint=True,
+    dists=1,
+    angles=0,
     vertical=False,
 ) -> FoVPerspectiveCameras:
-    azim = np.linspace(start_angle, stop_angle, n, endpoint=endpoint)
+    dists, angles = broadcast_inputs(dists, angles)
+    n = len(angles)
+
+    azim = angles
     elev = [0] * n
 
     if vertical:
         azim, elev = elev, azim
 
-    dists = [dist] * n
     R, T = look_at_view_transform(dists, elev, azim)
     return R, T

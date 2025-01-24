@@ -50,14 +50,14 @@ class AnimationArtifact(ArtifactWrapper):
             indices = ordered_sample(indices, sample_n)
         return indices
 
-    def uv_data(self) -> Tuple[Tensor, Tensor]:
+    def uv_data(self, device="cuda") -> Tuple[Tensor, Tensor]:
         """
         Returns the UV data for the mesh.
         :return: Tuple of (verts_uvs, faces_uvs)
         """
         verts_uvs = torch.load(self._verts_uvs_path(), weights_only=False)
         faces_uvs = torch.load(self._faces_uvs_path(), weights_only=False)
-        return verts_uvs, faces_uvs
+        return verts_uvs.to(device), faces_uvs.to(device)
 
     def load_frames(
         self, indices=None, device: str = "cuda"

@@ -31,7 +31,7 @@ from text3d2video.rendering import make_feature_renderer, render_depth_map
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import (
     aggregate_features_precomputed_vertex_positions,
-    project_vertices_to_cameras,
+    project_visible_verts_to_cameras,
 )
 
 
@@ -276,6 +276,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         for module, kf_post_attn_features in saved_post_attn.items():
             stacked_vert_features = []
             for feature_maps in kf_post_attn_features:
+                # TODO replace with aggregatin
                 # aggregate multi-pose features to 3D
                 vert_ft_mean = aggregate_features_precomputed_vertex_positions(
                     feature_maps,
@@ -402,8 +403,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             torch.arange(0, n_frames), self.gr_config.chunk_size
         )
 
-        # get 2D vertex positions for each frame
-        vert_xys, vert_indices = project_vertices_to_cameras(frames, cameras)
+        # TODO replace with texels
+        # get projected vertex positions for visible verts in each frame
+        vert_xys, vert_indices = project_visible_verts_to_cameras(frames, cameras)
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):

@@ -3,17 +3,24 @@ from typing import Callable, Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.io import load_obj
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     CamerasBase,
+    FoVPerspectiveCameras,
     MeshRasterizer,
     RasterizationSettings,
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
+
+from text3d2video.camera_placement import turntable_extrinsics
+from text3d2video.mesh_processing import normalize_meshes
+from text3d2video.rendering import make_feature_renderer
+from text3d2video.video_util import pil_frames_to_clip
 
 
 def read_obj_uvs(obj_path: str, device="cuda"):
@@ -93,7 +100,7 @@ def project_vertices_to_features(
     return vert_features
 
 
-def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
+def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase):
     # rasterize mesh, to get visible verts
     raster_settings = RasterizationSettings(
         image_size=600,
@@ -256,14 +263,14 @@ def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
         named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)
 
 
-def project_uvs_to_cameras(
-    meshes: Meshes,
-    cameras: CamerasBase,
+def project_visible_texels_to_cameras(
+    mesh: Meshes,
+    camera: CamerasBase,
     verts_uvs: Tensor,
     faces_uvs: Tensor,
     texture_res: int,
     render_resolution=1000,
-):
+) -> Tuple[List[Tensor], List[Tensor]]:
     """
     Project visible UV coordinates to camera pixel coordinates
     :param meshes: Meshes object
@@ -272,6 +279,11 @@ def project_uvs_to_cameras(
     :param faces_uvs: (F, 3) face indices for UV coordinates
     :param texture_res: UV_map resolution
     :param render_resolution: render resolution
+
+    Return two corresponding sets of points in the camera and UV space
+
+    :return xy_ndc_coords: (N, 2) pixel coordinates
+    :return uv_pix_coords_unique: (N, 2) unique UV coordinates
     """
 
     # rasterize mesh at high resolution
@@ -281,16 +293,10 @@ def project_uvs_to_cameras(
         faces_per_pixel=1,
     )
     rasterizer = MeshRasterizer(raster_settings=raster_settings)
-    fragments = rasterizer(meshes, cameras=cameras)
+    fragments = rasterizer(mesh, cameras=camera)
 
     # get visible pixels mask
     mask = fragments.zbuf[:, :, :, 0] > 0
-
-    # 2D coordinate for each pixel
-    xs = torch.linspace(0, 1, render_resolution)
-    ys = torch.linspace(0, 1, render_resolution)
-    pixel_X, pixel_Y = torch.meshgrid(xs, ys)
-    pixel_XYs = torch.stack([pixel_X, pixel_Y], dim=-1).to(verts_uvs)
 
     # for each face, for each vert, uv coord
     faces_verts_uvs = verts_uvs[faces_uvs]
@@ -301,10 +307,17 @@ def project_uvs_to_cameras(
     )
     pixel_uvs = pixel_uvs[:, :, :, 0, :]
 
-    uvs = pixel_uvs[mask]
-    xys = pixel_XYs[mask[0]]
+    # 2D coordinate for each pixel, NDC space
+    xs = torch.linspace(-1, 1, render_resolution)
+    ys = torch.linspace(1, -1, render_resolution)
+    ndc_xs, ndc_ys = torch.meshgrid(xs, ys, indexing="xy")
+    ndc_coords = torch.stack([ndc_xs, ndc_ys], dim=-1).to(verts_uvs)
 
-    # convert continuous uv coords to discrete pixel coords
+    # for each visible pixel get uv coord and xy coord
+    uvs = pixel_uvs[mask]
+    xys = ndc_coords[mask[0]]
+
+    # convert continuous cartesian uv coords to pixel coords
     size = (texture_res, texture_res)
     uv_pix_coords = uvs.clone()
     uv_pix_coords[:, 0] = uv_pix_coords[:, 0] * size[0]
@@ -312,14 +325,61 @@ def project_uvs_to_cameras(
     uv_pix_coords = uv_pix_coords.long()
 
     # remove duplicates, and get xy coords for each uv pixel
-    uv_pix_coords_unique, coord_pix_indices = unique_with_indices(uv_pix_coords, dim=0)
-    pix_xy_coords = xys[coord_pix_indices, :]
+    texel_coords, coord_pix_indices = unique_with_indices(uv_pix_coords, dim=0)
+    texel_xy_coords = xys[coord_pix_indices, :]
 
-    return pix_xy_coords, uv_pix_coords_unique
+    return texel_xy_coords, texel_coords
 
 
-def unique_with_indices(tensor: Tensor, dim: int = 0):
+def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     unique, inverse = torch.unique(tensor, sorted=True, return_inverse=True, dim=dim)
     perm = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
     inverse, perm = inverse.flip([0]), perm.flip([0])
-    return unique, inverse.new_empty(unique.size(0)).scatter_(0, inverse, perm)
+    unique_indices = inverse.new_empty(unique.size(0)).scatter_(0, inverse, perm)
+    return unique, unique_indices
+
+
+def aggregate_feature_maps(
+    feature_maps: Float[Tensor, "n c h w"],
+    uv_resolution: int,
+    vertex_positions: List[Float[Tensor, "v 3"]],
+    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
+    interpolation_mode="nearest",
+):
+    # initialize empty uv map
+    feature_dim = feature_maps.shape[1]
+    uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
+
+    for i, feature_map in enumerate(feature_maps):
+        xy_coords = vertex_positions[i]
+        uv_pix_coords = vertex_indices[i]
+
+        # sample features
+        colors = sample_feature_map_ndc(
+            feature_map,
+            xy_coords,
+            mode=interpolation_mode,
+        ).to(uv_map)
+
+        # update uv map
+        uv_map[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] = colors
+
+    # average features
+    return uv_map
+
+
+def render_multiview(mesh: Meshes, n_frames: int = 30, resolution: int = 512):
+    mesh_render = normalize_meshes(mesh)
+    mesh_render.textures = mesh.textures.clone()
+    R, T = turntable_extrinsics(1, torch.linspace(0, 360, n_frames))
+    cams = FoVPerspectiveCameras(R=R, T=T, device="cuda", fov=60)
+    frame_meshes = mesh_render.extend(len(cams))
+
+    renderer = make_feature_renderer(cameras=cams, resolution=resolution, device="cuda")
+    frames = renderer(frame_meshes)
+
+    frames = [TF.to_pil_image(frame.cpu().permute(2, 0, 1)) for frame in frames]
+    frames = [
+        TF.resize(frame, (512, 512), TF.InterpolationMode.NEAREST) for frame in frames
+    ]
+    return frames
