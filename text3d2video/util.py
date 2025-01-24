@@ -20,7 +20,6 @@ from torch import Tensor
 from text3d2video.camera_placement import turntable_extrinsics
 from text3d2video.mesh_processing import normalize_meshes
 from text3d2video.rendering import make_feature_renderer
-from text3d2video.video_util import pil_frames_to_clip
 
 
 def read_obj_uvs(obj_path: str, device="cuda"):
@@ -263,7 +262,7 @@ def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
         named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)
 
 
-def project_visible_texels_to_cameras(
+def project_visible_texels_to_camera(
     mesh: Meshes,
     camera: CamerasBase,
     verts_uvs: Tensor,
@@ -329,6 +328,34 @@ def project_visible_texels_to_cameras(
     texel_xy_coords = xys[coord_pix_indices, :]
 
     return texel_xy_coords, texel_coords
+
+
+def project_visible_texels_to_cameras_batched(
+    meshes: Meshes,
+    cameras: CamerasBase,
+    verts_uvs: Tensor,
+    faces_uvs: Tensor,
+    texture_res: int,
+    render_resolution=1000,
+):
+    # TODO make actually batched?
+
+    frame_xy_coords = []
+    frame_uv_coords = []
+    for mesh, cam in zip(meshes, cameras):
+        xy_coords, uv_coords = project_visible_texels_to_camera(
+            mesh,
+            cam,
+            verts_uvs,
+            faces_uvs,
+            texture_res=texture_res,
+            render_resolution=render_resolution,
+        )
+        torch.cuda.empty_cache()
+        frame_xy_coords.append(xy_coords)
+        frame_uv_coords.append(uv_coords)
+
+    return frame_xy_coords, frame_uv_coords
 
 
 def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:

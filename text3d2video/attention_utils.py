@@ -71,24 +71,6 @@ def extended_attn_kv_hidden_states(
     return extended_x
 
 
-def averaged_attn_kv_hidden_states(
-    x: Float[Tensor, "b t d"], chunk_size: int = 2, frame_indices: List[int] = None
-) -> Float[Tensor, "b t d"]:
-    n_frames = x.shape[0] // chunk_size
-
-    # unstack batch-frame dimension
-    x = rearrange(x, "(b f) t c -> b f t c", f=n_frames)
-
-    # select specific frames
-    if frame_indices is not None:
-        x = x[:, frame_indices, ...]
-
-    # average frames across seq dimension
-    x = reduce(x, "b f t c -> b t c", "mean")
-
-    return x
-
-
 def extend_across_frame_dim(
     x: Float[Tensor, "b t d"], n_frames: int
 ) -> Float[Tensor, "b* t d"]:

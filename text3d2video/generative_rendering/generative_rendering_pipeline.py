@@ -12,7 +12,7 @@ from diffusers.image_processor import VaeImageProcessor
 from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
-from pytorch3d.renderer import FoVPerspectiveCameras, TexturesVertex
+from pytorch3d.renderer import FoVPerspectiveCameras, TexturesUV, TexturesVertex
 from pytorch3d.structures import Meshes
 from torch import Tensor
 from tqdm import tqdm
@@ -30,9 +30,170 @@ from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import make_feature_renderer, render_depth_map
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import (
+    aggregate_feature_maps,
     aggregate_features_precomputed_vertex_positions,
     project_visible_verts_to_cameras,
 )
+
+
+class DiffusionFeatures:
+    """
+    Utility class to store features extracted from layers of a diffusion UNet in memory
+    """
+
+    def __init__(self):
+        self._features = {}
+
+    def add_features(
+        self,
+        module: str,
+        features: Tensor,
+    ):
+        self._features[module] = features
+
+    def from_dict(self, features: Dict[str, Tensor]):
+        self._features = features
+
+    def read_features(self, module_identifier: str) -> Tensor:
+        return self._features[module_identifier]
+
+    def modules(self):
+        return list(self._features.keys())
+
+    def shapes(self):
+        return {k: v.shape for k, v in self._features.items()}
+
+    def items(self):
+        return self._features.items()
+
+
+class DiffusionSpatialFeatures(DiffusionFeatures):
+    """
+    Utility class to store features extracted from layers of a diffusion UNet
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def add_features(
+        self,
+        module_identifier: str,
+        features: Float[Tensor, "b f d h w"],
+    ):
+        self._features[module_identifier] = features
+
+    def read_features(self, module_identifier: str) -> Float[Tensor, "b f d h w"]:
+        return self._features[module_identifier]
+
+    def layer_resolution(self, module_identifier: str):
+        return self._features[module_identifier].shape[-1]
+
+    def n_frames(self):
+        return list(self._features.values())[0].shape[1]
+
+    def batch_size(self):
+        return list(self._features.values())[0].shape[0]
+
+
+class DiffusionAggregatedUVMaps(DiffusionFeatures):
+    """
+    Utility class to store aggregated UV maps from a diffusion UNet
+    """
+
+    def __init__(self, verts_uvs: Tensor, faces_uvs: Tensor):
+        super().__init__()
+        self.verts_uvs = verts_uvs
+        self.faces_uvs = faces_uvs
+        self.resolutions = {}
+
+    def add_features(
+        self,
+        module_identifier: str,
+        uvmaps: Float[Tensor, "b v d"],
+        resolution: int,
+    ):
+        self.resolutions[module_identifier] = resolution
+        self._features[module_identifier] = uvmaps
+
+    def read_features(self, module_identifier: str) -> Float[Tensor, "b v d"]:
+        return self._features[module_identifier]
+
+    def read_texture(self, module_identifier: str, batch_idx: int) -> TexturesUV:
+        uvmap = self.read_features(module_identifier)[batch_idx]
+        return TexturesUV(
+            maps=uvmap.unsqueeze(0),
+            verts_uvs=self.verts_uvs.unsqueeze(0),
+            faces_uvs=self.faces_uvs.unsqueeze(0),
+        )
+
+    def batch_size(self):
+        return list(self._uvmaps.values())[0].shape[0]
+
+
+def aggregate_spatial_features(
+    features: DiffusionSpatialFeatures,
+    uv_res: int,
+    frame_texel_xys: List[Tensor],
+    frame_texel_pixels: List[Tensor],
+    verts_uvs: Tensor,
+    faces_uvs: Tensor,
+):
+    aggregated_features = DiffusionAggregatedUVMaps(verts_uvs, faces_uvs)
+
+    # aggregate for each module
+    for module in features.modules():
+        module_feature_maps = features.read_features(module)
+
+        # aggregate for each batch
+        stacked_uvmaps = []
+        for feature_maps in module_feature_maps:
+            uv_map = aggregate_feature_maps(
+                feature_maps.cuda(),
+                uv_res,
+                frame_texel_xys,
+                frame_texel_pixels,
+                interpolation_mode="bilinear",
+            )
+            stacked_uvmaps.append(uv_map)
+        stacked_uvmaps = torch.stack(stacked_uvmaps)
+
+        # save aggregated uvmaps
+        aggregated_features.add_features(
+            module, stacked_uvmaps, module_feature_maps.shape[-1]
+        )
+
+    return aggregated_features
+
+
+def render_feature_images(
+    cameras: FoVPerspectiveCameras,
+    meshes: Meshes,
+    aggregated_features: DiffusionAggregatedUVMaps,
+) -> DiffusionSpatialFeatures:
+    rendered_features = DiffusionSpatialFeatures()
+
+    for module in aggregated_features.modules():
+        resolution = aggregated_features.resolutions[module]
+
+        renderer = make_feature_renderer(cameras, resolution)
+
+        stacked_feature_images = []
+
+        for batch_idx in range(aggregated_features.batch_size()):
+            texture = aggregated_features.read_texture(module, batch_idx)
+            meshes.textures = texture.extend(len(meshes))
+
+            # render
+            feature_images = renderer(meshes)
+
+            feature_images = rearrange(feature_images, "f h w d -> f d h w")
+            stacked_feature_images.append(feature_images)
+
+        # B, F, D, H, W
+        stacked_feature_images = torch.stack(stacked_feature_images)
+        rendered_features.add_features(module, stacked_feature_images)
+
+    return rendered_features
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -202,10 +363,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         text_embeddings: Float[Tensor, "b f t d"],
         depth_maps: List[Image.Image],
         t: int,
-    ) -> Tuple[
-        Dict[str, Float[torch.Tensor, "b t c"]],
-        Dict[str, Float[torch.Tensor, "b f t c"]],
-    ]:
+    ) -> Tuple[DiffusionFeatures, DiffusionSpatialFeatures]:
         # set attn processor mode
         self.attn_processor.mode = GrAttnMode.FEATURE_EXTRACTION
 
@@ -225,6 +383,12 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # clear saved features
         self.attn_processor.pre_attn_features = {}
         self.attn_processor.post_attn_features = {}
+
+        pre_attn_features = DiffusionFeatures()
+        pre_attn_features.from_dict(pre_attn_features)
+
+        post_attn_features = DiffusionSpatialFeatures()
+        post_attn_features.from_dict(post_attn_features)
 
         return pre_attn_features, post_attn_features
 
@@ -435,9 +599,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 )
             )
 
-            # save kf post attn features and indices
-            self.gr_data_artifact.gr_writer.write_kf_indices(t, kf_indices)
-            self.gr_data_artifact.gr_writer.write_kf_post_attn(t, post_attn_features)
+            # # save kf post attn features and indices
+            # self.gr_data_artifact.gr_writer.write_kf_indices(t, kf_indices)
+            # self.gr_data_artifact.gr_writer.write_kf_post_attn(t, post_attn_features)
 
             # unify spatial features across keyframes as vertex features
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]

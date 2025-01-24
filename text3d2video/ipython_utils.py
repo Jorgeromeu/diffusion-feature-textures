@@ -58,11 +58,18 @@ def display_ims_grid(
     plt.show()
 
 
-def display_ims(images: List[Image], scale=2):
+def display_ims(images: List[Image], titles=None, scale=2):
+    if titles is not None:
+        assert len(titles) == len(images)
+
     if len(images) == 1:
         _, ax = plt.subplots(1, 1, figsize=(scale, scale))
         ax.imshow(images[0])
         ax.axis("off")
+
+        if titles is not None:
+            ax.set_title(titles[0])
+
         plt.show()
         plt.tight_layout()
         plt.show()
@@ -71,6 +78,9 @@ def display_ims(images: List[Image], scale=2):
     _, axs = plt.subplots(1, len(images), figsize=(len(images) * scale, scale))
 
     for i, im in enumerate(images):
+        if titles is not None:
+            axs[i].set_title(titles[i])
+
         axs[i].imshow(im)
         axs[i].axis("off")
 
@@ -90,14 +100,3 @@ def display_frames_as_video(frames: List[Image], path: Path, fps=10):
     clip.close()
 
     return Video(path.absolute())
-
-
-def view_pointcloud_orthographic(
-    ax: Axes, points: Tensor, horizontal_dim=0, vertical_dim=2, s=0.01, label=None
-):
-    dim_names = ["x", "y", "z"]
-
-    ax.scatter(x=points[:, horizontal_dim], y=points[:, vertical_dim], s=s, label=label)
-    ax.set_aspect("equal")
-    ax.set_xlabel(dim_names[horizontal_dim])
-    ax.set_ylabel(dim_names[vertical_dim])
