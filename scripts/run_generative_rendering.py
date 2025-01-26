@@ -65,7 +65,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         cfg.animation.artifact_tag, download=cfg.run.download_artifacts
     )
     frame_indices = animation.frame_indices(cfg.animation.n_frames)
-    cameras, mesh_frames = animation.load_frames(frame_indices)
+    cam_frames, mesh_frames = animation.load_frames(frame_indices)
     uv_verts, uv_faces = animation.uv_data()
 
     # load pipeline
@@ -93,7 +93,7 @@ def run(cfg: RunGenerativeRenderingConfig):
     video_frames = pipe(
         cfg.prompt,
         mesh_frames,
-        cameras,
+        cam_frames,
         uv_verts,
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,

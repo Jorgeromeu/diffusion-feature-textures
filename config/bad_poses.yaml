@@ -5,9 +5,7 @@ defaults:
   - noise_initialization: uv
   - save_tensors: disabled
 
-prompts: [
-  "Realistic Deadpool, Simple White Background",
-]
+prompt: "Realistic Deadpool, Simple White Background"
 
 animations:
   [

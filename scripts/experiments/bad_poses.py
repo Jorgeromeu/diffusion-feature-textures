@@ -10,14 +10,14 @@ from scripts.run_generative_rendering import ModelConfig, RunGenerativeRendering
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.evaluation.video_comparison import video_grid
+from text3d2video.evaluation.video_comparison import group_and_sort, video_grid
 from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
     GenerativeRenderingConfig,
     RunConfig,
 )
-from text3d2video.noise_initialization import RandomNoiseInitializer
+from text3d2video.noise_initialization import RandomNoiseInitializer, UVNoiseInitializer
 from text3d2video.rendering import render_depth_map
 from text3d2video.video_util import pil_frames_to_clip
 
@@ -30,7 +30,7 @@ Example experiment which runs generative rendering on a set of scenes and prompt
 class BadPosesExperimentConfig:
     model: ModelConfig
     run: RunConfig
-    prompts: list[str]
+    prompt: str
     animations: list[AnimationConfig]
     save_tensors: GrSaveConfig
     generative_rendering: GenerativeRenderingConfig
@@ -46,20 +46,29 @@ class BadPosesExperiment(WandbExperiment):
         configs = []
 
         with initialize(version_base=None, config_path="../../config"):
-            config: BadPosesExperiment = compose(config_name=self.experiment_name)
+            config: BadPosesExperimentConfig = compose(config_name=self.experiment_name)
 
         for anim in config.animations:
-            for prompt in config.prompts:
+            for per_frame in [True, False]:
+                gr_conf: GenerativeRenderingConfig = config.generative_rendering.copy()
+
+                if per_frame:
+                    gr_conf.do_post_attn_injection = False
+                    gr_conf.do_pre_attn_injection = False
+                    noise_initialization = RandomNoiseInitializer()
+                else:
+                    noise_initialization = UVNoiseInitializer()
+
                 run = config.run
                 cfg = RunGenerativeRenderingConfig(
                     run=run,
                     out_artifact="video",
-                    prompt=prompt,
+                    prompt=config.prompt,
                     animation=anim,
-                    generative_rendering=config.generative_rendering,
+                    generative_rendering=gr_conf,
                     save_tensors=config.save_tensors,
                     noise_initialization=object_to_instantiate_config(
-                        RandomNoiseInitializer()
+                        noise_initialization
                     ),
                     model=config.model,
                 )
@@ -70,38 +79,51 @@ class BadPosesExperiment(WandbExperiment):
 
         return configs
 
-    def video_comparison(self):
+    def video_comparison(self, show_depth_videos=True):
         runs = self.get_logged_runs()
 
-        depth_videos = []
         videos = []
 
-        for run in runs:
-            config: RunGenerativeRenderingConfig = OmegaConf.create(run.config)
-            n_frames = config.animation.n_frames
+        def cfg(run) -> RunGenerativeRenderingConfig:
+            return OmegaConf.create(run.config)
 
-            # get animation
-            animation = wbu.first_used_artifact_of_type(run, "animation")
-            animation = AnimationArtifact.from_wandb_artifact(animation)
-            frame_indices = animation.frame_indices(n_frames)
-            cams, meshes = animation.load_frames(frame_indices)
+        # arrange runs into grid
+        runs_grid = group_and_sort(
+            runs,
+            group_fun=lambda r: cfg(r).generative_rendering.do_post_attn_injection,
+            sort_x_fun=lambda r: cfg(r).animation.artifact_tag,
+        )
 
-            # get depth maps
-            depth_maps = render_depth_map(meshes, cams)
+        # get grid of videos
+        videos = []
+        for row in runs_grid:
+            row_videos = []
+            for run in row:
+                video_artifact = wbu.first_logged_artifact_of_type(run, "video")
+                video_artifact = VideoArtifact.from_wandb_artifact(video_artifact)
+                video_frames = video_artifact.get_moviepy_clip()
+                row_videos.append(video_frames)
+            videos.append(row_videos)
 
-            # get video
-            video_artifact = wbu.first_logged_artifact_of_type(run, "video")
-            video_artifact = VideoArtifact.from_wandb_artifact(video_artifact)
-            video_frames = video_artifact.get_moviepy_clip()
+        if show_depth_videos:
+            # for each column get depth-video
+            depth_videos = []
+            for run in runs_grid[0]:
+                config = cfg(run)
+                n_frames = config.animation.n_frames
 
-            # print(len(depth_maps))
-            # print(len(video_frames))
+                # get animation
+                animation = wbu.first_used_artifact_of_type(run, "animation")
+                animation = AnimationArtifact.from_wandb_artifact(animation)
+                frame_indices = animation.frame_indices(n_frames)
+                cams, meshes = animation.load_frames(frame_indices)
 
-            depth_video = pil_frames_to_clip(depth_maps, fps=10)
-            # video_clip = pil_frames_to_clip(video_frames[0:-2], fps=10)
+                # get depth maps
+                depth_maps = render_depth_map(meshes, cams)
+                depth_video = pil_frames_to_clip(depth_maps, fps=10)
+                depth_videos.append(depth_video)
 
-            depth_videos.append(depth_video)
-            videos.append(video_frames)
+            videos.insert(0, depth_videos)
 
-        comparison_vid = video_grid([depth_videos, videos])
+        comparison_vid = video_grid(videos)
         return comparison_vid

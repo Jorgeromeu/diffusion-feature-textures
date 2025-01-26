@@ -16,7 +16,7 @@ from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
     RunConfig,
 )
-from text3d2video.noise_initialization import RandomNoiseInitializer
+from text3d2video.noise_initialization import UVNoiseInitializer
 
 """
 Example experiment which runs generative rendering on a set of scenes and prompts
@@ -55,7 +55,7 @@ class ExampleExperiment(WandbExperiment):
                     generative_rendering=config.generative_rendering,
                     save_tensors=config.save_tensors,
                     noise_initialization=object_to_instantiate_config(
-                        RandomNoiseInitializer()
+                        UVNoiseInitializer()
                     ),
                     model=config.model,
                 )
@@ -66,9 +66,8 @@ class ExampleExperiment(WandbExperiment):
 
         return configs
 
-    @classmethod
-    def video_comparison(cls, group: str = None):
-        runs = cls.get_logged_runs(group)
+    def video_comparison(self):
+        runs = self.get_logged_runs()
 
         def run_cfg(run) -> RunGenerativeRenderingConfig:
             return OmegaConf.create(run.config)
