@@ -25,21 +25,29 @@ from text3d2video.util import ordered_sample
 
 
 @dataclass
+class ModelConfig:
+    sd_repo: str
+    controlnet_repo: str
+    scheduler: Any
+
+
+@dataclass
 class RunGenerativeRenderingConfig:
+    run: RunConfig
     out_artifact: str
     prompt: str
     animation: AnimationConfig
-    run: RunConfig
     save_tensors: GrSaveConfig
     generative_rendering: GenerativeRenderingConfig
     noise_initialization: Any
+    model: ModelConfig
 
 
 cs = ConfigStore.instance()
-cs.store(name="generative_rendering", node=RunGenerativeRenderingConfig)
+cs.store(name="run_generative_rendering", node=RunGenerativeRenderingConfig)
 
 
-@hydra.main(config_path="../config", config_name="generative_rendering")
+@hydra.main(config_path="../config", config_name="run_generative_rendering")
 def run(cfg: RunGenerativeRenderingConfig):
     # init wandb
     do_run = wbu.setup_run(cfg.run, cfg)
@@ -57,7 +65,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         cfg.animation.artifact_tag, download=cfg.run.download_artifacts
     )
     frame_indices = animation.frame_indices(cfg.animation.n_frames)
-    cameras, mesh_frames = animation.load_frames(frame_indices)
+    cam_frames, mesh_frames = animation.load_frames(frame_indices)
     uv_verts, uv_faces = animation.uv_data()
 
     # load pipeline
@@ -85,7 +93,7 @@ def run(cfg: RunGenerativeRenderingConfig):
     video_frames = pipe(
         cfg.prompt,
         mesh_frames,
-        cameras,
+        cam_frames,
         uv_verts,
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
