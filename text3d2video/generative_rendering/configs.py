@@ -5,12 +5,13 @@ from git import Optional
 
 @dataclass
 class RunConfig:
-    wandb: bool
-    job_type: Optional[str]
-    group: Optional[str]
-    instant_exit: bool
-    download_artifacts: bool
-    tags: list[str]
+    wandb: bool  # if wandb is enabled
+    instant_exit: bool  # if instant exit is enabled, do not run
+    download_artifacts: bool  # if artifacts should be force-downloaded
+    name: Optional[str]  # name of run in wandb
+    job_type: Optional[str]  # job type in wandb
+    group: Optional[str]  # group in wandb
+    tags: list[str]  # tags for wandb run
 
 
 @dataclass

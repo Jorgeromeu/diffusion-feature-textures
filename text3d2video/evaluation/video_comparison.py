@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Callable, List
 
 from moviepy.editor import CompositeVideoClip, ImageSequenceClip, TextClip, clips_array
-from omegaconf import OmegaConf
 
 import text3d2video.wandb_util as wbu
 from text3d2video.artifacts.video_artifact import VideoArtifact

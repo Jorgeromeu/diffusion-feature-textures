@@ -29,6 +29,7 @@ def setup_run(run_config: RunConfig, cfg: DictConfig):
         mode=wandb_mode,
         tags=run_config.tags,
         group=run_config.group,
+        name=run_config.name,
     )
 
     # update run config config
@@ -45,7 +46,7 @@ def setup_run(run_config: RunConfig, cfg: DictConfig):
     return do_run
 
 
-def api_artifact(artifact_tag: str):
+def api_artifact(artifact_tag: str) -> Artifact:
     """
     Get an artifact from the api
     """
@@ -56,6 +57,13 @@ def api_artifact(artifact_tag: str):
 
 def wandb_is_enabled():
     return wandb.run is not None and not wandb.run.disabled
+
+
+def resolve_artifact_tag(artifact_tag: str):
+    name, _ = artifact_tag.split(":")
+    art = api_artifact(artifact_tag)
+    true_version = art.version
+    return f"{name}:{true_version}"
 
 
 def get_artifact(artifact_tag: str):

@@ -51,6 +51,22 @@ def dictconfig_diff(conf1: DictConfig, conf2: DictConfig):
     return diff
 
 
+def dictconfig_flattened_keys(cfg: DictConfig):
+    """
+    Return a list of all keys to primitives in a DictConfig
+    """
+
+    keys = []
+    for key in cfg:
+        if isinstance(cfg[key], DictConfig):
+            nested_keys = dictconfig_flattened_keys(cfg[key])
+            for nested_key in nested_keys:
+                keys.append(f"{key}.{nested_key}")
+        else:
+            keys.append(key)
+    return keys
+
+
 def dictconfig_equivalence(cfg1: DictConfig, cfg2: DictConfig) -> bool:
     """
     Check if two DictConfigs are equal

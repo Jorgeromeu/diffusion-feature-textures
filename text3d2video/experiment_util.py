@@ -1,10 +1,15 @@
-from typing import Any, Callable, List
+from typing import Any, List
 
+import tabulate
 from omegaconf import DictConfig, OmegaConf
+from sympy import N
+from tqdm import tqdm
 
+import scripts.run_generative_rendering
+import text3d2video.wandb_util as wbu
 import wandb
 from text3d2video.generative_rendering.configs import RunConfig
-from text3d2video.omegaconf_util import dictconfig_diff, dictconfig_equivalence
+from text3d2video.omegaconf_util import dictconfig_diff, dictconfig_flattened_keys
 from wandb.apis.public import Run
 
 
@@ -35,9 +40,163 @@ def equivalent_configs(cfg1: DictConfig, cfg2: DictConfig) -> bool:
     return len(configs_diff(cfg1, cfg2)) == 0
 
 
+def get_distinctive_keys(configs: List[DictConfig]) -> List[str]:
+    keys = dictconfig_flattened_keys(configs[0])
+
+    # find keys that are not the same for all runs
+    distinctive_keys = []
+    for key in keys:
+        all_values = [OmegaConf.select(cfg, key) for cfg in configs]
+        all_same = all([v == all_values[0] for v in all_values])
+        if not all_same:
+            distinctive_keys.append(key)
+
+    return distinctive_keys
+
+
+def run_config_distinctive_keys_table(configs: List[DictConfig]):
+    keys = dictconfig_flattened_keys(configs[0])
+
+    # find keys that are not the same for all runs
+    distinctive_keys = []
+    for key in keys:
+        all_values = [OmegaConf.select(cfg, key) for cfg in configs]
+        all_same = all([v == all_values[0] for v in all_values])
+        if not all_same:
+            distinctive_keys.append(key)
+
+    # alphabetically sort
+    distinctive_keys = sorted(distinctive_keys)
+
+    # arrange as table
+    rows = []
+    rows.append(distinctive_keys)
+
+    for cfg in configs:
+        values = [OmegaConf.select(cfg, key) for key in distinctive_keys]
+        rows.append(values)
+
+    return tabulate.tabulate(rows, headers="firstrow")
+
+
+def find_run_by_config(cfg: DictConfig) -> Run:
+    """
+    Find a run by its config
+    """
+
+    # get all runs
+    api = wandb.Api()
+    project_name = "diffusion-3D-features"
+    runs = api.runs(project_name)
+    runs = list(runs)
+
+    for run in tqdm(runs):
+        run_cfg = OmegaConf.create(run.config)
+        if equivalent_configs(run_cfg, cfg):
+            return run
+
+    return None
+
+
+def find_runs_by_configs(cfgs: list[DictConfig]) -> Run:
+    """
+    Find a run by its config
+    """
+
+    # get all runs
+    api = wandb.Api()
+    project_name = "diffusion-3D-features"
+    runs = api.runs(project_name)
+    runs = list(runs)
+
+    found_runs = []
+
+    for run in tqdm(runs):
+        run_cfg = OmegaConf.create(run.config)
+
+        for cfg in cfgs:
+            is_equiv = equivalent_configs(run_cfg, cfg)
+            if is_equiv:
+                found_runs.append(run)
+
+    return found_runs
+
+
+def update_tags(run: Run, new_tags: List[str] = None, remove_tags: List[str] = None):
+    """
+    Update tags of a run
+    """
+
+    if new_tags is None:
+        new_tags = []
+
+    if remove_tags is None:
+        remove_tags = []
+
+    updated_tags = run.tags.copy()
+
+    for tag in remove_tags:
+        try:
+            updated_tags.remove(tag)
+        except ValueError:
+            pass
+
+    updated_tags.extend(new_tags)
+
+    run.tags = updated_tags
+    run.update()
+
+
+def find_runs(tag: str = None) -> List[Run]:
+    api = wandb.Api()
+    project_name = "diffusion-3D-features"
+    filter = {"tags": tag}
+    runs = api.runs(project_name, filters=filter)
+    runs = list(runs)
+    return runs
+
+
+def print_runs_table(
+    runs: List[Run], show_url=False, show_state=True, show_distinctive_cofig=False
+):
+    if len(runs) == 0:
+        return
+
+    fields = ["name"]
+    if show_state:
+        fields.append("state")
+    if show_url:
+        fields.append("url")
+
+    configs = [OmegaConf.create(run.config) for run in runs]
+    distinctive_keys = get_distinctive_keys(configs)
+
+    rows = []
+    for run in runs:
+        row = []
+        values = [getattr(run, field) for field in fields]
+        row.extend(values)
+
+        if show_distinctive_cofig:
+            config = OmegaConf.create(run.config)
+            distinctive_values = [
+                OmegaConf.select(config, key) for key in distinctive_keys
+            ]
+            row.extend(distinctive_values)
+
+        rows.append(row)
+
+    headers = fields
+
+    if show_distinctive_cofig:
+        headers.extend(distinctive_keys)
+
+    print(tabulate.tabulate(rows, headers=headers))
+
+
 class WandbExperiment:
     experiment_name: str
-    run_fn: Callable[[DictConfig], Any]
+    run_fn: Any
 
     def run_configs(self) -> List[DictConfig]:
         """
@@ -45,32 +204,74 @@ class WandbExperiment:
         """
         pass
 
-    def _execute_run(self, cfg: DictConfig, group: str):
+    def print_distinctive_keys(self):
+        configs = self.run_configs()
+
+        # find all keys in the configs
+        keys = dictconfig_flattened_keys(configs[0])
+
+        # find keys that are not the same for all runs
+        distinctive_keys = []
+        for key in keys:
+            all_values = [OmegaConf.select(cfg, key) for cfg in configs]
+            all_same = all([v == all_values[0] for v in all_values])
+            if not all_same:
+                distinctive_keys.append(key)
+
+        # alphabetically sort
+        distinctive_keys = sorted(distinctive_keys)
+
+        # arrange as table
+        rows = []
+        rows.append(distinctive_keys)
+
+        for cfg in configs:
+            values = [OmegaConf.select(cfg, key) for key in distinctive_keys]
+            rows.append(values)
+
+        print(tabulate.tabulate(rows, headers="firstrow"))
+
+    def execute_run(self, cfg: DictConfig):
         """
-        Execute a run with given config, group and experiment name
+        Execute a run with given config, in the experiment experiment
         """
 
-        # TODO execute each run as a Job rather than calling a function
+        if wbu.wandb_is_enabled():
+            wandb.finish()
 
         run_config: RunConfig = cfg.run
+
         # set experiment tag
         if run_config.tags is None:
             run_config.tags = []
         run_config.tags.append(self.experiment_name)
-        # set group
-        run_config.group = group
+
         # execute
+        # TODO instantiate a job/process instead?
         self.run_fn(cfg)
 
-    def execute_runs(self, group: str = None, dry_run=False, force_rerun=False):
+    def get_logged_runs(cls) -> List[Run]:
+        """
+        Get all runs in the experiment
+        """
+
+        api = wandb.Api()
+        project_name = "diffusion-3D-features"
+        filter = {"tags": cls.experiment_name}
+        runs = api.runs(project_name, filters=filter)
+        runs = list(runs)
+
+        return runs
+
+    def get_runs_to_remove(self):
         # new runs, and existing runs
         new_cfgs = self.run_configs()
-        existing_runs = self.get_runs_in_group(group)
-        existing_cfgs = [OmegaConf.create(run.config) for run in existing_runs]
+        existing_runs = self.get_logged_runs()
 
-        # find runs to delete
-        del_runs = []
-        keep_runs = []
+        # find runs to remove
+        remove_runs = []
+
+        # check all existing runs
         for existing_run in existing_runs:
             existing_cfg = OmegaConf.create(existing_run.config)
             in_new = False
@@ -78,9 +279,15 @@ class WandbExperiment:
                 is_equiv = equivalent_configs(existing_cfg, new_cfg)
                 in_new |= is_equiv
             if not in_new:
-                del_runs.append(existing_run)
-            else:
-                keep_runs.append(existing_run)
+                remove_runs.append(existing_run)
+
+        return remove_runs
+
+    def get_configs_to_run(self):
+        # new runs, and existing runs
+        new_cfgs = self.run_configs()
+        existing_runs = self.get_logged_runs()
+        existing_cfgs = [OmegaConf.create(run.config) for run in existing_runs]
 
         # find runs to execute
         exec_configs = []
@@ -92,53 +299,23 @@ class WandbExperiment:
             if not in_existing:
                 exec_configs.append(new_cfg)
 
-        if force_rerun:
-            del_runs.extend(keep_runs)
-            keep_configs = [OmegaConf.create(run.config) for run in keep_runs]
-            exec_configs.extend(keep_configs)
+        return exec_configs
+
+    def execute_runs(self, dry_run=False):
+        remove_runs = self.get_runs_to_remove()
+        exec_configs = self.get_configs_to_run()
 
         if dry_run:
-            print(f"Would delete {len(del_runs)} runs")
+            print(f"Would remove {len(remove_runs)} runs")
+            print_runs_table(remove_runs, show_distinctive_cofig=False)
+
             print(f"Would execute {len(exec_configs)} new runs")
             return
 
-        print(f"Deleting {len(del_runs)} runs")
-        for r in del_runs:
-            r.delete(delete_artifacts=True)
+        print(f"Deleting {len(remove_runs)} runs")
+        for r in remove_runs:
+            update_tags(r, remove_tags=[self.experiment_name])
 
         print(f"Executing {len(exec_configs)} new runs")
         for cfg in exec_configs:
-            self._execute_run(cfg, group)
-
-    @classmethod
-    def find_latest_group(cls) -> str:
-        """
-        Find the latest group name for this experiment
-        """
-
-        api = wandb.Api()
-        project_name = "diffusion-3D-features"
-        experient_filter = {"tags": cls.experiment_name}
-        runs = api.runs(project_name, filters=experient_filter)
-        runs = list(runs)
-        if len(runs) == 0:
-            return None
-        latest_group = runs[-1].group
-        return latest_group
-
-    @classmethod
-    def get_runs_in_group(cls, group: str = None) -> List[Run]:
-        """
-        Get all runs in a group
-        """
-
-        if group is None:
-            group = cls.find_latest_group()
-
-        api = wandb.Api()
-        project_name = "diffusion-3D-features"
-        filter = {"tags": cls.experiment_name, "group": group}
-        runs = api.runs(project_name, filters=filter)
-        runs = list(runs)
-
-        return runs
+            self.execute_run(cfg)

@@ -25,21 +25,29 @@ from text3d2video.util import ordered_sample
 
 
 @dataclass
+class ModelConfig:
+    sd_repo: str
+    controlnet_repo: str
+    scheduler: Any
+
+
+@dataclass
 class RunGenerativeRenderingConfig:
+    run: RunConfig
     out_artifact: str
     prompt: str
     animation: AnimationConfig
-    run: RunConfig
     save_tensors: GrSaveConfig
     generative_rendering: GenerativeRenderingConfig
     noise_initialization: Any
+    model: ModelConfig
 
 
 cs = ConfigStore.instance()
-cs.store(name="generative_rendering", node=RunGenerativeRenderingConfig)
+cs.store(name="run_generative_rendering", node=RunGenerativeRenderingConfig)
 
 
-@hydra.main(config_path="../config", config_name="generative_rendering")
+@hydra.main(config_path="../config", config_name="run_generative_rendering")
 def run(cfg: RunGenerativeRenderingConfig):
     # init wandb
     do_run = wbu.setup_run(cfg.run, cfg)
