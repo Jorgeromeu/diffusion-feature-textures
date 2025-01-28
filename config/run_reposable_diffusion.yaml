@@ -3,45 +3,22 @@ defaults:
   - run: default
   - model: stable_diffusion_v1_5
   - noise_initialization: uv
+  - save_tensors: disabled
 
-animation:
+source_frames:
+  artifact_tag: "booty:latest"
+  n_frames: 1
+
+target_frames:
   artifact_tag: "booty:latest"
   n_frames: 20
 
-prompt: "Realistic Deadpool, Simple White Background"
-out_artifact: "video"
+run:
+  job_type: "reposable_diffusion"
 
-save_tensors:
-  enabled: false
-  n_frames: 5
-  n_timesteps: 5
-  out_artifact: "gr_data"
-  save_latents: false
-  save_q: true
-  save_k: true
-  save_v: true
-  save_kf_post_attn: true
-  save_aggregated_features: true
-  save_feature_images: true
-  module_paths:
-    [
-      # "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
-      # "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
-      # "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
-      # "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
-      # "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
-      # "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
-      # "mid_block.attentions.0.transformer_blocks.0.attn1",
-      "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-      "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-      "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-      "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-      "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-      "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-      "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-      "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-      "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-    ]
+prompt: "Realistic Deadpool, Simple White Background"
+video_artifact: "video"
+aggr_artifact: 'aggr'
 
 generative_rendering:
   resolution: 512

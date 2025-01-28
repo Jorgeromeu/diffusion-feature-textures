@@ -156,8 +156,11 @@ def find_runs(tag: str = None) -> List[Run]:
     return runs
 
 
-def print_runs_table(
-    runs: List[Run], show_url=False, show_state=True, show_distinctive_cofig=False
+def runs_table(
+    runs: List[Run],
+    show_url=False,
+    show_state=True,
+    show_distinctive_cofig=False,
 ):
     if len(runs) == 0:
         return
@@ -191,7 +194,7 @@ def print_runs_table(
     if show_distinctive_cofig:
         headers.extend(distinctive_keys)
 
-    print(tabulate.tabulate(rows, headers=headers))
+    return print(tabulate.tabulate(rows, headers=headers))
 
 
 class WandbExperiment:
@@ -250,15 +253,18 @@ class WandbExperiment:
         # TODO instantiate a job/process instead?
         self.run_fn(cfg)
 
-    def get_logged_runs(cls) -> List[Run]:
+    def get_logged_runs(cls, filters=None) -> List[Run]:
         """
         Get all runs in the experiment
         """
 
+        run_filters = {"tags": cls.experiment_name}
+        if filters is not None:
+            run_filters = {**run_filters, **filters}
+
         api = wandb.Api()
         project_name = "diffusion-3D-features"
-        filter = {"tags": cls.experiment_name}
-        runs = api.runs(project_name, filters=filter)
+        runs = api.runs(project_name, filters=run_filters)
         runs = list(runs)
 
         return runs
@@ -307,7 +313,7 @@ class WandbExperiment:
 
         if dry_run:
             print(f"Would remove {len(remove_runs)} runs")
-            print_runs_table(remove_runs, show_distinctive_cofig=False)
+            runs_table(remove_runs, show_distinctive_cofig=False)
 
             print(f"Would execute {len(exec_configs)} new runs")
             return

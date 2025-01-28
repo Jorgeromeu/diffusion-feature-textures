@@ -77,9 +77,14 @@ def get_artifact(artifact_tag: str):
     return api_artifact(artifact_tag)
 
 
-def first_logged_artifact_of_type(run, artifact_type: str) -> Artifact:
+def first_logged_artifact_of_type(
+    run, artifact_type: str, name: str = None
+) -> Artifact:
     for artifact in run.logged_artifacts():
         if artifact.type == artifact_type:
+            if name is None or artifact.name.startswith(name):
+                return artifact
+
             return artifact
     return None
 
