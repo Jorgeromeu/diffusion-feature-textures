@@ -1,6 +1,8 @@
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Callable, List
+from typing import Callable, DefaultDict, List
 
+import numpy as np
 from moviepy.editor import CompositeVideoClip, ImageSequenceClip, TextClip, clips_array
 
 import text3d2video.wandb_util as wbu
@@ -262,4 +264,4 @@ def group_and_sort(
     if sort_y_fun is not None:
         groups.sort(key=lambda group: sort_y_fun(group[0]))
 
-    return groups
+    return np.array(groups, dtype=object)

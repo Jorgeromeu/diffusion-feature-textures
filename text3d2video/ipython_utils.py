@@ -14,6 +14,10 @@ def transpose_list_of_lists(lol: List[List]):
     return list(map(list, zip(*lol)))
 
 
+def map_list_of_lists(lol: List[List], fn):
+    return [[fn(x) for x in row] for row in lol]
+
+
 def display_ims_grid(
     images: List[List[Image]],
     scale=2.5,

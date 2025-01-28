@@ -43,13 +43,16 @@ class RunGenerativeRenderingConfig:
     model: ModelConfig
 
 
+JOB_TYPE = "run_generative_rendering"
+
 cs = ConfigStore.instance()
-cs.store(name="run_generative_rendering", node=RunGenerativeRenderingConfig)
+cs.store(name=JOB_TYPE, node=RunGenerativeRenderingConfig)
 
 
-@hydra.main(config_path="../config", config_name="run_generative_rendering")
+@hydra.main(config_path="../config", config_name=JOB_TYPE)
 def run(cfg: RunGenerativeRenderingConfig):
     # init wandb
+    cfg.run.job_type = JOB_TYPE
     do_run = wbu.setup_run(cfg.run, cfg)
     if not do_run:
         return

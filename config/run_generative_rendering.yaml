@@ -8,9 +8,6 @@ animation:
   artifact_tag: "booty:latest"
   n_frames: 20
 
-run:
-  job_type: "generate_video"
-
 prompt: "Realistic Deadpool, Simple White Background"
 out_artifact: "video"
 

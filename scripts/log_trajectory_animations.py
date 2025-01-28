@@ -14,9 +14,9 @@ from text3d2video.camera_trajectories import (
     BarrelRollPartial,
     BarrelRollPartialUpsideDown,
     NamedCameraTrajectory,
-    OrthographicPanDiagonal,
     OrthographicPanHorizontal,
-    OrthographicPanVertical,
+    RotationFull,
+    RotationPartial,
 )
 from text3d2video.mesh_processing import normalize_meshes
 from text3d2video.rendering import render_depth_map
@@ -36,6 +36,7 @@ def log_cam_movement_animations(
     trajectories: List[NamedCameraTrajectory],
     N: int,
 ):
+    wandb.init(project="diffusion-3D-features", job_type="log_artifact")
     # read meshes
     meshes = load_objs_as_meshes(obj_paths)
     meshes_normalized = normalize_meshes(meshes)
@@ -64,7 +65,6 @@ def log_cam_movement_animations(
             anim.write_frames(cams, mesh_frames)
             anim.write_uv_data(mesh_scene.verts_uvs, mesh_scene.faces_uvs)
 
-            wandb.init(project="diffusion-3D-features", job_type="log_artifact")
             anim.log_if_enabled()
 
             # log depth clip
@@ -74,22 +74,18 @@ def log_cam_movement_animations(
             clip = pil_frames_to_clip(depth_maps, duration=2)
             wbu.log_moviepy_clip("animation", clip)
 
-            wandb.finish()
+    wandb.finish()
 
 
 if __name__ == "__main__":
     obj_paths = ["data/meshes/cat.obj", "data/meshes/mixamo-human.obj"]
     trajectories: List[NamedCameraTrajectory] = [
-        # RotationFull(),
-        # RotationPartial(),
-        # Rotation90(),
-        # OrthographicPan(),
-        # FoVZoom(),
-        # BarrelRoll(),
+        RotationFull(),
+        RotationPartial(),
+        OrthographicPanHorizontal(),
+        BarrelRoll(),
         BarrelRollPartial(),
         BarrelRollPartialUpsideDown(),
-        # OrthographicPanHorizontal(),
-        # OrthographicPanVertical(),
-        # OrthographicPanDiagonal(),
     ]
+
     log_cam_movement_animations(obj_paths, trajectories, N=100)
