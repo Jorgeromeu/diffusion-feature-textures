@@ -7,7 +7,7 @@ from text3d2video.artifacts.diffusion_data import (
     DiffusionData,
     LatentsWriter,
 )
-from text3d2video.wandb_util import ArtifactWrapper
+from text3d2video.utilities.wandb_util import ArtifactWrapper
 
 
 @dataclass

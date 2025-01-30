@@ -118,7 +118,7 @@ class SDPipeline(DiffusionPipeline):
     ):
         self.data_artifact = SdDataArtifact.init_from_config(sd_save_config)
         self.data_artifact.begin_recording(self.scheduler, len(prompts))
-        self.attn_processor.data_artifact = self.data_artifact
+        self.attn_processor.attn_writer = self.data_artifact.attn_writer
 
         # number of images being generated
         batch_size = len(prompts)
@@ -137,13 +137,12 @@ class SDPipeline(DiffusionPipeline):
         for _, t in enumerate(tqdm(self.scheduler.timesteps)):
             self.data_artifact.latents_writer.write_latents_batched(t, latents)
 
-            self.attn_processor.cur_timestep = t
-
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             # diffusion step
+            self.attn_processor.cur_timestep = t
             self.attn_processor.chunk_frame_indices = torch.arange(batch_size)
             noise_pred = self.unet(
                 latent_model_input,
