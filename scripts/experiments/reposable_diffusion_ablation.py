@@ -14,7 +14,7 @@ from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.evaluation.video_comparison import (
     VideoLabel,
     add_label_to_clip,
-    group_and_sort,
+    group_into_array,
     video_grid,
 )
 from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
@@ -23,7 +23,6 @@ from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
     RunConfig,
 )
-from text3d2video.ipython_utils import map_list_of_lists
 from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.video_util import extend_clip_to_match_duration
 
@@ -48,13 +47,13 @@ class ReposableDiffusionAblationExperimentConfig:
     model: ModelConfig
 
 
-@dataclass
+@dataclass(frozen=True, order=True)
 class InjectionConfig:
+    index: int
     name: str
     attend_to_self: bool
     pre_attn_injection: bool
     post_attn_injection: bool
-    index: int
 
 
 class ReposableDiffusionAblationExperiment(WandbExperiment):
@@ -67,35 +66,35 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             index=0,
         ),
         InjectionConfig(
-            name="Inject KV",
+            name="Attend to Source",
             attend_to_self=False,
             pre_attn_injection=True,
             post_attn_injection=False,
             index=1,
         ),
         InjectionConfig(
-            name="Inject KV + Attend to Self",
+            name="Attend to Source + Self",
             attend_to_self=True,
             pre_attn_injection=True,
             post_attn_injection=False,
             index=2,
         ),
         InjectionConfig(
-            name="Inject Post",
+            name="Post Attn",
             attend_to_self=False,
             pre_attn_injection=False,
             post_attn_injection=True,
             index=3,
         ),
         InjectionConfig(
-            name="Inject KV + Post Attn",
+            name="Post Attn + Attend to source",
             attend_to_self=False,
             pre_attn_injection=True,
             post_attn_injection=True,
             index=4,
         ),
         InjectionConfig(
-            name="Inject KV + Post attn + Attend to Self",
+            name="Post Attn + Attend to source+self",
             attend_to_self=True,
             pre_attn_injection=True,
             post_attn_injection=True,
@@ -175,11 +174,12 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
 
             return injection_config
 
-        runs_grouped = group_and_sort(
+        runs_grid, dim_keys = group_into_array(
             runs,
-            group_fun=scene_key,
-            sort_x_fun=lambda r: injection_config_key(r).index,
+            dim_key_fns=[scene_key, injection_config_key],
+            return_keys=True,
         )
+        col_labels = [key.name for key in dim_keys[1]]
 
         def get_output_video(run):
             artifacts = list(run.logged_artifacts())
@@ -202,13 +202,12 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
 
             return video
 
-        videos_grouped = map_list_of_lists(runs_grouped, get_output_video)
-        videos_grouped = np.array(videos_grouped, dtype=object)
+        videos_grid = np.vectorize(get_output_video)(runs_grid)
 
-        # get all aggr vids
+        # find aggregation vids
         aggr_vids = []
-        for row in runs_grouped:
-            r = row[0]
+        col_0 = runs_grid[:, 0]
+        for r in col_0:
             artifacts = list(r.logged_artifacts())
             aggr_artifact = None
             for artifact in artifacts:
@@ -219,18 +218,19 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             aggr_vid = aggr_artifact.get_moviepy_clip()
 
             aggr_vid = extend_clip_to_match_duration(
-                aggr_vid, videos_grouped[0][0].duration
+                aggr_vid, videos_grid[0][0].duration
             )
             aggr_vids.append(aggr_vid)
 
         aggr_vids = np.array(aggr_vids, dtype=object)
-        all_vids = np.concatenate([aggr_vids[:, np.newaxis], videos_grouped], axis=1)
 
-        row = runs_grouped[0]
-        video_labels = [injection_config_key(r).name for r in row]
+        all_vids = np.concatenate([aggr_vids[:, np.newaxis], videos_grid], axis=1)
 
-        labels = ["Aggregation Poses"] + video_labels
+        labels = ["Source"] + col_labels
         if not with_text:
             labels = None
-        comparison_grid = video_grid(all_vids, x_labels=labels)
+
+        comparison_grid = video_grid(
+            all_vids, x_labels=labels, col_gap_indices=[0, 1, 3]
+        )
         return comparison_grid
