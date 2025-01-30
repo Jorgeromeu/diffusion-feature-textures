@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from turtle import position
 
 import numpy as np
 from hydra.compose import compose
@@ -12,7 +11,6 @@ from scripts.run_generative_rendering import ModelConfig
 from scripts.run_reposable_diffusion import RunReposableDiffusionConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.clip_metrics import CLIPMetrics
 from text3d2video.evaluation.video_comparison import (
     VideoLabel,
     add_label_to_clip,
