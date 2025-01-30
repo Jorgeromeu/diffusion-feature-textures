@@ -41,3 +41,19 @@ class GenerativeRenderingConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: list[str]
+
+
+@dataclass
+class ReposableDiffusionConfig:
+    seed: int
+    resolution: int
+    do_pre_attn_injection: bool
+    do_post_attn_injection: bool
+    feature_blend_alpha: float
+    attend_to_self_kv: bool
+    mean_features_weight: float
+    chunk_size: int
+    num_inference_steps: int
+    guidance_scale: float
+    controlnet_conditioning_scale: float
+    module_paths: list[str]

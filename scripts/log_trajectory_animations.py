@@ -6,7 +6,7 @@ from pytorch3d.io import load_obj, load_objs_as_meshes
 from pytorch3d.structures import Meshes
 from rerun import Tensor
 
-import text3d2video.wandb_util as wbu
+import text3d2video.utilities.wandb_util as wbu
 import wandb
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.camera_trajectories import (
@@ -18,9 +18,9 @@ from text3d2video.camera_trajectories import (
     RotationFull,
     RotationPartial,
 )
-from text3d2video.mesh_processing import normalize_meshes
 from text3d2video.rendering import render_depth_map
-from text3d2video.video_util import pil_frames_to_clip
+from text3d2video.utilities.mesh_processing import normalize_meshes
+from text3d2video.utilities.video_util import pil_frames_to_clip
 
 
 @dataclass

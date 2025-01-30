@@ -7,7 +7,7 @@ from pytorch3d.structures import Meshes
 from torch import Tensor
 
 from text3d2video.util import ordered_sample
-from text3d2video.wandb_util import ArtifactWrapper
+from text3d2video.utilities.wandb_util import ArtifactWrapper
 
 
 class AnimationArtifact(ArtifactWrapper):

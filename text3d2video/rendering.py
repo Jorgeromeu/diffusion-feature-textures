@@ -13,28 +13,6 @@ from pytorch3d.structures import Meshes
 from torch import Tensor, nn
 
 
-class UVShader(nn.Module):
-    def __init__(self, device="cuda", blend_params=BlendParams()):
-        super().__init__()
-        self.device = device
-        self.blend_params = blend_params
-
-    def forward(self, fragments, meshes):
-        packing_list = [
-            i[j]
-            for i, j in zip(
-                meshes.textures.verts_uvs_list(), meshes.textures.faces_uvs_list()
-            )
-        ]
-        faces_verts_uvs = torch.cat(packing_list)
-
-        pixel_uvs = interpolate_face_attributes(
-            fragments.pix_to_face, fragments.bary_coords, faces_verts_uvs
-        )
-
-        return pixel_uvs
-
-
 class FeatureShader(nn.Module):
     def __init__(self, device="cuda", blend_params=BlendParams()):
         super().__init__()
@@ -105,26 +83,3 @@ def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
     renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
 
     return renderer
-
-
-def rasterize_vertex_features(
-    cameras: CamerasBase, meshes: Meshes, res: int, vertex_features: Tensor
-):
-    rasterizer = make_rasterizer(cameras, res)
-
-    renders = []
-    for mesh in meshes:
-        fragments = rasterizer(mesh)
-
-        # B, F, V, D storing feature for each vertex in each face
-        face_vert_features = vertex_features[mesh.faces_list()[0]]
-
-        # interpolate with barycentric coords
-        pixel_features = interpolate_face_attributes(
-            fragments.pix_to_face, fragments.bary_coords, face_vert_features
-        )
-
-        pixel_features = rearrange(pixel_features, "1 h w 1 d -> d h w")
-        renders.append(pixel_features)
-
-    return torch.stack(renders)

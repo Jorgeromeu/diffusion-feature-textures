@@ -6,12 +6,12 @@ from einops import rearrange
 from torch import Tensor
 
 from text3d2video.artifacts.sd_data import SdDataArtifact
-from text3d2video.attention_utils import (
+from text3d2video.sd_feature_extraction import get_module_path
+from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
     extended_attn_kv_hidden_states,
     memory_efficient_attention,
 )
-from text3d2video.sd_feature_extraction import get_module_path
 
 
 class StyleAlignedAttentionProcessor:

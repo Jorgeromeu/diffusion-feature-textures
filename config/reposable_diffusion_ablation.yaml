@@ -22,6 +22,16 @@ scenes:
       src_animation: { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 1 },
       tgt_animation: { artifact_tag: "mixamo-human_orth_pan:latest", n_frames: 20 },
     },
+    {
+      prompt: "Realistic Deadpool, Simple White Background",
+      src_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 1 },
+      tgt_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 20 }
+    },
+    {
+      prompt: "Realistic Deadpool, Simple White Background",
+      src_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 10 },
+      tgt_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 20 }
+    }
   ]
 
 generative_rendering:

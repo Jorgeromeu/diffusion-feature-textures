@@ -8,20 +8,20 @@ from pytorch3d.structures import Meshes, join_meshes_as_batch
 from torch import Tensor
 from tqdm import tqdm
 
-import text3d2video.rerun_util as ru
+import text3d2video.utilities.rerun_util as ru
 import wandb
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
-from text3d2video.camera_utils import focal_length_to_fov
-from text3d2video.coord_utils import (
+from text3d2video.rendering import render_depth_map
+from text3d2video.util import ordered_sample
+from text3d2video.utilities.camera_utils import focal_length_to_fov
+from text3d2video.utilities.coord_utils import (
     BLENDER_CAM_TO_PT3D_CAM,
     BLENDER_WORLD_TO_PT3D_WORLD,
     apply_transform_homogeneous,
     assemble_transform_srt,
     decompose_transform_srt,
 )
-from text3d2video.rendering import render_depth_map
-from text3d2video.usd_utils import triangulate_usd_mesh, usd_uvs_to_pt3d_uvs
-from text3d2video.util import ordered_sample
+from text3d2video.utilities.usd_utils import triangulate_usd_mesh, usd_uvs_to_pt3d_uvs
 
 BLENDER_WORLD_CONVENTION = rr.ViewCoordinates.RFU
 BLENDER_CAM_CONVENTION = rr.ViewCoordinates.RUB

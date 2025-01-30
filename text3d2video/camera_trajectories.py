@@ -5,7 +5,10 @@ from pytorch3d.renderer import (
     FoVPerspectiveCameras,
 )
 
-from text3d2video.camera_placement import front_facing_extrinsics, turntable_extrinsics
+from text3d2video.utilities.camera_placement import (
+    front_facing_extrinsics,
+    turntable_extrinsics,
+)
 
 
 class NamedCameraTrajectory:

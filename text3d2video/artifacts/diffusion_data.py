@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
@@ -6,20 +5,12 @@ import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
-from text3d2video.h5_util import (
+from text3d2video.util import assert_tensor_shape, assert_tensor_shapes, ordered_sample
+from text3d2video.utilities.h5_util import (
     print_datasets,
     read_tensor_from_dataset,
     write_tensor_as_dataset,
 )
-from text3d2video.util import assert_tensor_shape, assert_tensor_shapes, ordered_sample
-
-
-@dataclass
-class DiffusionDataCfg:
-    enabled: bool
-    n_save_steps: int
-    n_save_frames: int
-    attn_paths: list[str]
 
 
 class DiffusionData:
