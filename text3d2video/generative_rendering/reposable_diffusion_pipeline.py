@@ -4,8 +4,9 @@ from pytorch3d.structures import Meshes, join_meshes_as_batch
 from tqdm import tqdm
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
+from text3d2video.backprojection import project_vertices_to_cameras
 from text3d2video.generative_rendering.configs import (
-    GenerativeRenderingConfig,
+    ReposableDiffusionConfig,
 )
 from text3d2video.generative_rendering.generative_rendering_attn import (
     GenerativeRenderingAttn,
@@ -15,9 +16,6 @@ from text3d2video.generative_rendering.generative_rendering_pipeline import (
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import render_depth_map
-from text3d2video.util import (
-    project_vertices_to_cameras,
-)
 
 
 class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
@@ -31,12 +29,12 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         aggregation_cams: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
-        generative_rendering_config: GenerativeRenderingConfig,
+        reposable_diffusion_config: ReposableDiffusionConfig,
         noise_initializer: NoiseInitializer,
         gr_save_config: GrSaveConfig,
     ):
         # setup configs for use throughout pipeline
-        self.gr_config = generative_rendering_config
+        self.gr_config = reposable_diffusion_config
         self.noise_initializer = noise_initializer
 
         # set up attention processor

@@ -8,7 +8,7 @@ from diffusers import ControlNetModel
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 
-import text3d2video.wandb_util as wbu
+import text3d2video.utilities.wandb_util as wbu
 import wandb
 from scripts.run_generative_rendering import ModelConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
@@ -102,7 +102,7 @@ def run(cfg: RunReposableDiffusionConfig):
         aggr_cams,
         uv_verts,
         uv_faces,
-        generative_rendering_config=cfg.generative_rendering,
+        reposable_diffusion_config=cfg.generative_rendering,
         noise_initializer=noise_initializer,
         gr_save_config=cfg.save_tensors,
     )

@@ -1,22 +1,29 @@
 from dataclasses import dataclass
 
+import numpy as np
 from hydra.compose import compose
 from hydra.initialize import initialize
 from omegaconf import OmegaConf
 
 import scripts.run_generative_rendering
-import text3d2video.wandb_util as wbu
+import text3d2video.utilities.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig, RunGenerativeRenderingConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.evaluation.video_comparison import group_and_sort, video_grid
-from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
     GenerativeRenderingConfig,
     RunConfig,
 )
 from text3d2video.noise_initialization import UVNoiseInitializer
+from text3d2video.utilities.experiment_util import (
+    WandbExperiment,
+    object_to_instantiate_config,
+)
+from text3d2video.utilities.video_comparison import (
+    group_into_array,
+    video_grid,
+)
 
 """
 Example experiment which runs generative rendering on a set of scenes and prompts
@@ -72,20 +79,20 @@ class ExampleExperiment(WandbExperiment):
         def run_cfg(run) -> RunGenerativeRenderingConfig:
             return OmegaConf.create(run.config)
 
-        runs_grouped = group_and_sort(
-            runs,
-            group_fun=lambda r: run_cfg(r).prompt,
-            sort_x_fun=lambda r: run_cfg(r).animation.artifact_tag,
-        )
+        def row_key(run):
+            return run_cfg(run).prompt
 
-        videos_grid = []
-        for row in runs_grouped:
-            row_videos = []
-            for run in row:
-                video_artifact = wbu.first_logged_artifact_of_type(run, "video")
-                video_artifact = VideoArtifact.from_wandb_artifact(video_artifact)
-                row_videos.append(video_artifact.get_moviepy_clip())
-            videos_grid.append(row_videos)
+        def col_key(run):
+            return run_cfg(run).animation.artifact_tag
+
+        runs_grouped = group_into_array(runs, dim_key_fns=[row_key, col_key])
+
+        def get_video(run):
+            video_artifact = wbu.first_logged_artifact_of_type(run, "video")
+            video_artifact = VideoArtifact.from_wandb_artifact(video_artifact)
+            return video_artifact.get_moviepy_clip()
+
+        videos_grid = np.vectorize(get_video)(runs_grouped)
 
         comparison_vid = video_grid(videos_grid)
         return comparison_vid

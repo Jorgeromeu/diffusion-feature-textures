@@ -1,17 +1,16 @@
 from dataclasses import dataclass
 
+import numpy as np
 from hydra.compose import compose
 from hydra.initialize import initialize
 from omegaconf import OmegaConf
 
 import scripts.run_generative_rendering
-import text3d2video.wandb_util as wbu
+import text3d2video.utilities.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig, RunGenerativeRenderingConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.evaluation.video_comparison import group_and_sort, video_grid
-from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
     GenerativeRenderingConfig,
@@ -19,7 +18,15 @@ from text3d2video.generative_rendering.configs import (
 )
 from text3d2video.noise_initialization import RandomNoiseInitializer, UVNoiseInitializer
 from text3d2video.rendering import render_depth_map
-from text3d2video.video_util import pil_frames_to_clip
+from text3d2video.utilities.experiment_util import (
+    WandbExperiment,
+    object_to_instantiate_config,
+)
+from text3d2video.utilities.video_comparison import (
+    group_into_array,
+    video_grid,
+)
+from text3d2video.utilities.video_util import pil_frames_to_clip
 
 """
 Example experiment which runs generative rendering on a set of scenes and prompts
@@ -82,28 +89,28 @@ class BadPosesExperiment(WandbExperiment):
     def video_comparison(self, show_depth_videos=True):
         runs = self.get_logged_runs()
 
-        videos = []
-
         def cfg(run) -> RunGenerativeRenderingConfig:
             return OmegaConf.create(run.config)
 
-        # arrange runs into grid
-        runs_grid = group_and_sort(
+        def row_fun(r):
+            return cfg(r).generative_rendering.do_post_attn_injection
+
+        def col_fun(r):
+            return cfg(r).animation.artifact_tag
+
+        # group runs into grid
+        runs_grid = group_into_array(
             runs,
-            group_fun=lambda r: cfg(r).generative_rendering.do_post_attn_injection,
-            sort_x_fun=lambda r: cfg(r).animation.artifact_tag,
+            dim_key_fns=[row_fun, col_fun],
         )
 
-        # get grid of videos
-        videos = []
-        for row in runs_grid:
-            row_videos = []
-            for run in row:
-                video_artifact = wbu.first_logged_artifact_of_type(run, "video")
-                video_artifact = VideoArtifact.from_wandb_artifact(video_artifact)
-                video_frames = video_artifact.get_moviepy_clip()
-                row_videos.append(video_frames)
-            videos.append(row_videos)
+        def get_video(run):
+            video_artifact = wbu.first_logged_artifact_of_type(run, "video")
+            video_artifact = VideoArtifact.from_wandb_artifact(video_artifact)
+            video_frames = video_artifact.get_moviepy_clip()
+            return video_frames
+
+        videos = np.vectorize(get_video)(runs_grid)
 
         if show_depth_videos:
             # for each column get depth-video

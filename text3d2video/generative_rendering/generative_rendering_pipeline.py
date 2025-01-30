@@ -19,6 +19,10 @@ from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
+from text3d2video.backprojection import (
+    aggregate_features_precomputed_vertex_positions,
+    project_vertices_to_cameras,
+)
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
 )
@@ -29,10 +33,6 @@ from text3d2video.generative_rendering.generative_rendering_attn import (
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import make_feature_renderer, render_depth_map
 from text3d2video.sd_feature_extraction import AttnLayerId
-from text3d2video.util import (
-    aggregate_features_precomputed_vertex_positions,
-    project_vertices_to_cameras,
-)
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
