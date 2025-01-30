@@ -10,10 +10,19 @@ from diffusers import (
 from diffusers.image_processor import VaeImageProcessor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
-from typeguard import typechecked
+
+from text3d2video.artifacts.sd_data import SdDataArtifact, SdDataConfig
+from text3d2video.noise_initialization import (
+    FixedNoiseInitializer,
+    RandomNoiseInitializer,
+)
+from text3d2video.style_aligned_attn import StyleAlignedAttentionProcessor
 
 
 class SDPipeline(DiffusionPipeline):
+    attn_processor: StyleAlignedAttentionProcessor
+    data_artifact: SdDataArtifact
+
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -70,19 +79,14 @@ class SDPipeline(DiffusionPipeline):
         return cond_embeddings, uncond_embeddings
 
     def prepare_latents(self, batch_size: int, out_resolution: int, generator=None):
-        latent_res = out_resolution // 8
-        in_channels = self.unet.config.in_channels
-        latents = torch.randn(
-            batch_size,
-            in_channels,
-            latent_res,
-            latent_res,
-            device=self.device,
+        noise_init = FixedNoiseInitializer()
+        noise_init = RandomNoiseInitializer()
+        return noise_init.initial_noise(
             generator=generator,
+            device=self.device,
             dtype=self.dtype,
+            n_frames=batch_size,
         )
-
-        return latents
 
     def latents_to_images(self, latents: torch.FloatTensor, generator=None):
         # scale latents
@@ -103,15 +107,19 @@ class SDPipeline(DiffusionPipeline):
         return images
 
     @torch.no_grad()
-    @typechecked
     def __call__(
         self,
         prompts: List[str],
+        sd_save_config: SdDataConfig,
         res=512,
         num_inference_steps=30,
         guidance_scale=7.5,
         generator=None,
     ):
+        self.data_artifact = SdDataArtifact.init_from_config(sd_save_config)
+        self.data_artifact.begin_recording(self.scheduler, len(prompts))
+        self.attn_processor.data_artifact = self.data_artifact
+
         # number of images being generated
         batch_size = len(prompts)
 
@@ -127,11 +135,16 @@ class SDPipeline(DiffusionPipeline):
 
         # denoising loop
         for _, t in enumerate(tqdm(self.scheduler.timesteps)):
+            self.data_artifact.latents_writer.write_latents_batched(t, latents)
+
+            self.attn_processor.cur_timestep = t
+
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             # diffusion step
+            self.attn_processor.chunk_frame_indices = torch.arange(batch_size)
             noise_pred = self.unet(
                 latent_model_input,
                 t,
@@ -145,6 +158,8 @@ class SDPipeline(DiffusionPipeline):
 
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+        self.data_artifact.latents_writer.write_latents_batched(0, latents)
 
         # decode latents
         return self.latents_to_images(latents, generator)
