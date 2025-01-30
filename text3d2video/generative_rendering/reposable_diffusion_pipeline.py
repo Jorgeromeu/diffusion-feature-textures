@@ -4,6 +4,7 @@ from pytorch3d.structures import Meshes, join_meshes_as_batch
 from tqdm import tqdm
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
+from text3d2video.backprojection import project_vertices_to_cameras
 from text3d2video.generative_rendering.configs import (
     ReposableDiffusionConfig,
 )
@@ -15,9 +16,6 @@ from text3d2video.generative_rendering.generative_rendering_pipeline import (
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import render_depth_map
-from text3d2video.util import (
-    project_vertices_to_cameras,
-)
 
 
 class ReposableDiffusionPipeline(GenerativeRenderingPipeline):

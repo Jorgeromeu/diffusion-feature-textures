@@ -11,20 +11,23 @@ from scripts.run_generative_rendering import ModelConfig
 from scripts.run_reposable_diffusion import RunReposableDiffusionConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.evaluation.video_comparison import (
-    VideoLabel,
-    add_label_to_clip,
-    group_into_array,
-    video_grid,
-)
-from text3d2video.experiment_util import WandbExperiment, object_to_instantiate_config
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
     GenerativeRenderingConfig,
     RunConfig,
 )
 from text3d2video.noise_initialization import UVNoiseInitializer
-from text3d2video.video_util import extend_clip_to_match_duration
+from text3d2video.utilities.experiment_util import (
+    WandbExperiment,
+    object_to_instantiate_config,
+)
+from text3d2video.utilities.video_comparison import (
+    VideoLabel,
+    add_label_to_clip,
+    group_into_array,
+    video_grid,
+)
+from text3d2video.utilities.video_util import extend_clip_to_match_duration
 
 """
 Example experiment which runs generative rendering on a set of scenes and prompts
@@ -153,8 +156,8 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
         def scene_key(run):
             cfg = run_cfg(run)
             prompt = cfg.prompt
-            src_anim = cfg.source_frames.artifact_tag
-            tgt_anim = cfg.target_frames.artifact_tag
+            src_anim = cfg.source_frames
+            tgt_anim = cfg.target_frames
             return f"{prompt}-{src_anim}-{tgt_anim}"
 
         def injection_config_key(run):
@@ -181,48 +184,33 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
         )
         col_labels = [key.name for key in dim_keys[1]]
 
-        def get_output_video(run):
+        def get_videos(run):
             artifacts = list(run.logged_artifacts())
 
             vid_art = None
+            aggr_art = None
             for artifact in artifacts:
                 if artifact.name.startswith("video"):
                     vid_art = artifact
+                elif artifact.name.startswith("aggr"):
+                    aggr_art = artifact
 
             vid_art = VideoArtifact.from_wandb_artifact(vid_art)
             video = vid_art.get_moviepy_clip()
 
-            if clip_metrics is not None:
-                prompt_fidelity = clip_metrics.prompt_fidelity(vid_art)
-                frame_consistency = clip_metrics.frame_consistency(vid_art)
-                label_txt = f"PF: {prompt_fidelity:.4f}\nFC: {frame_consistency:.4f}"
-                label = VideoLabel(content=label_txt)
-                if with_text:
-                    video = add_label_to_clip(video, label, position=("left", "bottom"))
+            aggr_art = VideoArtifact.from_wandb_artifact(aggr_art)
+            aggr_vid = aggr_art.get_moviepy_clip()
 
-            return video
+            return video, aggr_vid
 
-        videos_grid = np.vectorize(get_output_video)(runs_grid)
+        videos_grid, aggr_vids_grid = np.vectorize(get_videos)(runs_grid)
+        aggr_vids = aggr_vids_grid[:, 0]
 
-        # find aggregation vids
-        aggr_vids = []
-        col_0 = runs_grid[:, 0]
-        for r in col_0:
-            artifacts = list(r.logged_artifacts())
-            aggr_artifact = None
-            for artifact in artifacts:
-                if artifact.name.startswith("aggr"):
-                    aggr_artifact = artifact
-
-            aggr_artifact = VideoArtifact.from_wandb_artifact(aggr_artifact)
-            aggr_vid = aggr_artifact.get_moviepy_clip()
-
-            aggr_vid = extend_clip_to_match_duration(
-                aggr_vid, videos_grid[0][0].duration
+        # extend clips to match duration
+        for i, video in enumerate(aggr_vids):
+            aggr_vids[i] = extend_clip_to_match_duration(
+                video, videos_grid[0, 0].duration
             )
-            aggr_vids.append(aggr_vid)
-
-        aggr_vids = np.array(aggr_vids, dtype=object)
 
         all_vids = np.concatenate([aggr_vids[:, np.newaxis], videos_grid], axis=1)
 
