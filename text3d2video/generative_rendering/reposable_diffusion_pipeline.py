@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.generative_rendering.configs import (
-    GenerativeRenderingConfig,
+    ReposableDiffusionConfig,
 )
 from text3d2video.generative_rendering.generative_rendering_attn import (
     GenerativeRenderingAttn,
@@ -31,12 +31,12 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         aggregation_cams: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
-        generative_rendering_config: GenerativeRenderingConfig,
+        reposable_diffusion_config: ReposableDiffusionConfig,
         noise_initializer: NoiseInitializer,
         gr_save_config: GrSaveConfig,
     ):
         # setup configs for use throughout pipeline
-        self.gr_config = generative_rendering_config
+        self.gr_config = reposable_diffusion_config
         self.noise_initializer = noise_initializer
 
         # set up attention processor

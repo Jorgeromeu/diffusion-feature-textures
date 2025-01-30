@@ -1,6 +1,5 @@
-from collections import defaultdict
 from dataclasses import dataclass
-from typing import Callable, DefaultDict, List
+from typing import Callable, List
 
 import numpy as np
 from moviepy.editor import CompositeVideoClip, ImageSequenceClip, TextClip, clips_array

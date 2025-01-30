@@ -102,7 +102,7 @@ def run(cfg: RunReposableDiffusionConfig):
         aggr_cams,
         uv_verts,
         uv_faces,
-        generative_rendering_config=cfg.generative_rendering,
+        reposable_diffusion_config=cfg.generative_rendering,
         noise_initializer=noise_initializer,
         gr_save_config=cfg.save_tensors,
     )
