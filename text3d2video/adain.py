@@ -27,19 +27,3 @@ def adain_2D(
         size
     )
     return normalized_feat * style_std.expand(size) + style_mean.expand(size)
-
-
-def adain_1D(
-    content_feat: Float[Tensor, "B C T"], style_feat: Float[Tensor, "B C T"]
-) -> Tensor:
-    assert content_feat.size()[:2] == style_feat.size()[:2]
-    size = content_feat.size()
-
-    # compute mean and std for each channel
-    style_mean, style_std = calc_mean_std(style_feat)
-    content_mean, content_std = calc_mean_std(content_feat)
-
-    normalized_feat = (content_feat - content_mean.expand(size)) / content_std.expand(
-        size
-    )
-    return normalized_feat * style_std.expand(size) + style_mean.expand(size)

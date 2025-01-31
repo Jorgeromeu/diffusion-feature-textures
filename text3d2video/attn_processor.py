@@ -17,10 +17,13 @@ class DefaultAttnProcessor:
     Base attention processor that we can easily override with custom behavior
     """
 
-    cur_timestep: int = None
+    # internal state
     _cur_module_path: str
     _is_cross_attn: bool
     _is_self_attn: bool
+
+    # optionally hold the current timestep
+    cur_timestep: int = None
 
     # optionally hold the attention writer and chunk frame indices for saving qkv
     attn_writer: AttnFeaturesWriter = None
@@ -28,6 +31,12 @@ class DefaultAttnProcessor:
 
     def set_attn_data_writer(self, attn_writer: AttnFeaturesWriter):
         self.attn_writer = attn_writer
+
+    def set_cur_timestep(self, cur_timestep: int):
+        self.cur_timestep = cur_timestep
+
+    def set_chunk_frame_indices(self, chunk_frame_indices: Tensor):
+        self.chunk_frame_indices = chunk_frame_indices
 
     def write_qkv(self, qry: Tensor, key: Tensor, val: Tensor):
         if self.attn_writer is None:

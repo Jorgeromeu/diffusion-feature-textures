@@ -1,6 +1,16 @@
+from typing import Dict, List, Tuple
+
 import torch
-from pytorch3d.renderer import FoVPerspectiveCameras, join_cameras_as_batch
+from einops import rearrange
+from jaxtyping import Float
+from PIL import Image
+from pytorch3d.renderer import (
+    FoVPerspectiveCameras,
+    TexturesVertex,
+    join_cameras_as_batch,
+)
 from pytorch3d.structures import Meshes, join_meshes_as_batch
+from torch import Tensor
 from tqdm import tqdm
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
@@ -14,11 +24,38 @@ from text3d2video.generative_rendering.generative_rendering_attn import (
 from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
+from text3d2video.generative_rendering.reposable_diffusion_attn import (
+    ReposableDiffusionAttnMode,
+)
 from text3d2video.noise_initialization import NoiseInitializer
-from text3d2video.rendering import render_depth_map
+from text3d2video.rendering import make_feature_renderer, render_depth_map
+from text3d2video.sd_feature_extraction import AttnLayerId
 
 
 class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
+    def model_fwd_injection_source_frames(
+        self,
+        latents: Float[Tensor, "b f c h w"],
+        text_embeddings: Float[Tensor, "b f t d"],
+        depth_maps: List[Image.Image],
+        t: int,
+        pre_attn_features: Dict[str, Float[Tensor, "b f t d"]],
+        feature_images: Dict[str, Float[Tensor, "b f d h w"]],
+        frame_indices: Tensor,
+    ):
+        # set attn processor mode
+        self.attn_processor.mode = ReposableDiffusionAttnMode.FEATURE_INJECTION
+
+        # pass features to attn processor
+        self.attn_processor.post_attn_features = feature_images
+        self.attn_processor.pre_attn_features = pre_attn_features
+
+        # pass frame indices to attn processor
+        self.attn_processor.set_chunk_frame_indices(frame_indices)
+        noise_pred = self.model_forward(latents, text_embeddings, depth_maps, t)
+
+        return noise_pred
+
     @torch.no_grad()
     def __call__(
         self,
@@ -62,8 +99,11 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         # join meshes and cameras
         all_meshes = join_meshes_as_batch([frame_meshes, aggregation_meshes])
         all_cams = join_cameras_as_batch([frame_cams, aggregation_cams])
+
+        # indices of source and target frames
+        source_indices = torch.arange(n_frames, n_frames_total)
+        target_indices = torch.arange(n_frames)
         all_indices = torch.arange(n_frames_total)
-        aggr_indices = torch.arange(n_frames, n_frames_total)
 
         # render depth maps
         depth_maps = render_depth_map(all_meshes, all_cams, self.gr_config.resolution)
@@ -79,9 +119,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             all_meshes, all_cams, verts_uvs, faces_uvs, generator
         )
 
-        # indices to use in chunked inference loops
-        chunk_indices = torch.split(all_indices, self.gr_config.chunk_size)
-
         # get 2D vertex positions for each frame
         vert_xys, vert_indices = project_vertices_to_cameras(all_meshes, all_cams)
 
@@ -89,34 +126,30 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
             self.gr_data_artifact.latents_writer.write_latents_batched(t, latents)
 
-            # update timestep
-            self.attn_processor.cur_timestep = t
+            # set attn processor timestep
+            self.attn_processor.set_cur_timestep(t)
 
             # duplicate latents, for classifier-free guidance
             latents_stacked = torch.stack([latents] * 2)
             latents_stacked = self.scheduler.scale_model_input(latents_stacked, t)
 
-            # Diffusion step #1 on keyframes, to extract features
-            aggr_latents = latents_stacked[:, aggr_indices]
-            aggr_embeddings = stacked_text_embeddings[:, aggr_indices]
-            aggr_depth_maps = [depth_maps[i] for i in aggr_indices.tolist()]
+            # Diffusion step on source frames, to extract features
+            source_latents = latents_stacked[:, source_indices]
+            source_embeddings = stacked_text_embeddings[:, source_indices]
+            source_depth_maps = [depth_maps[i] for i in source_indices.tolist()]
 
             pre_attn_features, post_attn_features = (
                 self.model_forward_feature_extraction(
-                    aggr_latents,
-                    aggr_embeddings,
-                    aggr_depth_maps,
+                    source_latents,
+                    source_embeddings,
+                    source_depth_maps,
                     t,
                 )
             )
 
-            # save kf post attn features and indices
-            # self.gr_data_artifact.gr_writer.write_kf_indices(t, kf_indices)
-            # self.gr_data_artifact.gr_writer.write_kf_post_attn(t, post_attn_features)
-
-            # unify spatial features across keyframes as vertex features
-            aggr_vert_xys = [vert_xys[i] for i in aggr_indices.tolist()]
-            aggr_vert_indices = [vert_indices[i] for i in aggr_indices.tolist()]
+            # aggregate post-attn spatial features
+            aggr_vert_xys = [vert_xys[i] for i in source_indices.tolist()]
+            aggr_vert_indices = [vert_indices[i] for i in source_indices.tolist()]
             aggregated_3d_features = self.aggregate_feature_maps(
                 frame_meshes.num_verts_per_mesh()[0],
                 aggr_vert_xys,
@@ -129,35 +162,58 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 t, aggregated_3d_features
             )
 
-            # do inference in chunks
-            noise_preds = []
-            for chunk_frame_indices in chunk_indices:
-                # render chunk feature images
+            # diffusion step on source frames
+            source_noise_preds = []
+            for frame_indices in torch.split(source_indices, self.gr_config.chunk_size):
                 chunk_feature_images = self.render_feature_images(
-                    all_cams[chunk_frame_indices],
-                    all_meshes[chunk_frame_indices],
+                    all_cams[frame_indices],
+                    all_meshes[frame_indices],
                     aggregated_3d_features,
                 )
 
-                # Diffusion step #2 with pre and post attn feature injection
-                # get chunk inputs
-                chunk_latents = latents_stacked[:, chunk_frame_indices]
-                chunk_embeddings = stacked_text_embeddings[:, chunk_frame_indices]
-                chunk_depth_maps = [depth_maps[i] for i in chunk_frame_indices.tolist()]
+                chunk_latents = latents_stacked[:, frame_indices]
+                chunk_embeddings = stacked_text_embeddings[:, frame_indices]
+                chunk_depth_maps = [depth_maps[i] for i in frame_indices.tolist()]
 
-                noise_pred = self.model_forward_feature_injection(
+                noise_pred = self.model_fwd_injection_source_frames(
                     chunk_latents,
                     chunk_embeddings,
                     chunk_depth_maps,
                     t,
                     pre_attn_features,
                     chunk_feature_images,
-                    chunk_frame_indices,
+                    frame_indices,
                 )
-                noise_preds.append(noise_pred)
+                source_noise_preds.append(noise_pred)
+            source_noise_preds = torch.cat(source_noise_preds, dim=1)
 
-            # concatenate predictions
-            noise_pred_all = torch.cat(noise_preds, dim=1)
+            # diffusion steps with injection on target frames
+            target_noise_preds = []
+            for frame_indices in torch.split(target_indices, self.gr_config.chunk_size):
+                chunk_feature_images = self.render_feature_images(
+                    all_cams[frame_indices],
+                    all_meshes[frame_indices],
+                    aggregated_3d_features,
+                )
+
+                chunk_latents = latents_stacked[:, frame_indices]
+                chunk_embeddings = stacked_text_embeddings[:, frame_indices]
+                chunk_depth_maps = [depth_maps[i] for i in frame_indices.tolist()]
+
+                noise_pred = self.model_fwd_injection_source_frames(
+                    chunk_latents,
+                    chunk_embeddings,
+                    chunk_depth_maps,
+                    t,
+                    pre_attn_features,
+                    chunk_feature_images,
+                    frame_indices,
+                )
+                target_noise_preds.append(noise_pred)
+            target_noise_preds = torch.cat(target_noise_preds, dim=1)
+
+            noise_pred_all = torch.cat([target_noise_preds, source_noise_preds], dim=1)
+            torch.cuda.empty_cache()
 
             # preform classifier free guidance
             noise_pred_uncond, noise_pred_text = noise_pred_all
@@ -169,11 +225,11 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
-        # self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
+        self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
 
         # decode latents in chunks
         decoded_imgs = []
-        for chunk_frame_indices in chunk_indices:
+        for chunk_frame_indices in torch.split(all_indices, self.gr_config.chunk_size):
             chunk_latents = latents[chunk_frame_indices]
             chunk_images = self.decode_latents(chunk_latents, generator)
             decoded_imgs.extend(chunk_images)

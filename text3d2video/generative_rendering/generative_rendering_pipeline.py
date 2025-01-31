@@ -228,7 +228,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return pre_attn_features, post_attn_features
 
-    def model_forward_feature_injection(
+    def model_fwd_injection_source_frames(
         self,
         latents: Float[Tensor, "b f c h w"],
         text_embeddings: Float[Tensor, "b f t d"],
@@ -243,9 +243,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         # pass features to attn processor
         self.attn_processor.post_attn_features = feature_images
         self.attn_processor.pre_attn_features = pre_attn_features
-        # pass frame indices to attn processor
-        self.attn_processor.chunk_frame_indices = frame_indices
 
+        # pass frame indices to attn processor
+        self.attn_processor.set_chunk_frame_indices(frame_indices)
         noise_pred = self.model_forward(latents, text_embeddings, depth_maps, t)
 
         return noise_pred
@@ -468,7 +468,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 chunk_embeddings = stacked_text_embeddings[:, chunk_frame_indices]
                 chunk_depth_maps = [depth_maps[i] for i in chunk_frame_indices.tolist()]
 
-                noise_pred = self.model_forward_feature_injection(
+                noise_pred = self.model_fwd_injection_source_frames(
                     chunk_latents,
                     chunk_embeddings,
                     chunk_depth_maps,

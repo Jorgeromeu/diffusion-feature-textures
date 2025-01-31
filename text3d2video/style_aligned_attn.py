@@ -14,7 +14,6 @@ from text3d2video.utilities.attention_utils import (
 
 class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
     chunk_frame_indices: Tensor
-    data_artifact: SdDataArtifact
 
     def __init__(
         self,
@@ -53,7 +52,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         # # adains
         # key_self = adain(key_self, key_ref)
         # val_self = adain(val_self, val_ref)
-        # qry = adain(qry, qry_ref)
+        qry = qry_self
 
         if self.attend_to == "self":
             key = key_self
@@ -72,17 +71,6 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
             key = attn.to_k(ext_hidden_states)
             val = attn.to_v(ext_hidden_states)
 
-        # save pre attn features
-        unstacked_q = rearrange(qry_self, "(b f) t c -> b f t c", f=n_frames)
-        unstacked_k = rearrange(key, "(b f) t c -> b f t c", f=n_frames)
-        unstacked_v = rearrange(val, "(b f) t c -> b f t c", f=n_frames)
-        self.data_artifact.attn_writer.write_qkv_batched(
-            self.cur_timestep,
-            self._cur_module_path,
-            unstacked_q,
-            unstacked_k,
-            unstacked_v,
-            chunk_frame_indices=self.chunk_frame_indices,
-        )
+        self.write_qkv(qry, key, val)
 
-        return memory_efficient_attention(attn, key, qry_self, val, attention_mask)
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
