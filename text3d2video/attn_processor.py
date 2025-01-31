@@ -57,8 +57,6 @@ class DefaultAttnProcessor:
     def __init__(
         self,
         unet,
-        ref_index: int = 0,
-        attend_to: str = "both",
         unet_chunk_size=2,
     ):
         """
@@ -66,8 +64,6 @@ class DefaultAttnProcessor:
             number of batches for each generated image, 2 for classifier free guidance
         """
         self.unet = unet
-        self.ref_index = ref_index
-        self.attend_to = attend_to
         self.unet_chunk_size = unet_chunk_size
 
     def call_init(self, attn: Attention, encoder_hidden_states: Tensor):
