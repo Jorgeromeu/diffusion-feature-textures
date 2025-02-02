@@ -15,6 +15,7 @@ def display_ims_grid(
     scale=2.5,
     col_titles=None,
     row_titles=None,
+    title=None,
 ):
     images = images.copy()
 
@@ -45,6 +46,9 @@ def display_ims_grid(
 
             if col_i == 0 and row_titles is not None:
                 ax.set_ylabel(row_titles[row_i])
+
+    if title is not None:
+        fig.suptitle(title)
 
     plt.tight_layout()
     plt.show()

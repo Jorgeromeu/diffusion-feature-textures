@@ -12,7 +12,12 @@ from diffusers.image_processor import VaeImageProcessor
 from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
-from pytorch3d.renderer import FoVPerspectiveCameras, TexturesVertex
+from pytorch3d.renderer import (
+    FoVPerspectiveCameras,
+    MeshRasterizer,
+    RasterizationSettings,
+    TexturesVertex,
+)
 from pytorch3d.structures import Meshes
 from torch import Tensor
 from tqdm import tqdm
@@ -20,8 +25,9 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.backprojection import (
-    aggregate_features_precomputed_vertex_positions,
-    project_vertices_to_cameras,
+    aggregate_all_layer_feature_textures,
+    project_visible_verts_to_cameras,
+    render_diffusion_features,
 )
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
@@ -240,6 +246,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     ):
         # set attn processor mode
         self.attn_processor.mode = GrAttnMode.FEATURE_INJECTION
+
         # pass features to attn processor
         self.attn_processor.post_attn_features = feature_images
         self.attn_processor.pre_attn_features = pre_attn_features
@@ -253,109 +260,13 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
     def sample_keyframe_indices(self, n_frames: int) -> torch.Tensor:
         if self.gr_config.num_keyframes > n_frames:
             raise ValueError("Number of keyframes is greater than number of frames")
-
         return torch.randperm(n_frames)[: self.gr_config.num_keyframes]
-
-    def aggregate_feature_maps(
-        self,
-        n_vertices: int,
-        kf_vert_xys: List[Tensor],
-        kf_vert_indices: List[Tensor],
-        saved_post_attn: Dict[str, Float[Tensor, "b f d h w"]],
-    ) -> Dict[str, Float[Tensor, "b v d"]]:
-        """
-        Aggregate features in saved_post_attn across keyframe poses and render them for all poses
-        """
-
-        # if not doing post attn injection, skip
-        if not self.gr_config.do_post_attn_injection:
-            return {}
-
-        all_aggregated_features = {}
-
-        for module, kf_post_attn_features in saved_post_attn.items():
-            stacked_vert_features = []
-            for feature_maps in kf_post_attn_features:
-                # aggregate multi-pose features to 3D
-                vert_ft_mean = aggregate_features_precomputed_vertex_positions(
-                    feature_maps,
-                    n_vertices,
-                    kf_vert_xys,
-                    kf_vert_indices,
-                    mode="bilinear",
-                    aggregation_type="mean",
-                )
-
-                vert_ft_inpainted = aggregate_features_precomputed_vertex_positions(
-                    feature_maps,
-                    n_vertices,
-                    kf_vert_xys,
-                    kf_vert_indices,
-                    mode="bilinear",
-                    aggregation_type="first",
-                )
-
-                w_mean = self.gr_config.mean_features_weight
-                w_inpainted = 1 - self.gr_config.mean_features_weight
-                vert_features = w_mean * vert_ft_mean + w_inpainted * vert_ft_inpainted
-
-                stacked_vert_features.append(vert_features)
-
-            stacked_vert_features = torch.stack(stacked_vert_features)
-            all_aggregated_features[module] = stacked_vert_features
-
-        return all_aggregated_features
-
-    def render_feature_images(
-        self,
-        cameras: FoVPerspectiveCameras,
-        frames: Meshes,
-        aggregated_features: Dict[str, Tuple[Float[Tensor, "b v d"], int]],
-    ) -> Dict[str, Float[Tensor, "b f d h w"]]:
-        """
-        render feature images for all modules
-        """
-
-        # if not doing post attn injection, skip
-        if not self.gr_config.do_post_attn_injection:
-            return {}
-
-        all_feature_images = {}
-
-        for module, batched_vert_features in aggregated_features.items():
-            # get feature resolution
-            attn_layer = AttnLayerId.parse_module_path(module)
-            feature_res = attn_layer.layer_resolution(self.unet)
-
-            renderer = make_feature_renderer(cameras, feature_res)
-
-            # render for each batch
-            stacked_feature_images = []
-            for vert_features in batched_vert_features:
-                # construct feature texture
-                vert_features_tex = TexturesVertex(
-                    vert_features.expand(len(frames), -1, -1).to(self.device)
-                )
-                frames.textures = vert_features_tex
-                feature_images = renderer(frames)
-                feature_images = rearrange(feature_images, "f h w d -> f d h w")
-                stacked_feature_images.append(feature_images)
-
-            # B, F, D, H, W
-            stacked_feature_images = torch.stack(stacked_feature_images)
-            all_feature_images[module] = stacked_feature_images
-
-        return all_feature_images
-
-    def log_data_artifact(self):
-        self.gr_data_artifact.end_recording()
-        self.gr_data_artifact.log_if_enabled(delete_localfolder=False)
 
     @torch.no_grad()
     def __call__(
         self,
         prompt: str,
-        frames: Meshes,
+        meshes: Meshes,
         cameras: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
@@ -375,7 +286,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # configure scheduler
         self.scheduler.set_timesteps(self.gr_config.num_inference_steps)
-        n_frames = len(frames)
+        n_frames = len(meshes)
 
         # setup diffusion data
         data_artifact = GrDataArtifact.init_from_config(gr_save_config)
@@ -388,22 +299,34 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         generator.manual_seed(self.gr_config.seed)
 
         # render depth maps for frames
-        depth_maps = render_depth_map(frames, cameras, self.gr_config.resolution)
+        depth_maps = render_depth_map(meshes, cameras, self.gr_config.resolution)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
         stacked_text_embeddings = torch.stack([uncond_embeddings, cond_embeddings])
 
         # initial latent noise
-        latents = self.prepare_latents(frames, cameras, verts_uvs, faces_uvs, generator)
+        latents = self.prepare_latents(meshes, cameras, verts_uvs, faces_uvs, generator)
 
         # chunk indices to use in inference loop
         chunks_indices = torch.split(
             torch.arange(0, n_frames), self.gr_config.chunk_size
         )
 
+        rast_settings = RasterizationSettings(
+            image_size=64,
+            blur_radius=0.0,
+            faces_per_pixel=1,
+        )
+        rasterizer = MeshRasterizer(raster_settings=rast_settings)
+
+        chunk_fragments = [
+            rasterizer(meshes[indices], cameras=cameras[indices])
+            for indices in chunks_indices
+        ]
+
         # get 2D vertex positions for each frame
-        vert_xys, vert_indices = project_vertices_to_cameras(frames, cameras)
+        vert_xys, vert_indices = project_visible_verts_to_cameras(meshes, cameras)
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
@@ -419,7 +342,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # sample keyframe indices
             kf_indices = self.sample_keyframe_indices(n_frames)
 
-            # Diffusion step #1 on keyframes, to extract features
+            # Feature Extraction Step
             kf_latents = latents_stacked[:, kf_indices]
             kf_embeddings = stacked_text_embeddings[:, kf_indices]
             kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
@@ -440,12 +363,18 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # unify spatial features across keyframes as vertex features
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
-            aggregated_3d_features = self.aggregate_feature_maps(
-                frames.num_verts_per_mesh()[0],
+
+            aggregated_3d_features = aggregate_all_layer_feature_textures(
+                post_attn_features,
+                meshes.num_verts_per_mesh()[0],
                 kf_vert_xys,
                 kf_vert_indices,
-                post_attn_features,
             )
+
+            layer_resolutions = {
+                layer: feature.shape[-1]
+                for layer, feature in post_attn_features.items()
+            }
 
             # save aggregated features
             self.gr_data_artifact.gr_writer.write_vertex_features(
@@ -454,12 +383,14 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
             # do inference in chunks
             noise_preds = []
-            for chunk_frame_indices in chunks_indices:
-                # render chunk feature images
-                chunk_feature_images = self.render_feature_images(
-                    cameras[chunk_frame_indices],
-                    frames[chunk_frame_indices],
+            for i, chunk_frame_indices in enumerate(chunks_indices):
+                chunk_meshes = meshes[chunk_frame_indices]
+
+                chunk_feature_images = render_diffusion_features(
                     aggregated_3d_features,
+                    chunk_meshes,
+                    chunk_fragments[i],
+                    resolutions=layer_resolutions,
                 )
 
                 # Diffusion step #2 with pre and post attn feature injection

@@ -111,7 +111,7 @@ def run(cfg: RunReposableDiffusionConfig):
     aggr_frames = video_frames[len(frame_cams) :]
 
     if cfg.save_tensors.enabled:
-        pipe.log_data_artifact()
+        pipe.gr_data_artifact.log_if_enabled()
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact(cfg.video_artifact)
