@@ -14,9 +14,6 @@ from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
-    MeshRasterizer,
-    RasterizationSettings,
-    TexturesVertex,
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
@@ -25,9 +22,9 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.backprojection import (
-    aggregate_all_layer_feature_textures,
+    aggregate_spatial_features_dict,
     project_visible_verts_to_cameras,
-    render_diffusion_features,
+    rasterize_and_render_vert_features_dict,
 )
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
@@ -37,8 +34,7 @@ from text3d2video.generative_rendering.generative_rendering_attn import (
     GrAttnMode,
 )
 from text3d2video.noise_initialization import NoiseInitializer
-from text3d2video.rendering import make_feature_renderer, render_depth_map
-from text3d2video.sd_feature_extraction import AttnLayerId
+from text3d2video.rendering import render_depth_map
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
@@ -202,7 +198,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return noise_pred
 
-    def model_forward_feature_extraction(
+    def model_fwd_feature_extraction(
         self,
         latents: Float[Tensor, "b f c h w"],
         text_embeddings: Float[Tensor, "b f t d"],
@@ -234,7 +230,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         return pre_attn_features, post_attn_features
 
-    def model_fwd_injection_source_frames(
+    def model_fwd_feature_injection(
         self,
         latents: Float[Tensor, "b f c h w"],
         text_embeddings: Float[Tensor, "b f t d"],
@@ -313,18 +309,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             torch.arange(0, n_frames), self.gr_config.chunk_size
         )
 
-        rast_settings = RasterizationSettings(
-            image_size=64,
-            blur_radius=0.0,
-            faces_per_pixel=1,
-        )
-        rasterizer = MeshRasterizer(raster_settings=rast_settings)
-
-        chunk_fragments = [
-            rasterizer(meshes[indices], cameras=cameras[indices])
-            for indices in chunks_indices
-        ]
-
         # get 2D vertex positions for each frame
         vert_xys, vert_indices = project_visible_verts_to_cameras(meshes, cameras)
 
@@ -347,13 +331,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             kf_embeddings = stacked_text_embeddings[:, kf_indices]
             kf_depth_maps = [depth_maps[i] for i in kf_indices.tolist()]
 
-            pre_attn_features, post_attn_features = (
-                self.model_forward_feature_extraction(
-                    kf_latents,
-                    kf_embeddings,
-                    kf_depth_maps,
-                    t,
-                )
+            pre_attn_features, post_attn_features = self.model_fwd_feature_extraction(
+                kf_latents,
+                kf_embeddings,
+                kf_depth_maps,
+                t,
             )
 
             # save kf post attn features and indices
@@ -364,7 +346,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
 
-            aggregated_3d_features = aggregate_all_layer_feature_textures(
+            aggregated_3d_features = aggregate_spatial_features_dict(
                 post_attn_features,
                 meshes.num_verts_per_mesh()[0],
                 kf_vert_xys,
@@ -384,12 +366,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             # do inference in chunks
             noise_preds = []
             for i, chunk_frame_indices in enumerate(chunks_indices):
-                chunk_meshes = meshes[chunk_frame_indices]
-
-                chunk_feature_images = render_diffusion_features(
+                chunk_feature_images = rasterize_and_render_vert_features_dict(
                     aggregated_3d_features,
-                    chunk_meshes,
-                    chunk_fragments[i],
+                    meshes[chunk_frame_indices],
+                    cameras[chunk_frame_indices],
                     resolutions=layer_resolutions,
                 )
 
@@ -399,7 +379,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
                 chunk_embeddings = stacked_text_embeddings[:, chunk_frame_indices]
                 chunk_depth_maps = [depth_maps[i] for i in chunk_frame_indices.tolist()]
 
-                noise_pred = self.model_fwd_injection_source_frames(
+                noise_pred = self.model_fwd_feature_injection(
                     chunk_latents,
                     chunk_embeddings,
                     chunk_depth_maps,

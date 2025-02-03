@@ -1,11 +1,12 @@
+import shutil
 from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
-from IPython.display import Video
+from IPython.display import HTML, Video
 from matplotlib.axes import Axes
-from moviepy.editor import ImageSequenceClip
+from moviepy.editor import VideoClip
 from PIL.Image import Image
 from torch import Tensor
 
@@ -74,20 +75,6 @@ def display_ims(images: List[Image], scale=2):
     plt.show()
 
 
-def display_frames_as_video(frames: List[Image], path: Path, fps=10):
-    # convert PIL images to numpy arrays
-    frames_np = [np.asarray(im) for im in frames]
-
-    # create video
-    clip = ImageSequenceClip(frames_np, fps=fps)
-
-    # write video to tempfile
-    clip.write_videofile(str(path))
-    clip.close()
-
-    return Video(path.absolute())
-
-
 def view_pointcloud_orthographic(
     ax: Axes, points: Tensor, horizontal_dim=0, vertical_dim=2, s=0.01, label=None
 ):
@@ -97,3 +84,50 @@ def view_pointcloud_orthographic(
     ax.set_aspect("equal")
     ax.set_xlabel(dim_names[horizontal_dim])
     ax.set_ylabel(dim_names[vertical_dim])
+
+
+def display_vid(clip: VideoClip, resolution=None, interpolation="neighbor"):
+    ffmpeg_params = []
+
+    if resolution is not None:
+        ffmpeg_params.extend(
+            ["-vf", f"scale={resolution}:{resolution}:flags={interpolation}"]
+        )
+
+    clip.write_videofile(
+        "__temp__.mp4",
+        ffmpeg_params=ffmpeg_params,
+        verbose=False,
+        logger=None,
+    )
+
+    return Video("__temp__.mp4", embed=True)
+
+
+def display_vids(clips: List[VideoClip], prefix="../", width=300):
+    # initialize tempdir
+    temp_dir = Path("__temp__")
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir()
+
+    video_paths = []
+
+    for i, clip in enumerate(clips):
+        vid_path = str(temp_dir / f"vid_{i}.mp4")
+
+        clip.write_videofile(
+            vid_path,
+            verbose=False,
+            logger=None,
+        )
+        video_paths.append(vid_path)
+
+    video_paths = [prefix + vid_path for vid_path in video_paths]
+
+    video_tags = "".join(
+        f'<video width="{width}" controls><source src="{v}" type="video/mp4"></video>'
+        for v in video_paths
+    )
+
+    return HTML(f'<div style="display: flex; gap: 10px;">{video_tags}</div>')

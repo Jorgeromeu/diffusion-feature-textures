@@ -241,4 +241,5 @@ fabric.properties
 /multirun
 results
 __temp__.mp4
+__temp__
 .vscode/settings.json

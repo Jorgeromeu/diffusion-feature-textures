@@ -14,7 +14,7 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import FeatureShader
+from text3d2video.rendering import FeatureShader, make_rasterizer
 from text3d2video.util import sample_feature_map_ndc
 
 
@@ -97,7 +97,7 @@ def aggregate_features_precomputed_vertex_positions(
     return vert_features
 
 
-def aggregate_feature_texture(
+def aggregate_spatial_features(
     feature_maps: Float[Tensor, "n c h w"],
     n_verts: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
@@ -128,9 +128,7 @@ def aggregate_feature_texture(
     return vert_features
 
 
-def render_vert_features(
-    vert_features: Tensor, meshes: Meshes, fragments: Fragments, resolution=None
-):
+def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragments):
     vert_features = vert_features.unsqueeze(0).expand(len(meshes), -1, -1)
     texture = TexturesVertex(vert_features)
     render_meshes = meshes.clone()
@@ -140,25 +138,33 @@ def render_vert_features(
 
     render = rearrange(render, "b h w c -> b c h w")
 
-    if resolution is not None:
-        render = TF.resize(
-            render, resolution, interpolation=TF.InterpolationMode.BILINEAR
-        )
+    return render
+
+
+def rasterize_and_render_vt_features(
+    vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
+):
+    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
+    rasterizer = MeshRasterizer(cameras=cams, raster_settings=raster_settings)
+
+    fragments = rasterizer(meshes, cameras=cams)
+    render = render_vert_features(vert_features, meshes, fragments)
+
+    # render = TF.resize(
+    #     render, resolution, interpolation=TF.InterpolationMode.NEAREST_EXACT
+    # )
 
     return render
 
 
-def rndr_vert_features(vert_features: Tensor, meshes: Meshes):
-    pass
-
-
-# functions to perform aggregation/rendering over dict of features
-
-
-def diffusion_features_map(
+def diffusion_dict_map(
     all_features: Dict[str, Tensor], f: Callable
 ) -> Dict[str, Tensor]:
     all_out_features = {}
+
+    """
+    Utility for applying a per-element function to a dictionary of features for each frame
+    """
 
     # iterate over modules
     for module, module_features in all_features.items():
@@ -173,33 +179,29 @@ def diffusion_features_map(
     return all_out_features
 
 
-def aggregate_all_layer_feature_textures(
+def aggregate_spatial_features_dict(
     spatial_diffusion_features: Dict[str, Float[Tensor, "n c h w"]],
     n_vertices: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
     vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
 ) -> Dict[str, Float[Tensor, "b v c"]]:
-    return diffusion_features_map(
+    return diffusion_dict_map(
         spatial_diffusion_features,
-        lambda feature_maps, _: aggregate_feature_texture(
+        lambda feature_maps, _: aggregate_spatial_features(
             feature_maps, n_vertices, vertex_positions, vertex_indices
         ),
     )
 
 
-def render_diffusion_features(
+def rasterize_and_render_vert_features_dict(
     aggregated_features: Dict[str, Float[Tensor, "b v c"]],
     meshes: Meshes,
-    fragments: Fragments,
+    cams: CamerasBase,
     resolutions: Dict[str, int] = None,
 ):
-    def rndr_vt_features(vert_features: Tensor, module: str) -> Tensor:
-        render = render_vert_features(
-            vert_features, meshes, fragments, resolution=resolutions[module]
-        )
-        return render
-
-    return diffusion_features_map(
+    return diffusion_dict_map(
         aggregated_features,
-        lambda vt_ft, module: rndr_vt_features(vt_ft, module),
+        lambda vt_ft, module: rasterize_and_render_vt_features(
+            vt_ft, meshes, cams, resolution=resolutions[module]
+        ),
     )
