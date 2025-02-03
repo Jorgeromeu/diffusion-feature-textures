@@ -86,22 +86,14 @@ def view_pointcloud_orthographic(
     ax.set_ylabel(dim_names[vertical_dim])
 
 
-def display_vid(clip: VideoClip, resolution=None, interpolation="neighbor"):
-    ffmpeg_params = []
-
-    if resolution is not None:
-        ffmpeg_params.extend(
-            ["-vf", f"scale={resolution}:{resolution}:flags={interpolation}"]
-        )
-
+def display_vid(clip: VideoClip, resolution=300):
     clip.write_videofile(
         "__temp__.mp4",
-        ffmpeg_params=ffmpeg_params,
         verbose=False,
         logger=None,
     )
 
-    return Video("__temp__.mp4", embed=True)
+    return Video("__temp__.mp4", embed=True, width=resolution)
 
 
 def display_vids(clips: List[VideoClip], prefix="../", width=300):

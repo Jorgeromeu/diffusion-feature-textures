@@ -133,7 +133,7 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
                     prompt=scene.prompt,
                     target_frames=scene.tgt_animation,
                     source_frames=scene.src_animation,
-                    generative_rendering=gr_config,
+                    reposable_diffusion=gr_config,
                     noise_initialization=object_to_instantiate_config(
                         UVNoiseInitializer()
                     ),
@@ -167,11 +167,11 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             for config in self.injection_configs:
                 if (
                     config.pre_attn_injection
-                    == cfg.generative_rendering.do_pre_attn_injection
+                    == cfg.reposable_diffusion.do_pre_attn_injection
                     and config.post_attn_injection
-                    == cfg.generative_rendering.do_post_attn_injection
+                    == cfg.reposable_diffusion.do_post_attn_injection
                     and config.attend_to_self
-                    == cfg.generative_rendering.attend_to_self_kv
+                    == cfg.reposable_diffusion.attend_to_self_kv
                 ):
                     injection_config = config
 

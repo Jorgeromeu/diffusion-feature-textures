@@ -49,6 +49,7 @@ class ReposableDiffusionConfig:
     resolution: int
     do_pre_attn_injection: bool
     do_post_attn_injection: bool
+    aggregate_queries: bool
     feature_blend_alpha: float
     attend_to_self_kv: bool
     mean_features_weight: float
@@ -57,3 +58,4 @@ class ReposableDiffusionConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: list[str]
+    noise_threshold: float

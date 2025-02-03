@@ -39,7 +39,7 @@ from text3d2video.rendering import render_depth_map
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
     attn_processor: GenerativeRenderingAttn
-    gr_config: GenerativeRenderingConfig
+    rd_config: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
 
     # diffusion data artifact
@@ -158,8 +158,8 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         self,
         latents: Float[Tensor, "b f c h w"],
         text_embeddings: Float[Tensor, "b f t d"],
-        depth_maps: List[Image.Image],
         t: int,
+        depth_maps: List[Image.Image],
     ) -> Float[Tensor, "b f c h w"]:
         """
         Forward pass of the controlnet and unet
@@ -170,19 +170,22 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         batched_latents = rearrange(latents, "b f c h w -> (b f) c h w")
         batched_embeddings = rearrange(text_embeddings, "b f t d -> (b f) t d")
 
-        # controlnet step
-        controlnet_model_input = batched_latents
-        controlnet_prompt_embeds = batched_embeddings
-        processed_control_image = self.prepare_controlnet_images(depth_maps)
-        down_block_res_samples, mid_block_res_sample = self.controlnet(
-            controlnet_model_input,
-            t,
-            encoder_hidden_states=controlnet_prompt_embeds,
-            controlnet_cond=processed_control_image,
-            conditioning_scale=self.gr_config.controlnet_conditioning_scale,
-            guess_mode=False,
-            return_dict=False,
-        )
+        if depth_maps:
+            # controlnet step
+            controlnet_model_input = batched_latents
+            controlnet_prompt_embeds = batched_embeddings
+            processed_control_image = self.prepare_controlnet_images(depth_maps)
+            down_block_res_samples, mid_block_res_sample = self.controlnet(
+                controlnet_model_input,
+                t,
+                encoder_hidden_states=controlnet_prompt_embeds,
+                controlnet_cond=processed_control_image,
+                conditioning_scale=self.rd_config.controlnet_conditioning_scale,
+                guess_mode=False,
+                return_dict=False,
+            )
+        else:
+            down_block_res_samples, mid_block_res_sample = None, None
 
         # unet, with controlnet residuals
         noise_pred = self.unet(
@@ -216,7 +219,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         self.attn_processor.post_attn_features = {}
 
         # forward pass
-        self.model_forward(latents, text_embeddings, depth_maps, t)
+        self.model_forward(latents, text_embeddings, t, depth_maps=depth_maps)
 
         # get saved features
         pre_attn_features, post_attn_features = (
@@ -249,14 +252,16 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # pass frame indices to attn processor
         self.attn_processor.set_chunk_frame_indices(frame_indices)
-        noise_pred = self.model_forward(latents, text_embeddings, depth_maps, t)
+        noise_pred = self.model_forward(
+            latents, text_embeddings, t, depth_maps=depth_maps
+        )
 
         return noise_pred
 
     def sample_keyframe_indices(self, n_frames: int) -> torch.Tensor:
-        if self.gr_config.num_keyframes > n_frames:
+        if self.rd_config.num_keyframes > n_frames:
             raise ValueError("Number of keyframes is greater than number of frames")
-        return torch.randperm(n_frames)[: self.gr_config.num_keyframes]
+        return torch.randperm(n_frames)[: self.rd_config.num_keyframes]
 
     @torch.no_grad()
     def __call__(
@@ -271,17 +276,17 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         gr_save_config: GrSaveConfig,
     ):
         # setup configs for use throughout pipeline
-        self.gr_config = generative_rendering_config
+        self.rd_config = generative_rendering_config
         self.noise_initializer = noise_initializer
 
         # set up attention processor
         self.attn_processor = GenerativeRenderingAttn(
-            self.unet, self.gr_config, unet_chunk_size=2
+            self.unet, self.rd_config, unet_chunk_size=2
         )
         self.unet.set_attn_processor(self.attn_processor)
 
         # configure scheduler
-        self.scheduler.set_timesteps(self.gr_config.num_inference_steps)
+        self.scheduler.set_timesteps(self.rd_config.num_inference_steps)
         n_frames = len(meshes)
 
         # setup diffusion data
@@ -292,10 +297,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # setup generator
         generator = torch.Generator(device=self.device)
-        generator.manual_seed(self.gr_config.seed)
+        generator.manual_seed(self.rd_config.seed)
 
         # render depth maps for frames
-        depth_maps = render_depth_map(meshes, cameras, self.gr_config.resolution)
+        depth_maps = render_depth_map(meshes, cameras, self.rd_config.resolution)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
@@ -306,7 +311,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         # chunk indices to use in inference loop
         chunks_indices = torch.split(
-            torch.arange(0, n_frames), self.gr_config.chunk_size
+            torch.arange(0, n_frames), self.rd_config.chunk_size
         )
 
         # get 2D vertex positions for each frame
@@ -397,7 +402,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             noise_pred_uncond, noise_pred_text = noise_pred_all
             guidance_direction = noise_pred_text - noise_pred_uncond
             noise_pred = (
-                noise_pred_uncond + self.gr_config.guidance_scale * guidance_direction
+                noise_pred_uncond + self.rd_config.guidance_scale * guidance_direction
             )
 
             # update latents

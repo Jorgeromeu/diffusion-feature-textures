@@ -35,7 +35,6 @@ class ReposableDiffusionAttnMode(Enum):
 class ReposableDiffusionAttn(DefaultAttnProcessor):
     gr_config: ReposableDiffusionConfig
     mode: ReposableDiffusionAttnMode = ReposableDiffusionAttnMode.FEATURE_INJECTION
-    gr_data_artifact: GrDataArtifact
 
     # save features here in extraction mode, and use them in injection mode
     pre_attn_features: Dict[str, Float[Tensor, "b t c"]] = {}
@@ -54,23 +53,8 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
         self.pre_attn_features = {}
         self.post_attn_features = {}
 
-    def should_extract_pre_attn(self):
-        return (
-            self._cur_module_path in self.gr_config.module_paths
-            and self.gr_config.do_pre_attn_injection
-        )
-
-    def should_extract_post_attn(self):
-        return (
-            self._cur_module_path in self.gr_config.module_paths
-            and self.gr_config.do_post_attn_injection
-        )
-
-    def extract_pre_attn_features(self, kv_hidden_states: Tensor):
-        self.pre_attn_features[self._cur_module_path] = kv_hidden_states
-
-    def extract_post_attn_features(self, attn_out_square: Tensor):
-        self.post_attn_features[self._cur_module_path] = attn_out_square
+    def should_extract(self):
+        return self._cur_module_path in self.gr_config.module_paths
 
     # functionality
 
@@ -87,8 +71,8 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
             hidden_states, chunk_size=self.unet_chunk_size
         )
 
-        if self.should_extract_pre_attn():
-            self.extract_pre_attn_features(ext_hidden_states)
+        if self.should_extract():
+            self.pre_attn_features[self._cur_module_path] = ext_hidden_states
 
         kv_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
 
@@ -98,14 +82,21 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
 
         attn_out = memory_efficient_attention(attn, key, qry, value, attention_mask)
 
-        if self.should_extract_post_attn():
-            attn_out_square = rearrange(
-                attn_out,
+        if self.should_extract():
+            if self.gr_config.aggregate_queries:
+                spatial_features = qry
+            else:
+                spatial_features = attn_out
+
+            height = int(sqrt(spatial_features.shape[1]))
+
+            qry_square = rearrange(
+                spatial_features,
                 "(b f) (h w) d -> b f d h w",
-                h=int(sqrt(attn_out.shape[1])),
+                h=height,
                 b=self.unet_chunk_size,
             )
-            self.extract_post_attn_features(attn_out_square)
+            self.post_attn_features[self._cur_module_path] = qry_square
 
         return attn_out
 
@@ -116,8 +107,29 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
         Use injected key/value features and rendered post attention features
         """
 
+        def blend_feature_images(input_features_1D: Tensor, feature_images: Tensor):
+            height = int(sqrt(input_features_1D.shape[1]))
+            input_features_2D = rearrange(
+                input_features_1D,
+                "(b f) (h w) d -> b f d h w",
+                h=height,
+                b=self.unet_chunk_size,
+            )
+
+            # blend rendered and current features
+            blended = blend_features(
+                input_features_2D,
+                feature_images.to(input_features_2D),
+                self.gr_config.feature_blend_alpha,
+                channel_dim=2,
+            )
+
+            # reshape back to 2D
+            blended_features_1D = rearrange(blended, "b f d h w -> (b f) (h w) d")
+
+            return blended_features_1D
+
         n_frames = hidden_states.shape[0] // self.unet_chunk_size
-        qry = attn.to_q(hidden_states)
 
         injected_kv_features = self.pre_attn_features.get(self._cur_module_path)
 
@@ -135,32 +147,42 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
 
         key = attn.to_k(kv_features)
         val = attn.to_v(kv_features)
+        qry = attn.to_q(hidden_states)
+
+        # read injected post attn features
+        injected_spatial_features = self.post_attn_features.get(self._cur_module_path)
+
+        if injected_spatial_features is not None and self.gr_config.aggregate_queries:
+            qry = blend_feature_images(qry, injected_spatial_features)
+
+        # self.write_qkv(qry, key, val)
 
         attn_out = memory_efficient_attention(attn, key, qry, val, attention_mask)
 
-        attn_out_square = rearrange(
-            attn_out,
-            "(b f) (h w) d -> b f d h w",
-            h=int(sqrt(attn_out.shape[1])),
-            b=self.unet_chunk_size,
-        )
-
-        # read injected post attn features
-        injected_post_attn_features = self.post_attn_features.get(self._cur_module_path)
-
-        if injected_post_attn_features is not None:
-            # blend rendered and current features
-            attn_out_square = blend_features(
-                attn_out_square,
-                injected_post_attn_features.to(attn_out_square),
-                self.gr_config.feature_blend_alpha,
-                channel_dim=2,
-            )
-
-        # reshape back to 2d
-        attn_out = rearrange(attn_out_square, "b f d h w -> (b f) (h w) d")
+        if (
+            injected_spatial_features is not None
+            and not self.gr_config.aggregate_queries
+        ):
+            attn_out = blend_feature_images(attn_out, injected_spatial_features)
 
         return attn_out
+
+    def call_cross_attn(
+        self, attn, hidden_states, encoder_hidden_states, attention_mask
+    ):
+        qry = attn.to_q(hidden_states)
+
+        kv_hidden_states = encoder_hidden_states
+        if attn.norm_cross is not None:
+            kv_hidden_states = attn.norm_cross(hidden_states)
+
+        key = attn.to_k(kv_hidden_states)
+        val = attn.to_v(kv_hidden_states)
+
+        if self.mode == ReposableDiffusionAttnMode.FEATURE_INJECTION:
+            self.write_qkv(qry, key, val)
+
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
 
     def call_self_attn(self, attn, hidden_states, attention_mask):
         if self.mode == ReposableDiffusionAttnMode.FEATURE_EXTRACTION:

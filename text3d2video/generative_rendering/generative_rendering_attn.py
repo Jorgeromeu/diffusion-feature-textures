@@ -185,6 +185,23 @@ class GenerativeRenderingAttn(DefaultAttnProcessor):
 
         return attn_out
 
+    def call_cross_attn(
+        self, attn, hidden_states, encoder_hidden_states, attention_mask
+    ):
+        qry = attn.to_q(hidden_states)
+
+        kv_hidden_states = encoder_hidden_states
+        if attn.norm_cross is not None:
+            kv_hidden_states = attn.norm_cross(hidden_states)
+
+        key = attn.to_k(kv_hidden_states)
+        val = attn.to_v(kv_hidden_states)
+
+        if self.mode == GrAttnMode.FEATURE_INJECTION:
+            self.write_qkv(qry, key, val)
+
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
+
     def call_self_attn(self, attn, hidden_states, attention_mask):
         if self.mode == GrAttnMode.FEATURE_EXTRACTION:
             attn_out = self.call_extraction(attn, hidden_states, attention_mask)

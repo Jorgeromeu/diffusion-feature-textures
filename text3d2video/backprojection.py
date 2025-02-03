@@ -144,7 +144,9 @@ def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragm
 def rasterize_and_render_vt_features(
     vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
 ):
-    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
+    raster_settings = RasterizationSettings(
+        image_size=resolution, faces_per_pixel=1, bin_size=0
+    )
     rasterizer = MeshRasterizer(cameras=cams, raster_settings=raster_settings)
 
     fragments = rasterizer(meshes, cameras=cams)
