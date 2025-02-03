@@ -8,6 +8,7 @@ from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor
 
+from text3d2video.adain import adain_2D
 from text3d2video.artifacts.gr_data import GrDataArtifact
 from text3d2video.attn_processor import DefaultAttnProcessor
 from text3d2video.generative_rendering.configs import (
@@ -107,10 +108,10 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
         Use injected key/value features and rendered post attention features
         """
 
-        def blend_feature_images(input_features_1D: Tensor, feature_images: Tensor):
-            height = int(sqrt(input_features_1D.shape[1]))
-            input_features_2D = rearrange(
-                input_features_1D,
+        def blend_feature_images(original_features_1D: Tensor, feature_images: Tensor):
+            height = int(sqrt(original_features_1D.shape[1]))
+            original_features_2D = rearrange(
+                original_features_1D,
                 "(b f) (h w) d -> b f d h w",
                 h=height,
                 b=self.unet_chunk_size,
@@ -118,8 +119,8 @@ class ReposableDiffusionAttn(DefaultAttnProcessor):
 
             # blend rendered and current features
             blended = blend_features(
-                input_features_2D,
-                feature_images.to(input_features_2D),
+                original_features_2D,
+                feature_images.to(original_features_2D),
                 self.gr_config.feature_blend_alpha,
                 channel_dim=2,
             )

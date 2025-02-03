@@ -80,7 +80,7 @@ class SDPipeline(DiffusionPipeline):
 
     def prepare_latents(self, batch_size: int, out_resolution: int, generator=None):
         noise_init = RandomNoiseInitializer()
-        noise_init = FixedNoiseInitializer()
+        # noise_init = FixedNoiseInitializer()
         return noise_init.initial_noise(
             generator=generator,
             device=self.device,

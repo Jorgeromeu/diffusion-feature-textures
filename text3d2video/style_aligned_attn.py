@@ -3,7 +3,7 @@ from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from torch import Tensor
 
-from text3d2video.artifacts.sd_data import SdDataArtifact
+from text3d2video.adain import adain_1D
 from text3d2video.attn_processor import DefaultAttnProcessor
 from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
@@ -20,12 +20,14 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         unet,
         ref_index: int = 0,
         attend_to: str = "both",
+        adain_self_features: bool = False,
         unet_chunk_size=2,
     ):
         """
         :param unet_chunk_size:
             number of batches for each generated image, 2 for classifier free guidance
         """
+        self.adain_self_features = adain_self_features
         self.unet = unet
         self.ref_index = ref_index
         self.attend_to = attend_to
@@ -34,8 +36,6 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
     def call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
     ):
-        qry_self = attn.to_q(hidden_states)
-
         # get reference features
         n_frames = hidden_states.shape[0] // self.unet_chunk_size
         unstacked_x = rearrange(hidden_states, "(b f) t c -> b f t c", f=n_frames)
@@ -48,11 +48,11 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         key_ref = attn.to_k(x_ref)
         val_ref = attn.to_v(x_ref)
         qry_ref = attn.to_q(x_ref)
+        qry_self = attn.to_q(hidden_states)
 
-        # # adains
-        # key_self = adain(key_self, key_ref)
-        # val_self = adain(val_self, val_ref)
-        qry = qry_self
+        if self.adain_self_features:
+            qry_self = adain_1D(qry_self, qry_ref)
+            key_self = adain_1D(key_self, key_ref)
 
         if self.attend_to == "self":
             key = key_self
@@ -71,6 +71,6 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
             key = attn.to_k(ext_hidden_states)
             val = attn.to_v(ext_hidden_states)
 
-        self.write_qkv(qry, key, val)
+        self.write_qkv(qry_self, key, val)
 
-        return memory_efficient_attention(attn, key, qry, val, attention_mask)
+        return memory_efficient_attention(attn, key, qry_self, val, attention_mask)
