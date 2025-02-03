@@ -1,12 +1,10 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import torch
-from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
-    TexturesVertex,
     join_cameras_as_batch,
 )
 from pytorch3d.structures import Meshes, join_meshes_as_batch
@@ -28,8 +26,7 @@ from text3d2video.generative_rendering.reposable_diffusion_attn import (
     ReposableDiffusionAttnMode,
 )
 from text3d2video.noise_initialization import NoiseInitializer
-from text3d2video.rendering import make_feature_renderer, render_depth_map
-from text3d2video.sd_feature_extraction import AttnLayerId
+from text3d2video.rendering import render_depth_map
 
 
 class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
