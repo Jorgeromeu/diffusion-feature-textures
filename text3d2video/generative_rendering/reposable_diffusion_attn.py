@@ -8,8 +8,6 @@ from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor
 
-from text3d2video.adain import adain_2D
-from text3d2video.artifacts.gr_data import GrDataArtifact
 from text3d2video.attn_processor import DefaultAttnProcessor
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,

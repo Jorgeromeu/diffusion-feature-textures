@@ -172,11 +172,10 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
         if depth_maps:
             # controlnet step
-            controlnet_model_input = batched_latents
             controlnet_prompt_embeds = batched_embeddings
             processed_control_image = self.prepare_controlnet_images(depth_maps)
             down_block_res_samples, mid_block_res_sample = self.controlnet(
-                controlnet_model_input,
+                batched_latents,
                 t,
                 encoder_hidden_states=controlnet_prompt_embeds,
                 controlnet_cond=processed_control_image,

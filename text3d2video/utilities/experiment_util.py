@@ -1,17 +1,17 @@
 from typing import Any, List
 
 import tabulate
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
-from wandb.apis.public import Run
 
 import text3d2video.utilities.wandb_util as wbu
+import wandb
 from text3d2video.generative_rendering.configs import RunConfig
 from text3d2video.utilities.omegaconf_util import (
     dictconfig_diff,
     dictconfig_flattened_keys,
 )
+from wandb.apis.public import Run
 
 
 def object_to_instantiate_config(obj: Any) -> DictConfig:
@@ -329,5 +329,5 @@ class WandbExperiment:
                 update_tags(r, remove_tags=[self.experiment_name])
 
         print(f"Executing {len(exec_configs)} new runs")
-        for cfg in exec_configs:
+        for cfg in tqdm(exec_configs):
             self.execute_run(cfg)
