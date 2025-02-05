@@ -1,6 +1,8 @@
 from typing import Callable, List, Optional
 
+import numpy as np
 import torch
+import torchvision.transforms.functional as TF
 from diffusers import (
     AutoencoderKL,
     ControlNetModel,
@@ -13,6 +15,9 @@ from PIL import Image
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked
+
+from text3d2video.util import blend_features
+from text3d2video.utilities.image_utils import affine
 
 
 class ControlNetPipeline(DiffusionPipeline):
@@ -159,29 +164,79 @@ class ControlNetPipeline(DiffusionPipeline):
                 self.pre_step_callback(t, i)
 
             # duplicate latent, to feed to model with CFG
-            latent_model_input = torch.cat([latents] * 2)
-            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+            latents_duplicated = torch.cat([latents] * 2)
+            latents_duplicated = self.scheduler.scale_model_input(latents_duplicated, t)
 
-            # controlnet step
-            controlnet_model_input = latent_model_input
-            controlnet_prompt_embeds = text_embeddings
+            # controlnet step on source depth map
             processed_control_image = self.prepare_controlnet_image(depth_maps)
-            down_block_res_samples, mid_block_res_sample = self.controlnet(
-                controlnet_model_input,
+            src_down_residuals, src_mid_residual = self.controlnet(
+                latents_duplicated,
                 t,
-                encoder_hidden_states=controlnet_prompt_embeds,
+                encoder_hidden_states=text_embeddings,
                 controlnet_cond=processed_control_image,
                 conditioning_scale=controlnet_conditioning_scale,
                 guess_mode=guess_mode,
                 return_dict=False,
             )
 
+            def fun(x):
+                return affine(x, translation=(0, 0), scale=1, angle=90)
+
+            warped_depth = [TF.to_pil_image(fun(TF.to_tensor(x))) for x in depth_maps]
+
+            # controlnet step on warped depth map
+            processed_control_image = self.prepare_controlnet_image(warped_depth)
+            tgt_down_residuals, tgt_mid_residual = self.controlnet(
+                latents_duplicated,
+                t,
+                encoder_hidden_states=text_embeddings,
+                controlnet_cond=processed_control_image,
+                conditioning_scale=controlnet_conditioning_scale,
+                guess_mode=guess_mode,
+                return_dict=False,
+            )
+
+            warped_down_residuals = [fun(x) for x in src_down_residuals]
+            warped_mid_residual = fun(src_mid_residual)
+
+            # final residuals
+
+            tgt_residuals = tgt_down_residuals + [tgt_mid_residual]
+            warped_residuals = warped_down_residuals + [warped_mid_residual]
+
+            controlnet_features = "tgt"
+            controlnet_features = "warped"
+
+            # start as warped and slowly become tgt
+            weights = np.linspace(1, 0, len(tgt_residuals))
+
+            if controlnet_features == "warped":
+                weights = np.ones_like(weights)
+            elif controlnet_features == "tgt":
+                weights = np.zeros_like(weights)
+
+            residuals = []
+            for i in range(len(tgt_residuals)):
+                tgt_residual = tgt_residuals[i]
+                warped_residual = warped_residuals[i]
+
+                # 0 is tgt, 1 is warped
+                weight = weights[i]
+                residual = blend_features(
+                    tgt_residual, warped_residual, weight, channel_dim=1
+                )
+
+                residuals.append(residual)
+
+            down_residuals = residuals[0:-1]
+            mid_residual = residuals[-1]
+
             # diffusion step, with controlnet residuals
             noise_pred = self.unet(
-                latent_model_input,
+                latents_duplicated,
                 t,
-                mid_block_additional_residual=mid_block_res_sample,
-                down_block_additional_residuals=down_block_res_samples,
+                mid_block_additional_residual=mid_residual,
+                down_block_additional_residuals=down_residuals,
                 encoder_hidden_states=text_embeddings,
             ).sample
 

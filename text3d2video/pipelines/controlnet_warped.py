@@ -1,0 +1,252 @@
+from typing import Callable, List, Optional
+
+import numpy as np
+import torch
+import torchvision.transforms.functional as TF
+from diffusers import (
+    AutoencoderKL,
+    ControlNetModel,
+    DiffusionPipeline,
+    UNet2DConditionModel,
+    UniPCMultistepScheduler,
+)
+from diffusers.image_processor import VaeImageProcessor
+from PIL import Image
+from tqdm import tqdm
+from transformers import CLIPTextModel, CLIPTokenizer
+from typeguard import typechecked
+
+from text3d2video.util import blend_features
+from text3d2video.utilities.image_utils import affine
+
+
+class WarpedControlNetPipeline(DiffusionPipeline):
+    pre_step_callback: Optional[Callable] = None
+
+    def __init__(
+        self,
+        vae: AutoencoderKL,
+        text_encoder: CLIPTextModel,
+        tokenizer: CLIPTokenizer,
+        unet: UNet2DConditionModel,
+        scheduler: UniPCMultistepScheduler,
+        controlnet: ControlNetModel,
+    ):
+        super().__init__()
+
+        # register modules
+        self.register_modules(
+            vae=vae,
+            unet=unet,
+            scheduler=scheduler,
+            tokenizer=tokenizer,
+            text_encoder=text_encoder,
+            controlnet=controlnet,
+        )
+
+        # vae image processors
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.image_processor = VaeImageProcessor(
+            vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
+        )
+        self.control_image_processor = VaeImageProcessor(
+            vae_scale_factor=self.vae_scale_factor,
+            do_convert_rgb=True,
+            do_normalize=False,
+        )
+
+    def encode_prompt(self, prompts: List[str]):
+        # tokenize prompts
+        text_input = self.tokenizer(
+            prompts,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        # Get CLIP embedding
+        with torch.no_grad():
+            cond_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
+
+        max_length = text_input.input_ids.shape[-1]
+        uncond_input = self.tokenizer(
+            [""] * len(prompts),
+            padding="max_length",
+            max_length=max_length,
+            return_tensors="pt",
+        )
+        uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
+
+        return cond_embeddings, uncond_embeddings
+
+    def prepare_latents(self, batch_size: int, out_resolution: int, generator=None):
+        latent_res = out_resolution // 8
+        in_channels = self.unet.config.in_channels
+        latents = torch.randn(
+            batch_size,
+            in_channels,
+            latent_res,
+            latent_res,
+            device=self.device,
+            generator=generator,
+            dtype=self.dtype,
+        )
+
+        return latents
+
+    def latents_to_images(self, latents: torch.FloatTensor, generator=None):
+        # scale latents
+        latents_scaled = latents / self.vae.config.scaling_factor
+
+        # decode latents
+        images = self.vae.decode(
+            latents_scaled,
+            return_dict=False,
+            generator=generator,
+        )[0]
+
+        # postprocess images
+        images = self.image_processor.postprocess(
+            images, output_type="pil", do_denormalize=[True] * len(latents)
+        )
+
+        return images
+
+    def prepare_controlnet_image(
+        self, images: List[Image.Image], do_classifier_free_guidance=True
+    ):
+        height = images[0].height
+        width = images[0].width
+
+        image = self.control_image_processor.preprocess(
+            images, height=height, width=width
+        ).to(dtype=self.dtype, device=self.device)
+
+        if do_classifier_free_guidance:
+            image = torch.cat([image] * 2)
+
+        return image
+
+    @torch.no_grad()
+    @typechecked
+    def __call__(
+        self,
+        prompts: List[str],
+        depth_maps: List[Image.Image],
+        res=512,
+        num_inference_steps=30,
+        guidance_scale=7.5,
+        controlnet_conditioning_scale=1.0,
+        generator=None,
+        initial_latents: torch.Tensor = None,
+        guess_mode=False,
+    ):
+        # number of images being generated
+        batch_size = len(prompts)
+
+        # Get prompt embeddings for guidance
+        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
+        text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
+
+        # set timesteps
+        self.scheduler.set_timesteps(num_inference_steps)
+
+        # initialize latents from standard normal
+        if initial_latents is not None:
+            latents = initial_latents
+        else:
+            latents = self.prepare_latents(batch_size, res, generator=generator)
+
+        # denoising loop
+        for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+            if self.pre_step_callback is not None:
+                self.pre_step_callback(t, i)
+
+            # duplicate latent, to feed to model with CFG
+            latents_duplicated = torch.cat([latents] * 2)
+            latents_duplicated = self.scheduler.scale_model_input(latents_duplicated, t)
+
+            # controlnet step on source depth map
+            processed_control_image = self.prepare_controlnet_image(depth_maps)
+            src_down_residuals, src_mid_residual = self.controlnet(
+                latents_duplicated,
+                t,
+                encoder_hidden_states=text_embeddings,
+                controlnet_cond=processed_control_image,
+                conditioning_scale=controlnet_conditioning_scale,
+                guess_mode=guess_mode,
+                return_dict=False,
+            )
+
+            def fun(x):
+                return affine(x, translation=(0, 0), scale=1, angle=90)
+
+            warped_depth = [TF.to_pil_image(fun(TF.to_tensor(x))) for x in depth_maps]
+
+            # controlnet step on warped depth map
+            processed_control_image = self.prepare_controlnet_image(warped_depth)
+            tgt_down_residuals, tgt_mid_residual = self.controlnet(
+                latents_duplicated,
+                t,
+                encoder_hidden_states=text_embeddings,
+                controlnet_cond=processed_control_image,
+                conditioning_scale=controlnet_conditioning_scale,
+                guess_mode=guess_mode,
+                return_dict=False,
+            )
+
+            warped_down_residuals = [fun(x) for x in src_down_residuals]
+            warped_mid_residual = fun(src_mid_residual)
+
+            # final residuals
+
+            tgt_residuals = tgt_down_residuals + [tgt_mid_residual]
+            warped_residuals = warped_down_residuals + [warped_mid_residual]
+
+            controlnet_features = "tgt"
+            controlnet_features = "warped"
+
+            # start as warped and slowly become tgt
+            weights = np.linspace(1, 0, len(tgt_residuals))
+
+            if controlnet_features == "warped":
+                weights = np.ones_like(weights)
+            elif controlnet_features == "tgt":
+                weights = np.zeros_like(weights)
+
+            residuals = []
+            for i in range(len(tgt_residuals)):
+                tgt_residual = tgt_residuals[i]
+                warped_residual = warped_residuals[i]
+
+                # 0 is tgt, 1 is warped
+                weight = weights[i]
+                residual = blend_features(
+                    tgt_residual, warped_residual, weight, channel_dim=1
+                )
+
+                residuals.append(residual)
+
+            down_residuals = residuals[0:-1]
+            mid_residual = residuals[-1]
+
+            # diffusion step, with controlnet residuals
+            noise_pred = self.unet(
+                latents_duplicated,
+                t,
+                mid_block_additional_residual=mid_residual,
+                down_block_additional_residuals=down_residuals,
+                encoder_hidden_states=text_embeddings,
+            ).sample
+
+            # preform classifier free guidance
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            guidance_direction = noise_pred_text - noise_pred_uncond
+            noise_pred = noise_pred_uncond + guidance_scale * guidance_direction
+
+            # update latents
+            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+        # decode latents
+        return self.latents_to_images(latents)
