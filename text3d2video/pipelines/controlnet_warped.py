@@ -1,6 +1,5 @@
-from typing import Callable, List, Optional
+from typing import List
 
-import numpy as np
 import torch
 import torchvision.transforms.functional as TF
 from diffusers import (
@@ -16,13 +15,10 @@ from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked
 
-from text3d2video.util import blend_features
-from text3d2video.utilities.image_utils import affine
+from text3d2video.utilities.image_utils import Affine2D
 
 
 class WarpedControlNetPipeline(DiffusionPipeline):
-    pre_step_callback: Optional[Callable] = None
-
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -128,48 +124,52 @@ class WarpedControlNetPipeline(DiffusionPipeline):
 
         return image
 
+    def preprocess_controlnet_images(self, images: List[Image.Image]):
+        height, width = TF.get_image_size(images[0])
+        image = self.control_image_processor.preprocess(
+            images, height=height, width=width
+        ).to(dtype=self.dtype, device=self.device)
+        return image
+
     @torch.no_grad()
     @typechecked
     def __call__(
         self,
-        prompts: List[str],
-        depth_maps: List[Image.Image],
+        prompt: str,
+        depth_map: Image.Image,
+        src_to_tgt: Affine2D,
         res=512,
         num_inference_steps=30,
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         generator=None,
-        initial_latents: torch.Tensor = None,
         guess_mode=False,
     ):
         # number of images being generated
-        batch_size = len(prompts)
+        batch_size = 1
 
         # Get prompt embeddings for guidance
-        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
+        cond_embeddings, uncond_embeddings = self.encode_prompt([prompt])
         text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
 
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
 
+        tgt_depth_map = src_to_tgt(depth_map)
+
         # initialize latents from standard normal
-        if initial_latents is not None:
-            latents = initial_latents
-        else:
-            latents = self.prepare_latents(batch_size, res, generator=generator)
+        latents_src = self.prepare_latents(batch_size, res, generator=generator)
+        latents_tgt = self.prepare_latents(batch_size, res, generator=generator)
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-            if self.pre_step_callback is not None:
-                self.pre_step_callback(t, i)
-
             # duplicate latent, to feed to model with CFG
-            latents_duplicated = torch.cat([latents] * 2)
+            latents_duplicated = torch.cat([latents_src] * 2)
             latents_duplicated = self.scheduler.scale_model_input(latents_duplicated, t)
 
             # controlnet step on source depth map
-            processed_control_image = self.prepare_controlnet_image(depth_maps)
-            src_down_residuals, src_mid_residual = self.controlnet(
+            processed_control_image = self.prepare_controlnet_image([depth_map])
+            down_residuals, mid_residual = self.controlnet(
                 latents_duplicated,
                 t,
                 encoder_hidden_states=text_embeddings,
@@ -178,58 +178,6 @@ class WarpedControlNetPipeline(DiffusionPipeline):
                 guess_mode=guess_mode,
                 return_dict=False,
             )
-
-            def fun(x):
-                return affine(x, translation=(0, 0), scale=1, angle=90)
-
-            warped_depth = [TF.to_pil_image(fun(TF.to_tensor(x))) for x in depth_maps]
-
-            # controlnet step on warped depth map
-            processed_control_image = self.prepare_controlnet_image(warped_depth)
-            tgt_down_residuals, tgt_mid_residual = self.controlnet(
-                latents_duplicated,
-                t,
-                encoder_hidden_states=text_embeddings,
-                controlnet_cond=processed_control_image,
-                conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=guess_mode,
-                return_dict=False,
-            )
-
-            warped_down_residuals = [fun(x) for x in src_down_residuals]
-            warped_mid_residual = fun(src_mid_residual)
-
-            # final residuals
-
-            tgt_residuals = tgt_down_residuals + [tgt_mid_residual]
-            warped_residuals = warped_down_residuals + [warped_mid_residual]
-
-            controlnet_features = "tgt"
-            controlnet_features = "warped"
-
-            # start as warped and slowly become tgt
-            weights = np.linspace(1, 0, len(tgt_residuals))
-
-            if controlnet_features == "warped":
-                weights = np.ones_like(weights)
-            elif controlnet_features == "tgt":
-                weights = np.zeros_like(weights)
-
-            residuals = []
-            for i in range(len(tgt_residuals)):
-                tgt_residual = tgt_residuals[i]
-                warped_residual = warped_residuals[i]
-
-                # 0 is tgt, 1 is warped
-                weight = weights[i]
-                residual = blend_features(
-                    tgt_residual, warped_residual, weight, channel_dim=1
-                )
-
-                residuals.append(residual)
-
-            down_residuals = residuals[0:-1]
-            mid_residual = residuals[-1]
 
             # diffusion step, with controlnet residuals
             noise_pred = self.unet(
@@ -246,7 +194,7 @@ class WarpedControlNetPipeline(DiffusionPipeline):
             noise_pred = noise_pred_uncond + guidance_scale * guidance_direction
 
             # update latents
-            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            latents_src = self.scheduler.step(noise_pred, t, latents_src).prev_sample
 
         # decode latents
-        return self.latents_to_images(latents)
+        return self.latents_to_images(latents_src)

@@ -4,11 +4,14 @@ from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torchvision.transforms.functional as TF
 from IPython.display import HTML, Video
 from matplotlib.axes import Axes
 from moviepy.editor import VideoClip
 from PIL.Image import Image
 from torch import Tensor
+
+from text3d2video.feature_visualization import reduce_feature_map
 
 
 def display_ims_grid(
@@ -55,11 +58,16 @@ def display_ims_grid(
     plt.show()
 
 
-def display_ims(images: List[Image], scale=2):
+def display_ims(images: List[Image], scale=2, titles=None):
+    if titles is not None:
+        assert len(titles) == len(images)
+
     if len(images) == 1:
         _, ax = plt.subplots(1, 1, figsize=(scale, scale))
         ax.imshow(images[0])
         ax.axis("off")
+        if titles is not None:
+            ax.set_title(titles[0])
         plt.show()
         plt.tight_layout()
         plt.show()
@@ -70,6 +78,8 @@ def display_ims(images: List[Image], scale=2):
     for i, im in enumerate(images):
         axs[i].imshow(im)
         axs[i].axis("off")
+        if titles is not None:
+            axs[i].set_title(titles[i])
 
     plt.tight_layout()
     plt.show()
@@ -123,3 +133,19 @@ def display_vids(clips: List[VideoClip], prefix="../", width=300):
     )
 
     return HTML(f'<div style="display: flex; gap: 10px;">{video_tags}</div>')
+
+
+def reduce_feature_maps(
+    features_grid: List[List[Tensor]], share_row=False, share_col=False
+):
+    images = []
+    for row in features_grid:
+        row_ims = []
+        for feature_map in row:
+            reduced = reduce_feature_map(feature_map.cpu())
+            row_ims.append(reduced)
+        images.append(row_ims)
+
+    return images
+
+    # display_ims_grid(images, scale=scale)

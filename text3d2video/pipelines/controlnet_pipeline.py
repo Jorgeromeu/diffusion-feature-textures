@@ -128,6 +128,16 @@ class ControlNetPipeline(DiffusionPipeline):
 
         return image
 
+    def preprocess_controlnet_images(self, images: List[Image.Image]):
+        height = images[0].height
+        width = images[0].width
+
+        image = self.control_image_processor.preprocess(
+            images, height=height, width=width
+        ).to(dtype=self.dtype, device=self.device)
+
+        return image
+
     @torch.no_grad()
     @typechecked
     def __call__(
@@ -141,6 +151,7 @@ class ControlNetPipeline(DiffusionPipeline):
         generator=None,
         initial_latents: torch.Tensor = None,
         guess_mode=False,
+        guess_mode_scaling=True,
     ):
         # number of images being generated
         batch_size = len(prompts)
@@ -164,72 +175,39 @@ class ControlNetPipeline(DiffusionPipeline):
                 self.pre_step_callback(t, i)
 
             # duplicate latent, to feed to model with CFG
+            latents = self.scheduler.scale_model_input(latents, t)
             latents_duplicated = torch.cat([latents] * 2)
-            latents_duplicated = self.scheduler.scale_model_input(latents_duplicated, t)
 
-            # controlnet step on source depth map
-            processed_control_image = self.prepare_controlnet_image(depth_maps)
-            src_down_residuals, src_mid_residual = self.controlnet(
-                latents_duplicated,
-                t,
-                encoder_hidden_states=text_embeddings,
-                controlnet_cond=processed_control_image,
-                conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=guess_mode,
-                return_dict=False,
-            )
+            # controlnet step
 
-            def fun(x):
-                return affine(x, translation=(0, 0), scale=1, angle=90)
+            processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
 
-            warped_depth = [TF.to_pil_image(fun(TF.to_tensor(x))) for x in depth_maps]
-
-            # controlnet step on warped depth map
-            processed_control_image = self.prepare_controlnet_image(warped_depth)
-            tgt_down_residuals, tgt_mid_residual = self.controlnet(
-                latents_duplicated,
-                t,
-                encoder_hidden_states=text_embeddings,
-                controlnet_cond=processed_control_image,
-                conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=guess_mode,
-                return_dict=False,
-            )
-
-            warped_down_residuals = [fun(x) for x in src_down_residuals]
-            warped_mid_residual = fun(src_mid_residual)
-
-            # final residuals
-
-            tgt_residuals = tgt_down_residuals + [tgt_mid_residual]
-            warped_residuals = warped_down_residuals + [warped_mid_residual]
-
-            controlnet_features = "tgt"
-            controlnet_features = "warped"
-
-            # start as warped and slowly become tgt
-            weights = np.linspace(1, 0, len(tgt_residuals))
-
-            if controlnet_features == "warped":
-                weights = np.ones_like(weights)
-            elif controlnet_features == "tgt":
-                weights = np.zeros_like(weights)
-
-            residuals = []
-            for i in range(len(tgt_residuals)):
-                tgt_residual = tgt_residuals[i]
-                warped_residual = warped_residuals[i]
-
-                # 0 is tgt, 1 is warped
-                weight = weights[i]
-                residual = blend_features(
-                    tgt_residual, warped_residual, weight, channel_dim=1
+            if guess_mode:
+                down_residuals, mid_residual = self.controlnet(
+                    latents,
+                    t,
+                    encoder_hidden_states=cond_embeddings,
+                    controlnet_cond=processed_ctrl_images,
+                    conditioning_scale=controlnet_conditioning_scale,
+                    guess_mode=guess_mode_scaling,
+                    return_dict=False,
                 )
 
-                residuals.append(residual)
+                down_residuals = [
+                    torch.cat([torch.zeros_like(d), d]) for d in down_residuals
+                ]
+                mid_residual = torch.cat([torch.zeros_like(mid_residual), mid_residual])
 
-            down_residuals = residuals[0:-1]
-            mid_residual = residuals[-1]
+            else:
+                down_residuals, mid_residual = self.controlnet(
+                    latents_duplicated,
+                    t,
+                    encoder_hidden_states=text_embeddings,
+                    controlnet_cond=processed_ctrl_images,
+                    conditioning_scale=controlnet_conditioning_scale,
+                    guess_mode=False,
+                    return_dict=False,
+                )
 
             # diffusion step, with controlnet residuals
             noise_pred = self.unet(
