@@ -4,7 +4,6 @@ from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torchvision.transforms.functional as TF
 from IPython.display import HTML, Video
 from matplotlib.axes import Axes
 from moviepy.editor import VideoClip

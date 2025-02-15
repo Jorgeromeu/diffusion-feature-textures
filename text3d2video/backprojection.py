@@ -1,7 +1,6 @@
 from typing import Callable, Dict, List
 
 import torch
-import torchvision.transforms.functional as TF
 from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.renderer import (
@@ -14,9 +13,8 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import FeatureShader, make_rasterizer
+from text3d2video.rendering import FeatureShader
 from text3d2video.util import sample_feature_map_ndc
-from text3d2video.utilities.ipython_utils import display_ims_grid
 
 
 def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase):
@@ -210,24 +208,4 @@ def rasterize_and_render_vert_features_dict(
         lambda vt_ft, module: rasterize_and_render_vt_features(
             vt_ft, meshes, cams, resolution=resolutions[module]
         ),
-    )
-
-
-def display_spatial_features_dict(features, batch_idx=0, scale=2):
-    ims_grid = []
-    n_frames = None
-
-    for layer in features.keys():
-        ims = features[layer]
-        ims = ims[batch_idx]
-        n_frames = ims.shape[0]
-        ims = [TF.to_pil_image(im) for im in ims]
-        ims_grid.append(ims)
-
-    display_ims_grid(
-        ims_grid,
-        col_titles=[int(i) for i in torch.arange(n_frames)],
-        row_titles=layers,
-        scale=scale,
-        title=f"batch_idx: {batch_idx}",
     )

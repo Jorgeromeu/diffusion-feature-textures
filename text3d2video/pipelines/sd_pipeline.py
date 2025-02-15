@@ -13,7 +13,6 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from text3d2video.artifacts.sd_data import SdDataArtifact, SdDataConfig
 from text3d2video.noise_initialization import (
-    FixedNoiseInitializer,
     RandomNoiseInitializer,
 )
 from text3d2video.style_aligned_attn import StyleAlignedAttentionProcessor
