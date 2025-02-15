@@ -5,8 +5,42 @@ defaults:
   - noise_initialization: uv
   - save_tensors: disabled
 
-scenes:
-  [
+scenes: [
+    # barrel roll single
+    {
+      prompt: "Realistic Deadpool, Simple White Background",
+      src_animation:
+        { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 1 },
+      tgt_animation:
+        { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 20 },
+    },
+    # barrel roll partial
+    {
+      prompt: "Realistic Deadpool, Simple White Background",
+      src_animation:
+        { artifact_tag: "mixamo-human_barrel_roll_partial:latest", n_frames: 8 },
+      tgt_animation:
+        { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 20 },
+    },
+    # barrel roll full
+    {
+      prompt: "Realistic Deadpool, Simple White Background",
+      src_animation:
+        { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 8 },
+      tgt_animation:
+        { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 20 },
+    },
+    # Pan single
+    {
+      prompt: "Realistic Deadpool, Simple White Background",
+      src_animation:
+        { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 1 },
+      tgt_animation:
+        { artifact_tag: "mixamo-human_orth_pan:latest", n_frames: 20 },
+    },
+
+    # Dance animations
+    # booty single-pose
     {
       prompt: "Realistic Deadpool, Simple White Background",
       src_animation: { artifact_tag: "booty:latest", n_frames: 1 },
@@ -14,39 +48,38 @@ scenes:
     },
     {
       prompt: "Realistic Deadpool, Simple White Background",
-      src_animation: { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 1 },
-      tgt_animation: { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 20 },
+      src_animation:
+        { artifact_tag: "mixamo-human_rotation:latest", n_frames: 8 },
+      tgt_animation: { artifact_tag: "handstand:latest", n_frames: 20 },
     },
     {
       prompt: "Realistic Deadpool, Simple White Background",
-      src_animation: { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 1 },
-      tgt_animation: { artifact_tag: "mixamo-human_orth_pan:latest", n_frames: 20 },
+      src_animation:
+        { artifact_tag: "mixamo-human_rotation:latest", n_frames: 8 },
+      tgt_animation: { artifact_tag: "backflip:latest", n_frames: 20 },
     },
     {
       prompt: "Realistic Deadpool, Simple White Background",
-      src_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 1 },
-      tgt_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 20 }
+      src_animation:
+        { artifact_tag: "mixamo-human_rotation:latest", n_frames: 8 },
+      tgt_animation: { artifact_tag: "flair:latest", n_frames: 20 },
     },
-    {
-      prompt: "Realistic Deadpool, Simple White Background",
-      src_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 10 },
-      tgt_animation: { artifact_tag: "mixamo-human_rotation:latest", n_frames: 20 }
-    }
   ]
 
-generative_rendering:
+reposable_diffusion:
   resolution: 512
   seed: 1
   attend_to_self_kv: true
   do_pre_attn_injection: true
   do_post_attn_injection: true
+  aggregate_queries: true
   feature_blend_alpha: 1.0
   mean_features_weight: 0.5
   chunk_size: 5
-  num_keyframes: 5
   num_inference_steps: 10
   guidance_scale: 7.5
   controlnet_conditioning_scale: 1.0
+  noise_threshold: 1.0
   module_paths: [
       # "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
       # "down_blocks.0.attentions.1.transformer_blocks.0.attn1",

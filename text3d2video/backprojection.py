@@ -1,19 +1,23 @@
-from typing import List
+from typing import Callable, Dict, List
 
 import torch
+from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.renderer import (
     CamerasBase,
     MeshRasterizer,
     RasterizationSettings,
+    TexturesVertex,
 )
+from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
+from text3d2video.rendering import FeatureShader
 from text3d2video.util import sample_feature_map_ndc
 
 
-def project_vertices_to_cameras(meshes: Meshes, cameras: CamerasBase):
+def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase):
     # rasterize mesh, to get visible verts
     raster_settings = RasterizationSettings(
         image_size=600,
@@ -90,3 +94,118 @@ def aggregate_features_precomputed_vertex_positions(
 
     # average features
     return vert_features
+
+
+def aggregate_spatial_features(
+    feature_maps: Float[Tensor, "n c h w"],
+    n_verts: int,
+    vertex_positions: List[Float[Tensor, "v 3"]],
+    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
+):
+    vert_ft_mean = aggregate_features_precomputed_vertex_positions(
+        feature_maps,
+        n_verts,
+        vertex_positions,
+        vertex_indices,
+        mode="bilinear",
+        aggregation_type="mean",
+    )
+
+    vert_ft_first = aggregate_features_precomputed_vertex_positions(
+        feature_maps,
+        n_verts,
+        vertex_positions,
+        vertex_indices,
+        mode="bilinear",
+        aggregation_type="first",
+    )
+
+    w_mean = 0.5
+    w_inpainted = 1 - w_mean
+    vert_features = w_mean * vert_ft_mean + w_inpainted * vert_ft_first
+
+    return vert_features
+
+
+def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragments):
+    vert_features = vert_features.unsqueeze(0).expand(len(meshes), -1, -1)
+    texture = TexturesVertex(vert_features)
+    render_meshes = meshes.clone()
+    render_meshes.textures = texture
+    shader = FeatureShader("cuda")
+    render = shader(fragments, render_meshes)
+
+    render = rearrange(render, "b h w c -> b c h w")
+
+    return render
+
+
+def rasterize_and_render_vt_features(
+    vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
+):
+    raster_settings = RasterizationSettings(
+        image_size=resolution, faces_per_pixel=1, bin_size=0
+    )
+    rasterizer = MeshRasterizer(cameras=cams, raster_settings=raster_settings)
+
+    fragments = rasterizer(meshes, cameras=cams)
+    render = render_vert_features(vert_features, meshes, fragments)
+
+    # render = TF.resize(
+    #     render, resolution, interpolation=TF.InterpolationMode.NEAREST_EXACT
+    # )
+
+    return render
+
+
+# all operate on dicts
+
+
+def diffusion_dict_map(
+    all_features: Dict[str, Tensor], f: Callable
+) -> Dict[str, Tensor]:
+    all_out_features = {}
+
+    """
+    Utility for applying a per-element function to a dictionary of features for each frame
+    """
+
+    # iterate over modules
+    for module, module_features in all_features.items():
+        stacked_out_features = []
+        # iterate over batches
+        for batch_features in module_features:
+            # apply function to batch of features
+            out_features = f(batch_features, module)
+            stacked_out_features.append(out_features)
+        stacked_out_features = torch.stack(stacked_out_features)
+        all_out_features[module] = stacked_out_features
+    return all_out_features
+
+
+def aggregate_spatial_features_dict(
+    spatial_diffusion_features: Dict[str, Float[Tensor, "n c h w"]],
+    n_vertices: int,
+    vertex_positions: List[Float[Tensor, "v 3"]],
+    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
+) -> Dict[str, Float[Tensor, "b v c"]]:
+    return diffusion_dict_map(
+        spatial_diffusion_features,
+        lambda feature_maps, _: aggregate_spatial_features(
+            feature_maps, n_vertices, vertex_positions, vertex_indices
+        ),
+    )
+
+
+def rasterize_and_render_vert_features_dict(
+    aggregated_features: Dict[str, Float[Tensor, "b v c"]],
+    meshes: Meshes,
+    cams: CamerasBase,
+    resolutions: Dict[str, int] = None,
+):
+    return diffusion_dict_map(
+        aggregated_features,
+        lambda vt_ft, module: rasterize_and_render_vt_features(
+            vt_ft, meshes, cams, resolution=resolutions[module]
+        ),
+    )

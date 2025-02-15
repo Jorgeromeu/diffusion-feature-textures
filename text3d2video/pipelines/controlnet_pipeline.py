@@ -123,6 +123,16 @@ class ControlNetPipeline(DiffusionPipeline):
 
         return image
 
+    def preprocess_controlnet_images(self, images: List[Image.Image]):
+        height = images[0].height
+        width = images[0].width
+
+        image = self.control_image_processor.preprocess(
+            images, height=height, width=width
+        ).to(dtype=self.dtype, device=self.device)
+
+        return image
+
     @torch.no_grad()
     @typechecked
     def __call__(
@@ -136,6 +146,7 @@ class ControlNetPipeline(DiffusionPipeline):
         generator=None,
         initial_latents: torch.Tensor = None,
         guess_mode=False,
+        guess_mode_scaling=True,
     ):
         # number of images being generated
         batch_size = len(prompts)
@@ -159,29 +170,46 @@ class ControlNetPipeline(DiffusionPipeline):
                 self.pre_step_callback(t, i)
 
             # duplicate latent, to feed to model with CFG
-            latent_model_input = torch.cat([latents] * 2)
-            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+            latents = self.scheduler.scale_model_input(latents, t)
+            latents_duplicated = torch.cat([latents] * 2)
 
             # controlnet step
-            controlnet_model_input = latent_model_input
-            controlnet_prompt_embeds = text_embeddings
-            processed_control_image = self.prepare_controlnet_image(depth_maps)
-            down_block_res_samples, mid_block_res_sample = self.controlnet(
-                controlnet_model_input,
-                t,
-                encoder_hidden_states=controlnet_prompt_embeds,
-                controlnet_cond=processed_control_image,
-                conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=guess_mode,
-                return_dict=False,
-            )
+
+            processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
+
+            if guess_mode:
+                down_residuals, mid_residual = self.controlnet(
+                    latents,
+                    t,
+                    encoder_hidden_states=cond_embeddings,
+                    controlnet_cond=processed_ctrl_images,
+                    conditioning_scale=controlnet_conditioning_scale,
+                    guess_mode=guess_mode_scaling,
+                    return_dict=False,
+                )
+
+                down_residuals = [
+                    torch.cat([torch.zeros_like(d), d]) for d in down_residuals
+                ]
+                mid_residual = torch.cat([torch.zeros_like(mid_residual), mid_residual])
+
+            else:
+                down_residuals, mid_residual = self.controlnet(
+                    latents_duplicated,
+                    t,
+                    encoder_hidden_states=text_embeddings,
+                    controlnet_cond=processed_ctrl_images,
+                    conditioning_scale=controlnet_conditioning_scale,
+                    guess_mode=False,
+                    return_dict=False,
+                )
 
             # diffusion step, with controlnet residuals
             noise_pred = self.unet(
-                latent_model_input,
+                latents_duplicated,
                 t,
-                mid_block_additional_residual=mid_block_res_sample,
-                down_block_additional_residuals=down_block_res_samples,
+                mid_block_additional_residual=mid_residual,
+                down_block_additional_residuals=down_residuals,
                 encoder_hidden_states=text_embeddings,
             ).sample
 

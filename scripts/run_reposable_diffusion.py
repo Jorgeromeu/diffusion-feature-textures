@@ -16,7 +16,7 @@ from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
-    GenerativeRenderingConfig,
+    ReposableDiffusionConfig,
     RunConfig,
 )
 from text3d2video.generative_rendering.reposable_diffusion_pipeline import (
@@ -33,7 +33,7 @@ class RunReposableDiffusionConfig:
     target_frames: AnimationConfig
     source_frames: AnimationConfig
     save_tensors: GrSaveConfig
-    generative_rendering: GenerativeRenderingConfig
+    reposable_diffusion: ReposableDiffusionConfig
     noise_initialization: Any
     model: ModelConfig
 
@@ -102,7 +102,7 @@ def run(cfg: RunReposableDiffusionConfig):
         aggr_cams,
         uv_verts,
         uv_faces,
-        reposable_diffusion_config=cfg.generative_rendering,
+        reposable_diffusion_config=cfg.reposable_diffusion,
         noise_initializer=noise_initializer,
         gr_save_config=cfg.save_tensors,
     )
@@ -111,7 +111,7 @@ def run(cfg: RunReposableDiffusionConfig):
     aggr_frames = video_frames[len(frame_cams) :]
 
     if cfg.save_tensors.enabled:
-        pipe.log_data_artifact()
+        pipe.gr_data_artifact.log_if_enabled()
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact(cfg.video_artifact)

@@ -13,7 +13,7 @@ from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.generative_rendering.configs import (
     AnimationConfig,
-    GenerativeRenderingConfig,
+    ReposableDiffusionConfig,
     RunConfig,
 )
 from text3d2video.noise_initialization import UVNoiseInitializer
@@ -22,8 +22,6 @@ from text3d2video.utilities.experiment_util import (
     object_to_instantiate_config,
 )
 from text3d2video.utilities.video_comparison import (
-    VideoLabel,
-    add_label_to_clip,
     group_into_array,
     video_grid,
 )
@@ -46,7 +44,7 @@ class ReposableDiffusionAblationExperimentConfig:
     run: RunConfig
     scenes: list[SceneConfig]
     save_tensors: GrSaveConfig
-    generative_rendering: GenerativeRenderingConfig
+    reposable_diffusion: ReposableDiffusionConfig
     model: ModelConfig
 
 
@@ -57,6 +55,7 @@ class InjectionConfig:
     attend_to_self: bool
     pre_attn_injection: bool
     post_attn_injection: bool
+    aggregate_queries: bool
 
 
 class ReposableDiffusionAblationExperiment(WandbExperiment):
@@ -66,20 +65,23 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             attend_to_self=False,
             pre_attn_injection=False,
             post_attn_injection=False,
+            aggregate_queries=False,
             index=0,
         ),
         InjectionConfig(
-            name="Attend to Source",
+            name="Attend to src",
             attend_to_self=False,
             pre_attn_injection=True,
             post_attn_injection=False,
+            aggregate_queries=False,
             index=1,
         ),
         InjectionConfig(
-            name="Attend to Source + Self",
+            name="Attend to src + Self",
             attend_to_self=True,
             pre_attn_injection=True,
             post_attn_injection=False,
+            aggregate_queries=False,
             index=2,
         ),
         InjectionConfig(
@@ -87,21 +89,32 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             attend_to_self=False,
             pre_attn_injection=False,
             post_attn_injection=True,
+            aggregate_queries=False,
             index=3,
         ),
         InjectionConfig(
-            name="Post Attn + Attend to source",
+            name="Post Attn + Attend to src",
             attend_to_self=False,
             pre_attn_injection=True,
             post_attn_injection=True,
+            aggregate_queries=False,
             index=4,
         ),
         InjectionConfig(
-            name="Post Attn + Attend to source+self",
+            name="Post Attn + Attend to src+self",
             attend_to_self=True,
             pre_attn_injection=True,
             post_attn_injection=True,
+            aggregate_queries=False,
             index=5,
+        ),
+        InjectionConfig(
+            name="Qry Injection + Attend to src",
+            attend_to_self=True,
+            pre_attn_injection=True,
+            post_attn_injection=True,
+            aggregate_queries=True,
+            index=6,
         ),
     ]
 
@@ -119,12 +132,16 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
 
         for scene in config.scenes:
             for injection_config in self.injection_configs:
-                gr_config = config.generative_rendering.copy()
+                gr_config: ReposableDiffusionConfig = config.reposable_diffusion.copy()
 
                 # set ablation config
                 gr_config.do_pre_attn_injection = injection_config.pre_attn_injection
                 gr_config.do_post_attn_injection = injection_config.post_attn_injection
                 gr_config.attend_to_self_kv = injection_config.attend_to_self
+                gr_config.aggregate_queries = injection_config.aggregate_queries
+
+                run_config: RunConfig = config.run.copy()
+                run_config.name = injection_config.name
 
                 cfg = RunReposableDiffusionConfig(
                     run=config.run,
@@ -133,7 +150,7 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
                     prompt=scene.prompt,
                     target_frames=scene.tgt_animation,
                     source_frames=scene.src_animation,
-                    generative_rendering=gr_config,
+                    reposable_diffusion=gr_config,
                     noise_initialization=object_to_instantiate_config(
                         UVNoiseInitializer()
                     ),
@@ -167,11 +184,13 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             for config in self.injection_configs:
                 if (
                     config.pre_attn_injection
-                    == cfg.generative_rendering.do_pre_attn_injection
+                    == cfg.reposable_diffusion.do_pre_attn_injection
                     and config.post_attn_injection
-                    == cfg.generative_rendering.do_post_attn_injection
+                    == cfg.reposable_diffusion.do_post_attn_injection
                     and config.attend_to_self
-                    == cfg.generative_rendering.attend_to_self_kv
+                    == cfg.reposable_diffusion.attend_to_self_kv
+                    and config.aggregate_queries
+                    == cfg.reposable_diffusion.aggregate_queries
                 ):
                     injection_config = config
 
@@ -219,6 +238,6 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
             labels = None
 
         comparison_grid = video_grid(
-            all_vids, x_labels=labels, col_gap_indices=[0, 1, 3]
+            all_vids, x_labels=labels, col_gap_indices=[0, 1, 3, 6]
         )
         return comparison_grid

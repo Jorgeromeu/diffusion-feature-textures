@@ -1,7 +1,5 @@
 import torch
 import torchvision.transforms.functional as TF
-from einops import rearrange
-from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     BlendParams,
     CamerasBase,
@@ -10,7 +8,7 @@ from pytorch3d.renderer import (
     RasterizationSettings,
 )
 from pytorch3d.structures import Meshes
-from torch import Tensor, nn
+from torch import nn
 
 
 class FeatureShader(nn.Module):
