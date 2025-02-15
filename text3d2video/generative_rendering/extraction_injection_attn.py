@@ -3,17 +3,12 @@ from math import sqrt
 from typing import Dict, List, Optional
 
 import torch
-from attr import dataclass
 from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor
 
 from text3d2video.attn_processor import DefaultAttnProcessor
-from text3d2video.generative_rendering.configs import (
-    GenerativeRenderingConfig,
-    ReposableDiffusionConfig,
-)
 from text3d2video.util import blend_features
 from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
@@ -32,58 +27,78 @@ class AttnMode(Enum):
         return False
 
 
-@dataclass
-class ExtractionInjectionAttnConfig:
+class ExtractionInjectionAttn(DefaultAttnProcessor):
+    """
+    Attention processor that enables extracting and
+    injecting features in the attention layers.
+    """
+
+    # extraction settings
     do_kv_extraction: bool
     do_spatial_qry_extraction: bool
-    module_paths: List[str]
+    do_spatial_post_attn_extraction: bool
+    extraction_attn_paths: List[str]
+
+    # injection settings
     attend_to_self_kv: bool
     feature_blend_alpha: float
 
-
-class ExtractionInjectionAttn(DefaultAttnProcessor):
-    config: ExtractionInjectionAttnConfig
+    # mode
     mode: AttnMode = AttnMode.FEATURE_INJECTION
 
     # save features here in extraction mode, and use them in injection mode
-    pre_attn_features: Dict[str, Float[Tensor, "b t c"]] = {}
-    post_attn_features: Dict[str, Float[Tensor, "b f t c"]] = {}
+    kv_features: Dict[str, Float[Tensor, "b t c"]] = {}
+    spatial_qry_features: Dict[str, Float[Tensor, "b f t c"]] = {}
+    spatial_post_attn_features: Dict[str, Float[Tensor, "b f t c"]] = {}
 
     def __init__(
         self,
         unet,
-        config: ExtractionInjectionAttnConfig,
+        do_spatial_qry_extraction: bool,
+        do_spatial_post_attn_extraction: bool,
+        do_kv_extraction: bool,
+        attend_to_self_kv: bool,
+        feature_blend_alpha: bool,
+        extraction_attn_paths: List[str],
         mode=AttnMode.FEATURE_INJECTION,
         unet_chunk_size=2,
     ):
         DefaultAttnProcessor.__init__(self, unet, unet_chunk_size)
-        self.config = config
+        self.do_kv_extraction = do_kv_extraction
+        self.do_spatial_qry_extraction = do_spatial_qry_extraction
+        self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
+        self.attend_to_self_kv = attend_to_self_kv
+        self.feature_blend_alpha = feature_blend_alpha
+        self.extraction_attn_paths = extraction_attn_paths
         self.mode = mode
-        self.pre_attn_features = {}
-        self.post_attn_features = {}
+        self.kv_features = {}
+        self.spatial_qry_features = {}
 
     def should_extract_at_cur_layer(self):
-        return self._cur_module_path in self.config.module_paths
+        return self._cur_module_path in self.extraction_attn_paths
 
     # mode-setting functions
 
     def set_extraction_mode(self):
         self.mode = AttnMode.FEATURE_EXTRACTION
-        self.pre_attn_features = {}
-        self.post_attn_features = {}
+        self.clear_features()
 
     def clear_features(self):
-        self.pre_attn_features = {}
-        self.post_attn_features = {}
+        self.kv_features = {}
+        self.spatial_qry_features = {}
+        self.spatial_post_attn_features = {}
 
-    def set_injection_mode(self, pre_attn_features, post_attn_features):
+    def set_injection_mode(
+        self, pre_attn_features={}, post_attn_features={}, qry_features={}
+    ):
         self.mode = AttnMode.FEATURE_INJECTION
-        self.pre_attn_features = pre_attn_features
-        self.post_attn_features = post_attn_features
+        self.kv_features = pre_attn_features
+        self.spatial_post_attn_features = post_attn_features
+        self.spatial_qry_features = qry_features
 
     # functionality
 
-    def call_extraction_mode(
+    def _call_extraction_mode(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Optional[Tensor]
     ):
         """
@@ -105,10 +120,12 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         attn_out = memory_efficient_attention(attn, key, qry, value, attention_mask)
 
         if self.should_extract_at_cur_layer():
-            if self.config.do_kv_extraction:
-                self.pre_attn_features[self._cur_module_path] = ext_hidden_states
+            # extract kv-features
+            if self.do_kv_extraction:
+                self.kv_features[self._cur_module_path] = ext_hidden_states
 
-            if self.config.do_spatial_qry_extraction:
+            # extract spatial query maps
+            if self.do_spatial_qry_extraction:
                 height = int(sqrt(qry.shape[1]))
                 qry_square = rearrange(
                     qry,
@@ -116,11 +133,22 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                     h=height,
                     b=self.unet_chunk_size,
                 )
-                self.post_attn_features[self._cur_module_path] = qry_square
+                self.spatial_qry_features[self._cur_module_path] = qry_square
+
+            # extract spatial post attn features
+            if self.do_spatial_post_attn_extraction:
+                height = int(sqrt(attn_out.shape[1]))
+                attn_out_square = rearrange(
+                    attn_out,
+                    "(b f) (h w) d -> b f d h w",
+                    h=height,
+                    b=self.unet_chunk_size,
+                )
+                self.spatial_post_attn_features[self._cur_module_path] = attn_out_square
 
         return attn_out
 
-    def call_injection_mode(
+    def _call_injection_mode(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Optional[Tensor]
     ):
         """
@@ -140,7 +168,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
             blended = blend_features(
                 original_features_2D,
                 feature_images.to(original_features_2D),
-                self.config.feature_blend_alpha,
+                self.feature_blend_alpha,
                 channel_dim=2,
             )
 
@@ -151,9 +179,9 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
         n_frames = hidden_states.shape[0] // self.unet_chunk_size
 
-        injected_kv_features = self.pre_attn_features.get(self._cur_module_path)
+        injected_kv_features = self.kv_features.get(self._cur_module_path)
 
-        # if nothing passed, do normal self attention
+        # if no injected kv features, use self-attn
         if injected_kv_features is None:
             kv_features = hidden_states
 
@@ -162,27 +190,30 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
             kv_features = extend_across_frame_dim(injected_kv_features, n_frames)
 
             # concatenate current hidden states
-            if self.config.attend_to_self_kv:
+            if self.attend_to_self_kv:
                 kv_features = torch.cat([hidden_states, kv_features], dim=1)
 
         key = attn.to_k(kv_features)
         val = attn.to_v(kv_features)
         qry = attn.to_q(hidden_states)
 
-        # read injected post attn features
-        injected_spatial_features = self.post_attn_features.get(self._cur_module_path)
-        # print(injected_spatial_features)
-
-        if injected_spatial_features is not None:
-            qry = blend_feature_images(qry, injected_spatial_features)
+        # inject query features
+        injected_qrys = self.spatial_qry_features.get(self._cur_module_path)
+        if injected_qrys is not None:
+            qry = blend_feature_images(qry, injected_qrys)
 
         # self.write_qkv(qry, key, val)
 
         attn_out = memory_efficient_attention(attn, key, qry, val, attention_mask)
 
+        # inject post attn features
+        injected_attn_out = self.spatial_post_attn_features.get(self._cur_module_path)
+        if injected_attn_out is not None:
+            attn_out = blend_feature_images(attn_out, injected_attn_out)
+
         return attn_out
 
-    def call_cross_attn(
+    def _call_cross_attn(
         self, attn, hidden_states, encoder_hidden_states, attention_mask
     ):
         qry = attn.to_q(hidden_states)
@@ -199,10 +230,10 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
         return memory_efficient_attention(attn, key, qry, val, attention_mask)
 
-    def call_self_attn(self, attn, hidden_states, attention_mask):
+    def _call_self_attn(self, attn, hidden_states, attention_mask):
         if self.mode == AttnMode.FEATURE_EXTRACTION:
-            attn_out = self.call_extraction_mode(attn, hidden_states, attention_mask)
+            attn_out = self._call_extraction_mode(attn, hidden_states, attention_mask)
         elif self.mode == AttnMode.FEATURE_INJECTION:
-            attn_out = self.call_injection_mode(attn, hidden_states, attention_mask)
+            attn_out = self._call_injection_mode(attn, hidden_states, attention_mask)
 
         return attn_out

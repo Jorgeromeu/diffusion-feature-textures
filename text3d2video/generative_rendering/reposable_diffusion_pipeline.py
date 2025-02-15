@@ -20,12 +20,11 @@ from text3d2video.backprojection import (
 from text3d2video.generative_rendering.configs import (
     ReposableDiffusionConfig,
 )
+from text3d2video.generative_rendering.extraction_injection_attn import (
+    ExtractionInjectionAttn,
+)
 from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
-)
-from text3d2video.generative_rendering.reposable_diffusion_attn import (
-    ReposableDiffusionAttn,
-    ReposableDiffusionAttnMode,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import render_depth_map
@@ -33,6 +32,7 @@ from text3d2video.rendering import render_depth_map
 
 class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
     rd_config: ReposableDiffusionConfig
+    attn_processor: ExtractionInjectionAttn
 
     def model_fwd_feature_extraction(
         self,
@@ -44,22 +44,23 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         Dict[str, Float[torch.Tensor, "b t c"]],
         Dict[str, Float[torch.Tensor, "b f t c"]],
     ]:
-        self.attn_processor.mode = ReposableDiffusionAttnMode.FEATURE_EXTRACTION
-        self.attn_processor.pre_attn_features = {}
-        self.attn_processor.post_attn_features = {}
+        # set extraction mode
+        self.attn_processor.set_extraction_mode()
 
         # forward pass
         self.model_forward(latents, text_embeddings, t, depth_maps=depth_maps)
 
-        # get saved features
-        pre_attn_features = self.attn_processor.pre_attn_features
-        post_attn_features = self.attn_processor.post_attn_features
+        # read features
+        pre_attn_features = self.attn_processor.kv_features
 
-        # clear extracted features
-        self.attn_processor.pre_attn_features = {}
-        self.attn_processor.post_attn_features = {}
+        if self.rd_config.aggregate_queries:
+            spatial_features = self.attn_processor.spatial_qry_features
+        else:
+            spatial_features = self.attn_processor.spatial_post_attn_features
 
-        return pre_attn_features, post_attn_features
+        self.attn_processor.clear_features()
+
+        return pre_attn_features, spatial_features
 
     def model_fwd_feature_injection(
         self,
@@ -71,12 +72,19 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         feature_images: Dict[str, Float[Tensor, "b f d h w"]],
         frame_indices: Tensor,
     ):
-        # set attn processor mode
-        self.attn_processor.mode = ReposableDiffusionAttnMode.FEATURE_INJECTION
+        # set injection mode and pass features
+        if self.rd_config.aggregate_queries:
+            injected_qrys = feature_images
+            injected_post_attn = {}
+        else:
+            injected_qrys = {}
+            injected_post_attn = feature_images
 
-        # pass features to attn processor
-        self.attn_processor.post_attn_features = feature_images
-        self.attn_processor.pre_attn_features = pre_attn_features
+        self.attn_processor.set_injection_mode(
+            pre_attn_features=pre_attn_features,
+            post_attn_features=injected_post_attn,
+            qry_features=injected_qrys,
+        )
 
         # pass frame indices to attn processor and timestep to attn processor
         self.attn_processor.set_chunk_frame_indices(frame_indices)
@@ -105,10 +113,24 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         self.rd_config = reposable_diffusion_config
         self.noise_initializer = noise_initializer
 
-        # set up attention processor
-        self.attn_processor = ReposableDiffusionAttn(
-            self.unet, self.rd_config, unet_chunk_size=2
+        if self.rd_config.aggregate_queries:
+            do_post_attn_extraction = False
+            do_qry_extraction = self.rd_config.do_post_attn_injection
+        else:
+            do_post_attn_extraction = self.rd_config.do_post_attn_injection
+            do_qry_extraction = False
+
+        # setup attn processor
+        self.attn_processor = ExtractionInjectionAttn(
+            self.unet,
+            do_spatial_qry_extraction=do_qry_extraction,
+            do_spatial_post_attn_extraction=do_post_attn_extraction,
+            do_kv_extraction=self.rd_config.do_pre_attn_injection,
+            attend_to_self_kv=self.rd_config.attend_to_self_kv,
+            feature_blend_alpha=self.rd_config.feature_blend_alpha,
+            extraction_attn_paths=self.rd_config.module_paths,
         )
+
         self.unet.set_attn_processor(self.attn_processor)
 
         # configure scheduler
@@ -175,7 +197,7 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
 
             # Diffusion step on source frames, to extract features
             source_latents = latents_stacked[:, source_indices]
-            pre_attn_features, post_attn_features = self.model_fwd_feature_extraction(
+            pre_attn_features, spatial_features = self.model_fwd_feature_extraction(
                 source_latents,
                 source_embeddings,
                 source_depth_maps,
@@ -184,15 +206,14 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
 
             # aggregate spatial features
             aggregated_3d_features = aggregate_spatial_features_dict(
-                post_attn_features,
+                spatial_features,
                 aggregation_meshes.num_verts_per_mesh()[0],
                 src_vert_xys,
                 src_vert_indices,
             )
 
             layer_resolutions = {
-                layer: feature.shape[-1]
-                for layer, feature in post_attn_features.items()
+                layer: feature.shape[-1] for layer, feature in spatial_features.items()
             }
 
             # save aggregated features

@@ -75,12 +75,12 @@ class DefaultAttnProcessor:
         self.unet = unet
         self.unet_chunk_size = unet_chunk_size
 
-    def call_init(self, attn: Attention, encoder_hidden_states: Tensor):
+    def _call_init(self, attn: Attention, encoder_hidden_states: Tensor):
         self._cur_module_path = get_module_path(self.unet, attn)
         self._is_cross_attn = encoder_hidden_states is not None
         self._is_self_attn = not self._is_cross_attn
 
-    def call_cross_attn(
+    def _call_cross_attn(
         self,
         attn: Attention,
         hidden_states: Tensor,
@@ -100,7 +100,7 @@ class DefaultAttnProcessor:
 
         return memory_efficient_attention(attn, key, qry, val, attention_mask)
 
-    def call_self_attn(
+    def _call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
     ):
         key = attn.to_k(hidden_states)
@@ -125,14 +125,14 @@ class DefaultAttnProcessor:
         :param attention_mask: attention mask
         """
 
-        self.call_init(attn, encoder_hidden_states)
+        self._call_init(attn, encoder_hidden_states)
 
         if self._is_cross_attn:
-            attn_out = self.call_cross_attn(
+            attn_out = self._call_cross_attn(
                 attn, hidden_states, encoder_hidden_states, attention_mask
             )
         else:
-            attn_out = self.call_self_attn(attn, hidden_states, attention_mask)
+            attn_out = self._call_self_attn(attn, hidden_states, attention_mask)
 
         # linear proj to output dim
         attn_out = attn.to_out[0](attn_out)

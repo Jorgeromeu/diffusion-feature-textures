@@ -33,7 +33,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         self.attend_to = attend_to
         self.unet_chunk_size = unet_chunk_size
 
-    def call_self_attn(
+    def _call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
     ):
         # get reference features

@@ -29,16 +29,15 @@ from text3d2video.backprojection import (
 from text3d2video.generative_rendering.configs import (
     GenerativeRenderingConfig,
 )
-from text3d2video.generative_rendering.generative_rendering_attn import (
-    GenerativeRenderingAttn,
-    GrAttnMode,
+from text3d2video.generative_rendering.extraction_injection_attn import (
+    ExtractionInjectionAttn,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import render_depth_map
 
 
 class GenerativeRenderingPipeline(DiffusionPipeline):
-    attn_processor: GenerativeRenderingAttn
+    attn_processor: ExtractionInjectionAttn
     rd_config: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
 
@@ -210,25 +209,16 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         Dict[str, Float[torch.Tensor, "b t c"]],
         Dict[str, Float[torch.Tensor, "b f t c"]],
     ]:
-        # set attn processor mode
-        self.attn_processor.mode = GrAttnMode.FEATURE_EXTRACTION
-
-        # clear saved features
-        self.attn_processor.pre_attn_features = {}
-        self.attn_processor.post_attn_features = {}
-
         # forward pass
+        self.attn_processor.set_extraction_mode()
         self.model_forward(latents, text_embeddings, t, depth_maps=depth_maps)
 
         # get saved features
-        pre_attn_features, post_attn_features = (
-            self.attn_processor.pre_attn_features,
-            self.attn_processor.post_attn_features,
-        )
+        pre_attn_features = self.attn_processor.kv_features
+        post_attn_features = self.attn_processor.spatial_post_attn_features
 
         # clear saved features
-        self.attn_processor.pre_attn_features = {}
-        self.attn_processor.post_attn_features = {}
+        self.attn_processor.clear_features()
 
         return pre_attn_features, post_attn_features
 
@@ -242,12 +232,11 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         feature_images: Dict[str, Float[Tensor, "b f d h w"]],
         frame_indices: Tensor,
     ):
-        # set attn processor mode
-        self.attn_processor.mode = GrAttnMode.FEATURE_INJECTION
-
-        # pass features to attn processor
-        self.attn_processor.post_attn_features = feature_images
-        self.attn_processor.pre_attn_features = pre_attn_features
+        # set injection mode and pass features
+        self.attn_processor.set_injection_mode(
+            pre_attn_features=pre_attn_features,
+            post_attn_features=feature_images,
+        )
 
         # pass frame indices to attn processor
         self.attn_processor.set_chunk_frame_indices(frame_indices)
@@ -278,10 +267,18 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         self.rd_config = generative_rendering_config
         self.noise_initializer = noise_initializer
 
-        # set up attention processor
-        self.attn_processor = GenerativeRenderingAttn(
-            self.unet, self.rd_config, unet_chunk_size=2
+        # set up attn processor
+        self.attn_processor = ExtractionInjectionAttn(
+            self.unet,
+            do_spatial_qry_extraction=False,
+            do_spatial_post_attn_extraction=self.rd_config.do_post_attn_injection,
+            do_kv_extraction=self.rd_config.do_pre_attn_injection,
+            attend_to_self_kv=self.rd_config.attend_to_self_kv,
+            feature_blend_alpha=self.rd_config.feature_blend_alpha,
+            extraction_attn_paths=self.rd_config.module_paths,
+            unet_chunk_size=2,
         )
+
         self.unet.set_attn_processor(self.attn_processor)
 
         # configure scheduler

@@ -1,8 +1,6 @@
 from typing import Callable, List, Optional
 
-import numpy as np
 import torch
-import torchvision.transforms.functional as TF
 from diffusers import (
     AutoencoderKL,
     ControlNetModel,
@@ -15,9 +13,6 @@ from PIL import Image
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from typeguard import typechecked
-
-from text3d2video.util import blend_features
-from text3d2video.utilities.image_utils import affine
 
 
 class ControlNetPipeline(DiffusionPipeline):
