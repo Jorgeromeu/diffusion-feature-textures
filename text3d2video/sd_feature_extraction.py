@@ -241,3 +241,31 @@ class HookManager:
         for handle in self._named_handles.values():
             handle.remove()
         self._named_handles = {}
+
+
+def find_attn_layers(
+    module: nn.Module, layer_types: AttnType = None, resolutions=None, block_types=None
+):
+    if layer_types is None:
+        layer_types = [AttnType.SELF_ATTN, AttnType.CROSS_ATTN]
+
+    if resolutions is None:
+        resolutions = [64, 32, 16, 8]
+
+    if block_types is None:
+        block_types = [BlockType.DOWN, BlockType.MID, BlockType.UP]
+
+    modules = find_attn_modules(module)
+    results = []
+    for m in modules:
+        parsed = AttnLayerId.parse_module_path(m)
+        resolution = parsed.layer_resolution(module)
+
+        if (
+            parsed.attn_type in layer_types
+            and resolution in resolutions
+            and parsed.block_type in block_types
+        ):
+            results.append(m)
+
+    return results

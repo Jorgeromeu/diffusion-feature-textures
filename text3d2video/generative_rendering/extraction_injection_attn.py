@@ -53,7 +53,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
     def __init__(
         self,
-        unet,
+        model,
         do_spatial_qry_extraction: bool,
         do_spatial_post_attn_extraction: bool,
         do_kv_extraction: bool,
@@ -63,7 +63,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         mode=AttnMode.FEATURE_INJECTION,
         unet_chunk_size=2,
     ):
-        DefaultAttnProcessor.__init__(self, unet, unet_chunk_size)
+        DefaultAttnProcessor.__init__(self, model, unet_chunk_size)
         self.do_kv_extraction = do_kv_extraction
         self.do_spatial_qry_extraction = do_spatial_qry_extraction
         self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
@@ -105,10 +105,10 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         Perform extended attention, and extract features
         """
 
-        n_frames = hidden_states.shape[0] // self.unet_chunk_size
+        n_frames = hidden_states.shape[0] // self.chunk_size
 
         ext_hidden_states = extended_attn_kv_hidden_states(
-            hidden_states, chunk_size=self.unet_chunk_size
+            hidden_states, chunk_size=self.chunk_size
         )
 
         kv_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
@@ -131,7 +131,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                     qry,
                     "(b f) (h w) d -> b f d h w",
                     h=height,
-                    b=self.unet_chunk_size,
+                    b=self.chunk_size,
                 )
                 self.spatial_qry_features[self._cur_module_path] = qry_square
 
@@ -142,7 +142,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                     attn_out,
                     "(b f) (h w) d -> b f d h w",
                     h=height,
-                    b=self.unet_chunk_size,
+                    b=self.chunk_size,
                 )
                 self.spatial_post_attn_features[self._cur_module_path] = attn_out_square
 
@@ -161,7 +161,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 original_features_1D,
                 "(b f) (h w) d -> b f d h w",
                 h=height,
-                b=self.unet_chunk_size,
+                b=self.chunk_size,
             )
 
             # blend rendered and current features
@@ -177,7 +177,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
             return blended_features_1D
 
-        n_frames = hidden_states.shape[0] // self.unet_chunk_size
+        n_frames = hidden_states.shape[0] // self.chunk_size
 
         injected_kv_features = self.kv_features.get(self._cur_module_path)
 

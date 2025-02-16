@@ -42,9 +42,9 @@ class DefaultAttnProcessor:
         if self.attn_writer is None:
             return
 
-        unstacked_q = rearrange(qry, "(b f) t c -> b f t c", b=self.unet_chunk_size)
-        unstacked_k = rearrange(key, "(b f) t c -> b f t c", b=self.unet_chunk_size)
-        unstacked_v = rearrange(val, "(b f) t c -> b f t c", b=self.unet_chunk_size)
+        unstacked_q = rearrange(qry, "(b f) t c -> b f t c", b=self.chunk_size)
+        unstacked_k = rearrange(key, "(b f) t c -> b f t c", b=self.chunk_size)
+        unstacked_v = rearrange(val, "(b f) t c -> b f t c", b=self.chunk_size)
 
         timestep = self.cur_timestep
         chunk_frame_indices = self.chunk_frame_indices
@@ -65,18 +65,18 @@ class DefaultAttnProcessor:
 
     def __init__(
         self,
-        unet,
-        unet_chunk_size=2,
+        model,
+        chunk_size=2,
     ):
         """
         :param unet_chunk_size:
             number of batches for each generated image, 2 for classifier free guidance
         """
-        self.unet = unet
-        self.unet_chunk_size = unet_chunk_size
+        self.model = model
+        self.chunk_size = chunk_size
 
     def _call_init(self, attn: Attention, encoder_hidden_states: Tensor):
-        self._cur_module_path = get_module_path(self.unet, attn)
+        self._cur_module_path = get_module_path(self.model, attn)
         self._is_cross_attn = encoder_hidden_states is not None
         self._is_self_attn = not self._is_cross_attn
 

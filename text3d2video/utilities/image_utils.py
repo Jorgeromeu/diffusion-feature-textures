@@ -26,11 +26,18 @@ def affine_inv(im, translation=(0, 0), scale=1.0, angle=0.0):
 
 
 class Affine2D(nn.Module):
-    def __init__(self, translate=(0, 0), scale=1.0, angle=0.0):
+    def __init__(
+        self,
+        translate=(0, 0),
+        scale=1.0,
+        angle=0.0,
+        interpolation=TF.InterpolationMode.BILINEAR,
+    ):
         super().__init__()
         self.translate = translate
         self.scale = scale
         self.angle = angle
+        self.interpolation = interpolation
 
     def forward(self, x):
         h, w = TF.get_image_size(x)
@@ -40,6 +47,7 @@ class Affine2D(nn.Module):
             scale=self.scale,
             angle=self.angle,
             shear=0.0,
+            interpolation=self.interpolation,
         )
 
     def inverse(self):
@@ -47,4 +55,5 @@ class Affine2D(nn.Module):
             translate=(-self.translate[0], -self.translate[1]),
             scale=1 / self.scale,
             angle=-self.angle,
+            interpolation=self.interpolation,
         )
