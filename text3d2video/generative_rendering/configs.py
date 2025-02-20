@@ -58,4 +58,3 @@ class ReposableDiffusionConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: list[str]
-    noise_threshold: float

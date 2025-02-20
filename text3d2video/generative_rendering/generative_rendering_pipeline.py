@@ -4,7 +4,6 @@ import torch
 from diffusers import (
     AutoencoderKL,
     ControlNetModel,
-    DiffusionPipeline,
     UNet2DConditionModel,
     UniPCMultistepScheduler,
 )
@@ -33,73 +32,17 @@ from text3d2video.generative_rendering.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
 from text3d2video.noise_initialization import NoiseInitializer
+from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import render_depth_map
 
 
-class GenerativeRenderingPipeline(DiffusionPipeline):
+class GenerativeRenderingPipeline(BaseControlNetPipeline):
     attn_processor: ExtractionInjectionAttn
     rd_config: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
 
     # diffusion data artifact
     gr_data_artifact: GrDataArtifact = None
-
-    def __init__(
-        self,
-        vae: AutoencoderKL,
-        text_encoder: CLIPTextModel,
-        tokenizer: CLIPTokenizer,
-        unet: UNet2DConditionModel,
-        scheduler: UniPCMultistepScheduler,
-        controlnet: ControlNetModel,
-    ):
-        super().__init__()
-
-        # register modules
-        self.register_modules(
-            vae=vae,
-            unet=unet,
-            scheduler=scheduler,
-            tokenizer=tokenizer,
-            text_encoder=text_encoder,
-            controlnet=controlnet,
-        )
-
-        # vae image processors
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-        self.image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
-        )
-        self.control_image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor,
-            do_convert_rgb=True,
-            do_normalize=False,
-        )
-
-    def encode_prompt(self, prompts: List[str]) -> Tuple[Tensor, Tensor]:
-        # tokenize prompts
-        text_input = self.tokenizer(
-            prompts,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-
-        # Get CLIP embedding
-        with torch.no_grad():
-            cond_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
-
-        max_length = text_input.input_ids.shape[-1]
-        uncond_input = self.tokenizer(
-            [""] * len(prompts),
-            padding="max_length",
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
-
-        return cond_embeddings, uncond_embeddings
 
     def prepare_latents(
         self,
@@ -120,39 +63,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             n_frames=len(meshes),
         )
 
-    def decode_latents(self, latents: torch.FloatTensor, generator=None):
-        # scale latents
-        latents_scaled = latents / self.vae.config.scaling_factor
-
-        # decode latents
-        images = self.vae.decode(
-            latents_scaled,
-            return_dict=False,
-            generator=generator,
-        )[0]
-
-        # postprocess images
-        images = self.image_processor.postprocess(
-            images, output_type="pil", do_denormalize=[True] * len(latents)
-        )
-
-        return images
-
-    def prepare_controlnet_images(
-        self, images: List[Image.Image], do_classifier_free_guidance=True
-    ):
-        height = images[0].height
-        width = images[0].width
-
-        image = self.control_image_processor.preprocess(
-            images, height=height, width=width
-        ).to(dtype=self.dtype, device=self.device)
-
-        if do_classifier_free_guidance:
-            image = torch.cat([image] * 2)
-
-        return image
-
     def model_forward(
         self,
         latents: Float[Tensor, "b f c h w"],
@@ -169,21 +79,19 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         batched_latents = rearrange(latents, "b f c h w -> (b f) c h w")
         batched_embeddings = rearrange(text_embeddings, "b f t d -> (b f) t d")
 
-        if depth_maps:
-            # controlnet step
-            controlnet_prompt_embeds = batched_embeddings
-            processed_control_image = self.prepare_controlnet_images(depth_maps)
-            down_block_res_samples, mid_block_res_sample = self.controlnet(
-                batched_latents,
-                t,
-                encoder_hidden_states=controlnet_prompt_embeds,
-                controlnet_cond=processed_control_image,
-                conditioning_scale=self.rd_config.controlnet_conditioning_scale,
-                guess_mode=False,
-                return_dict=False,
-            )
-        else:
-            down_block_res_samples, mid_block_res_sample = None, None
+        # controlnet step
+        processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
+        processed_ctrl_images = torch.cat([processed_ctrl_images] * 2)
+
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            batched_latents,
+            t,
+            encoder_hidden_states=batched_embeddings,
+            controlnet_cond=processed_ctrl_images,
+            conditioning_scale=self.rd_config.controlnet_conditioning_scale,
+            guess_mode=False,
+            return_dict=False,
+        )
 
         # unet, with controlnet residuals
         noise_pred = self.unet(
@@ -217,7 +125,6 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
         pre_attn_features = self.attn_processor.kv_features
         post_attn_features = self.attn_processor.spatial_post_attn_features
 
-        # clear saved features
         self.attn_processor.clear_features()
 
         return pre_attn_features, post_attn_features
@@ -275,7 +182,9 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
             do_kv_extraction=self.rd_config.do_pre_attn_injection,
             attend_to_self_kv=self.rd_config.attend_to_self_kv,
             feature_blend_alpha=self.rd_config.feature_blend_alpha,
-            extraction_attn_paths=self.rd_config.module_paths,
+            kv_extraction_paths=self.rd_config.module_paths,
+            spatial_post_attn_extraction_paths=self.rd_config.module_paths,
+            spatial_qry_extraction_paths=[],
             unet_chunk_size=2,
         )
 
@@ -366,7 +275,7 @@ class GenerativeRenderingPipeline(DiffusionPipeline):
 
             # do inference in chunks
             noise_preds = []
-            for i, chunk_frame_indices in enumerate(chunks_indices):
+            for chunk_frame_indices in chunks_indices:
                 chunk_feature_images = rasterize_and_render_vert_features_dict(
                     aggregated_3d_features,
                     meshes[chunk_frame_indices],

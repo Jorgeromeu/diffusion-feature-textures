@@ -116,9 +116,13 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         if self.rd_config.aggregate_queries:
             do_post_attn_extraction = False
             do_qry_extraction = self.rd_config.do_post_attn_injection
+            qry_extraction_paths = self.rd_config.module_paths
+            post_attn_extraction_paths = []
         else:
             do_post_attn_extraction = self.rd_config.do_post_attn_injection
             do_qry_extraction = False
+            qry_extraction_paths = []
+            post_attn_extraction_paths = self.rd_config.module_paths
 
         # setup attn processor
         self.attn_processor = ExtractionInjectionAttn(
@@ -128,7 +132,9 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             do_kv_extraction=self.rd_config.do_pre_attn_injection,
             attend_to_self_kv=self.rd_config.attend_to_self_kv,
             feature_blend_alpha=self.rd_config.feature_blend_alpha,
-            extraction_attn_paths=self.rd_config.module_paths,
+            kv_extraction_paths=self.rd_config.module_paths,
+            spatial_qry_extraction_paths=qry_extraction_paths,
+            spatial_post_attn_extraction_paths=post_attn_extraction_paths,
         )
 
         self.unet.set_attn_processor(self.attn_processor)
@@ -179,10 +185,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         source_depth_maps = [depth_maps[i] for i in source_indices.tolist()]
         src_vert_xys = [vert_xys[i] for i in source_indices.tolist()]
         src_vert_indices = [vert_indices[i] for i in source_indices.tolist()]
-
-        max_timestep = int(
-            self.rd_config.num_inference_steps * self.rd_config.noise_threshold
-        )
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
@@ -259,10 +261,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 if not self.rd_config.do_pre_attn_injection:
                     pre_attn_features = {}
                 if not self.rd_config.do_post_attn_injection:
-                    chunk_feature_images = {}
-
-                if i > max_timestep:
-                    pre_attn_features = {}
                     chunk_feature_images = {}
 
                 noise_pred = self.model_fwd_feature_injection(

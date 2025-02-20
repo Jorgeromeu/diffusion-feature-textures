@@ -244,7 +244,11 @@ class HookManager:
 
 
 def find_attn_layers(
-    module: nn.Module, layer_types: AttnType = None, resolutions=None, block_types=None
+    module: nn.Module,
+    layer_types: AttnType = None,
+    resolutions=None,
+    block_types=None,
+    return_as_string=True,
 ):
     if layer_types is None:
         layer_types = [AttnType.SELF_ATTN, AttnType.CROSS_ATTN]
@@ -256,16 +260,25 @@ def find_attn_layers(
         block_types = [BlockType.DOWN, BlockType.MID, BlockType.UP]
 
     modules = find_attn_modules(module)
+
+    # parse
+    layers = [AttnLayerId.parse_module_path(m) for m in modules]
+
+    # sort by order
+    layers = sorted(layers, key=lambda x: x.unet_absolute_index())
+
     results = []
-    for m in modules:
-        parsed = AttnLayerId.parse_module_path(m)
-        resolution = parsed.layer_resolution(module)
+    for l in layers:
+        resolution = l.layer_resolution(module)
 
         if (
-            parsed.attn_type in layer_types
+            l.attn_type in layer_types
             and resolution in resolutions
-            and parsed.block_type in block_types
+            and l.block_type in block_types
         ):
-            results.append(m)
+            if return_as_string:
+                results.append(l.module_path())
+            else:
+                results.append(l)
 
     return results

@@ -6,7 +6,7 @@ from torch import Tensor
 
 from text3d2video.artifacts.diffusion_data import (
     AttnFeaturesWriter,
-    DiffusionData,
+    DiffusionDataManager,
     DiffusionDataWriter,
     LatentsWriter,
 )
@@ -189,7 +189,7 @@ class GrDataArtifact(ArtifactWrapper):
 
     # config for saving
     config: GrSaveConfig
-    diffusion_data: DiffusionData
+    diffusion_data: DiffusionDataManager
     # diffusion data writers
     attn_writer: AttnFeaturesWriter
     latents_writer: LatentsWriter
@@ -204,12 +204,10 @@ class GrDataArtifact(ArtifactWrapper):
         art.config = config
 
         # diffusion data
-        art.diffusion_data = DiffusionData(
+        art.diffusion_data = DiffusionDataManager(
             art.h5_file_path(),
             enabled=config.enabled,
-            attn_paths=config.module_paths,
-            n_save_frames=config.n_frames,
-            n_save_steps=config.n_timesteps,
+            save_layer=config.module_paths,
         )
 
         # writers
@@ -231,8 +229,8 @@ class GrDataArtifact(ArtifactWrapper):
         return art
 
     def begin_recording(self, scheduler: SchedulerMixin, n_frames: int):
-        self.diffusion_data.calculate_save_steps(scheduler)
-        self.diffusion_data.calculate_save_frames(n_frames)
+        self.diffusion_data.calculate_evenly_spaced_save_levels(scheduler, 5)
+        self.diffusion_data.calculate_evenly_spaced_save_frames(n_frames, 5)
         self.diffusion_data.begin_recording()
 
     def end_recording(self):

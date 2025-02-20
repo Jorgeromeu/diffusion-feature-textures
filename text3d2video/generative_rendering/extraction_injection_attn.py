@@ -8,6 +8,7 @@ from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor
 
+from text3d2video.adain import adain_2D
 from text3d2video.attn_processor import DefaultAttnProcessor
 from text3d2video.util import blend_features
 from text3d2video.utilities.attention_utils import (
@@ -37,7 +38,9 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
     do_kv_extraction: bool
     do_spatial_qry_extraction: bool
     do_spatial_post_attn_extraction: bool
-    extraction_attn_paths: List[str]
+    kv_extraction_paths: List[str]
+    spatial_qry_extraction_paths: List[str]
+    spatial_post_attn_extraction_paths: List[str]
 
     # injection settings
     attend_to_self_kv: bool
@@ -59,7 +62,9 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         do_kv_extraction: bool,
         attend_to_self_kv: bool,
         feature_blend_alpha: bool,
-        extraction_attn_paths: List[str],
+        kv_extraction_paths: List[str],
+        spatial_qry_extraction_paths: List[str],
+        spatial_post_attn_extraction_paths: List[str],
         mode=AttnMode.FEATURE_INJECTION,
         unet_chunk_size=2,
     ):
@@ -69,15 +74,31 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
         self.attend_to_self_kv = attend_to_self_kv
         self.feature_blend_alpha = feature_blend_alpha
-        self.extraction_attn_paths = extraction_attn_paths
+        self.kv_extraction_paths = kv_extraction_paths
+        self.spatial_qry_extraction_paths = spatial_qry_extraction_paths
+        self.spatial_post_attn_extraction_paths = spatial_post_attn_extraction_paths
         self.mode = mode
         self.kv_features = {}
         self.spatial_qry_features = {}
 
-    def should_extract_at_cur_layer(self):
-        return self._cur_module_path in self.extraction_attn_paths
+    def _should_extract_qrys(self):
+        return (
+            self.do_spatial_qry_extraction
+            and self._cur_module_path in self.spatial_qry_extraction_paths
+        )
 
-    # mode-setting functions
+    def _should_extract_post_attn(self):
+        return (
+            self.do_spatial_post_attn_extraction
+            and self._cur_module_path in self.spatial_post_attn_extraction_paths
+        )
+
+    def _should_extract_kv(self):
+        return (
+            self.do_kv_extraction and self._cur_module_path in self.kv_extraction_paths
+        )
+
+    # public facing mode-setting methods
 
     def set_extraction_mode(self):
         self.mode = AttnMode.FEATURE_EXTRACTION
@@ -119,12 +140,12 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
         attn_out = memory_efficient_attention(attn, key, qry, value, attention_mask)
 
-        if self.should_extract_at_cur_layer():
-            # extract kv-features
-            if self.do_kv_extraction:
-                self.kv_features[self._cur_module_path] = ext_hidden_states
+        # extract kv-features
+        if self._should_extract_kv():
+            self.kv_features[self._cur_module_path] = ext_hidden_states
 
-            # extract spatial query maps
+        # extract spatial query maps
+        if self._should_extract_qrys():
             if self.do_spatial_qry_extraction:
                 height = int(sqrt(qry.shape[1]))
                 qry_square = rearrange(
@@ -135,7 +156,8 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 )
                 self.spatial_qry_features[self._cur_module_path] = qry_square
 
-            # extract spatial post attn features
+        # extract spatial post attn features
+        if self._should_extract_post_attn():
             if self.do_spatial_post_attn_extraction:
                 height = int(sqrt(attn_out.shape[1]))
                 attn_out_square = rearrange(
@@ -170,6 +192,14 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 feature_images.to(original_features_2D),
                 self.feature_blend_alpha,
                 channel_dim=2,
+            )
+
+            blended_batched = rearrange(blended, "b f d h w -> (b f) d h w")
+
+            # blended_batched = adain_2D(blended_batched, blended_batched)
+
+            blended = rearrange(
+                blended_batched, "(b f) d h w -> b f d h w", b=self.chunk_size
             )
 
             # reshape back to 2D

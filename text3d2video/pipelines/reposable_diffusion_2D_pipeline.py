@@ -16,6 +16,7 @@ from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
+from text3d2video.artifacts.diffusion_data import DiffusionDataWriter, LatentsWriter
 from text3d2video.backprojection import diffusion_dict_map
 from text3d2video.generative_rendering.extraction_injection_attn import (
     ExtractionInjectionAttn,
@@ -29,11 +30,19 @@ from text3d2video.utilities.image_utils import Affine2D
 
 @dataclass
 class ReposableDiffusion2DConfig:
+    # injection settings
+    feature_blend_alpha: float
+    # UNet Injection settings
     do_kv_injection: bool
     do_qry_injection: bool
     do_post_attn_injection: bool
-    feature_blend_alpha: float
-    unet_attn_layers: List[str]
+    spatial_extraction_layers: List[str]
+    kv_extraction_layers: List[str]
+    # ControlNet Injection Settings
+    do_kv_injection_controlnet: bool
+    do_qry_injection_controlnet: bool
+    do_post_attn_injection_controlnet: bool
+    controlnet_layers: List[str]
     # diffusion settings
     guidance_scale: float
     num_inference_steps: int
@@ -164,7 +173,6 @@ class ReposableDiffusion2DPipeline(DiffusionPipeline):
         src_depth: Image.Image,
         warp_funs: List[Affine2D],
         config: ReposableDiffusion2DConfig,
-        res=512,
         generator=None,
     ):
         tgt_depths = [f(src_depth) for f in warp_funs]
@@ -190,17 +198,6 @@ class ReposableDiffusion2DPipeline(DiffusionPipeline):
             batch_size, device=self.device, dtype=self.dtype, generator=generator
         )
 
-        # latents = self.prepare_latents(batch_size, res, generator=generator)
-
-        controlnet_sa_paths = [
-            "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
-            "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
-            "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
-            "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
-            "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
-            "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        ]
-
         unet_attn_processor = ExtractionInjectionAttn(
             self.unet,
             do_spatial_qry_extraction=config.do_qry_injection,
@@ -208,17 +205,21 @@ class ReposableDiffusion2DPipeline(DiffusionPipeline):
             do_kv_extraction=config.do_kv_injection,
             attend_to_self_kv=False,
             feature_blend_alpha=config.feature_blend_alpha,
-            extraction_attn_paths=config.unet_attn_layers,
+            kv_extraction_paths=config.kv_extraction_layers,
+            spatial_qry_extraction_paths=config.spatial_extraction_layers,
+            spatial_post_attn_extraction_paths=config.spatial_extraction_layers,
         )
 
         controlnet_attn_processor = ExtractionInjectionAttn(
             self.controlnet,
-            do_spatial_qry_extraction=True,
-            do_spatial_post_attn_extraction=True,
-            do_kv_extraction=True,
+            do_spatial_qry_extraction=config.do_qry_injection_controlnet,
+            do_spatial_post_attn_extraction=config.do_post_attn_injection_controlnet,
+            do_kv_extraction=config.do_kv_injection_controlnet,
             attend_to_self_kv=False,
-            feature_blend_alpha=1.0,
-            extraction_attn_paths=controlnet_sa_paths,
+            feature_blend_alpha=config.feature_blend_alpha,
+            kv_extraction_paths=config.kv_extraction_layers,
+            spatial_qry_extraction_paths=config.controlnet_layers,
+            spatial_post_attn_extraction_paths=config.controlnet_layers,
         )
 
         self.unet.set_attn_processor(unet_attn_processor)
@@ -235,8 +236,7 @@ class ReposableDiffusion2DPipeline(DiffusionPipeline):
             src_latents = latents_stacked[:, src_indices, ...]
             tgt_latents = latents_stacked[:, tgt_indices, ...]
 
-            # Source with Extraction
-
+            # Process source latents with extraction
             src_latents_batched = rearrange(src_latents, "b f c h w -> (b f) c h w")
             src_embeddings_batched = rearrange(src_embeddings, "b f t d -> (b f) t d")
 
@@ -284,15 +284,17 @@ class ReposableDiffusion2DPipeline(DiffusionPipeline):
             warped_unet_qrys = diffusion_dict_map(unet_qrys, warp_to_tgts)
             warped_unet_post_attn = diffusion_dict_map(unet_post_attn, warp_to_tgts)
 
-            # Target with Injection
+            # TARGET
 
             tgt_latents_batched = rearrange(tgt_latents, "b f c h w -> (b f) c h w")
             tgt_embeddings_batched = rearrange(tgt_embeddings, "b f t d -> (b f) t d")
 
-            # controlnet_attn_processor.set_injection_mode(
-            #     pre_attn_features=controlnet_kv_features,
-            #     qry_features=warped_controlnet_qrys,
-            # )
+            # Target feature extraction for loss calculation
+
+            controlnet_attn_processor.set_injection_mode(
+                pre_attn_features=controlnet_kv_features,
+                qry_features=warped_controlnet_qrys,
+            )
 
             processed_ctrl_image = self.preprocess_controlnet_images(tgt_depths * 2)
             down_residuals, mid_residual = self.controlnet(
@@ -331,6 +333,14 @@ class ReposableDiffusion2DPipeline(DiffusionPipeline):
             noise_pred = noise_pred_uncond + config.guidance_scale * guidance_dir
 
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+            if i == 9 and False:
+                print("copy")
+                src_latent = latents[src_indices][0]
+                tgt_latents = latents[tgt_indices]
+
+                warped_tgt_latents = [f(src_latent) for f in warp_funs]
+                latents = torch.stack([src_latent] + warped_tgt_latents)
 
         # decode latents
         return self.latents_to_images(latents)

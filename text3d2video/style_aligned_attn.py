@@ -17,27 +17,28 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
 
     def __init__(
         self,
-        unet,
+        model,
+        layers: list[str],
         ref_index: int = 0,
         attend_to: str = "both",
         adain_self_features: bool = False,
-        unet_chunk_size=2,
+        chunk_size=2,
     ):
+        DefaultAttnProcessor.__init__(self, model, chunk_size)
         """
         :param unet_chunk_size:
             number of batches for each generated image, 2 for classifier free guidance
         """
         self.adain_self_features = adain_self_features
-        self.unet = unet
         self.ref_index = ref_index
         self.attend_to = attend_to
-        self.unet_chunk_size = unet_chunk_size
+        self.layers = layers
 
-    def _call_self_attn(
+    def _call_style_aligned_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
     ):
         # get reference features
-        n_frames = hidden_states.shape[0] // self.unet_chunk_size
+        n_frames = hidden_states.shape[0] // self.chunk_size
         unstacked_x = rearrange(hidden_states, "(b f) t c -> b f t c", f=n_frames)
         x_ref = unstacked_x[:, self.ref_index, ...]
         x_ref = extend_across_frame_dim(x_ref, n_frames)
@@ -74,3 +75,19 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         self.write_qkv(qry_self, key, val)
 
         return memory_efficient_attention(attn, key, qry_self, val, attention_mask)
+
+    def _call_self_attn(
+        self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
+    ):
+        if self._cur_module_path in self.layers:
+            return self._call_style_aligned_attn(attn, hidden_states, attention_mask)
+
+        key_self = attn.to_k(hidden_states)
+        val_self = attn.to_v(hidden_states)
+        qry_self = attn.to_q(hidden_states)
+
+        self.write_qkv(qry_self, key_self, val_self)
+
+        return memory_efficient_attention(
+            attn, key_self, qry_self, val_self, attention_mask
+        )

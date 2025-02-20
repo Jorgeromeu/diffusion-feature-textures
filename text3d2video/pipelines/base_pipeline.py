@@ -11,16 +11,15 @@ from diffusers.image_processor import VaeImageProcessor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from text3d2video.artifacts.sd_data import SdDataArtifact, SdDataConfig
 from text3d2video.noise_initialization import (
     RandomNoiseInitializer,
 )
-from text3d2video.style_aligned_attn import StyleAlignedAttentionProcessor
 
 
-class SDPipeline(DiffusionPipeline):
-    attn_processor: StyleAlignedAttentionProcessor
-    data_artifact: SdDataArtifact
+class BaseStableDiffusionPipeline(DiffusionPipeline):
+    """
+    Simple Base Stable Diffusion Pipelien we can override with custom behavior
+    """
 
     def __init__(
         self,
@@ -77,9 +76,8 @@ class SDPipeline(DiffusionPipeline):
 
         return cond_embeddings, uncond_embeddings
 
-    def prepare_latents(self, batch_size: int, out_resolution: int, generator=None):
+    def prepare_latents(self, batch_size: int, generator=None):
         noise_init = RandomNoiseInitializer()
-        # noise_init = FixedNoiseInitializer()
         return noise_init.initial_noise(
             generator=generator,
             device=self.device,
@@ -87,7 +85,7 @@ class SDPipeline(DiffusionPipeline):
             n_frames=batch_size,
         )
 
-    def latents_to_images(self, latents: torch.FloatTensor, generator=None):
+    def decode_latents(self, latents: torch.FloatTensor, generator=None):
         # scale latents
         latents_scaled = latents / self.vae.config.scaling_factor
 
@@ -109,16 +107,10 @@ class SDPipeline(DiffusionPipeline):
     def __call__(
         self,
         prompts: List[str],
-        sd_save_config: SdDataConfig,
-        res=512,
         num_inference_steps=30,
         guidance_scale=7.5,
         generator=None,
     ):
-        self.data_artifact = SdDataArtifact.init_from_config(sd_save_config)
-        self.data_artifact.begin_recording(self.scheduler, len(prompts))
-        self.attn_processor.attn_writer = self.data_artifact.attn_writer
-
         # number of images being generated
         batch_size = len(prompts)
 
@@ -130,19 +122,15 @@ class SDPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, res, generator)
+        latents = self.prepare_latents(batch_size, generator)
 
         # denoising loop
         for _, t in enumerate(tqdm(self.scheduler.timesteps)):
-            self.data_artifact.latents_writer.write_latents_batched(t, latents)
-
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             # diffusion step
-            self.attn_processor.cur_timestep = t
-            self.attn_processor.chunk_frame_indices = torch.arange(batch_size)
             noise_pred = self.unet(
                 latent_model_input,
                 t,
@@ -157,7 +145,5 @@ class SDPipeline(DiffusionPipeline):
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
-        self.data_artifact.latents_writer.write_latents_batched(0, latents)
-
         # decode latents
-        return self.latents_to_images(latents, generator)
+        return self.decode_latents(latents, generator)
