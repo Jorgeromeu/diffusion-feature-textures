@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 import text3d2video.utilities.wandb_util as wbu
 import wandb
-from text3d2video.generative_rendering.configs import RunConfig
+from scripts.configs import RunConfig
 from text3d2video.utilities.omegaconf_util import (
     dictconfig_diff,
     dictconfig_flattened_keys,

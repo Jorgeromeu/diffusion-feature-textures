@@ -9,7 +9,7 @@ from jaxtyping import Float
 from torch import Tensor
 
 from text3d2video.adain import adain_2D
-from text3d2video.attn_processor import DefaultAttnProcessor
+from text3d2video.attn_processors.attn_processor import DefaultAttnProcessor
 from text3d2video.util import blend_features
 from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
@@ -30,8 +30,8 @@ class AttnMode(Enum):
 
 class ExtractionInjectionAttn(DefaultAttnProcessor):
     """
-    Attention processor that enables extracting and
-    injecting features in the attention layers.
+    General Purpose Attention processor that enables extracting and
+    injecting features in attention layers
     """
 
     # extraction settings
@@ -41,10 +41,6 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
     kv_extraction_paths: List[str]
     spatial_qry_extraction_paths: List[str]
     spatial_post_attn_extraction_paths: List[str]
-
-    # injection settings
-    attend_to_self_kv: bool
-    feature_blend_alpha: float
 
     # mode
     mode: AttnMode = AttnMode.FEATURE_INJECTION
@@ -178,6 +174,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         """
 
         def blend_feature_images(original_features_1D: Tensor, feature_images: Tensor):
+            # reshape original to 2D
             height = int(sqrt(original_features_1D.shape[1]))
             original_features_2D = rearrange(
                 original_features_1D,
@@ -186,7 +183,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 b=self.chunk_size,
             )
 
-            # blend rendered and current features
+            # blend rendered and original features
             blended = blend_features(
                 original_features_2D,
                 feature_images.to(original_features_2D),

@@ -2,15 +2,28 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import torch
-import wandb
+from attr import dataclass
 from moviepy.editor import ImageSequenceClip
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
+
+import wandb
 from wandb import Artifact
 
-from text3d2video.generative_rendering.configs import RunConfig
+
+@dataclass
+class RunConfig:
+    wandb: bool
+    instant_exit: bool
+    download_artifacts: bool
+    name: Optional[str]
+    job_type: Optional[str]
+    group: Optional[str]
+    tags: list[str]
+
 
 # path to store local artifact data before logging to wandb
 ARTIFACTS_LOCAL_PATH = "/tmp/local_artifacts/"

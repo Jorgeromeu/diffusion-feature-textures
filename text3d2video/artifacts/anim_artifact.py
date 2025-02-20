@@ -2,12 +2,19 @@ from pathlib import Path
 from typing import Tuple
 
 import torch
+from attr import dataclass
 from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
 from text3d2video.util import ordered_sample
 from text3d2video.utilities.wandb_util import ArtifactWrapper
+
+
+@dataclass
+class AnimationConfig:
+    n_frames: int
+    artifact_tag: str
 
 
 class AnimationArtifact(ArtifactWrapper):

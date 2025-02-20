@@ -8,15 +8,13 @@ from omegaconf import OmegaConf
 import scripts.run_generative_rendering
 import text3d2video.utilities.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig, RunGenerativeRenderingConfig
-from text3d2video.artifacts.anim_artifact import AnimationArtifact
+from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.configs import (
-    AnimationConfig,
-    GenerativeRenderingConfig,
-    RunConfig,
-)
 from text3d2video.noise_initialization import RandomNoiseInitializer, UVNoiseInitializer
+from text3d2video.pipelines.generative_rendering_pipeline import (
+    GenerativeRenderingConfig,
+)
 from text3d2video.rendering import render_depth_map
 from text3d2video.utilities.experiment_util import (
     WandbExperiment,
@@ -36,7 +34,7 @@ Example experiment which runs generative rendering on a set of scenes and prompt
 @dataclass
 class BadPosesExperimentConfig:
     model: ModelConfig
-    run: RunConfig
+    run: wbu.RunConfig
     prompt: str
     animations: list[AnimationConfig]
     save_tensors: GrSaveConfig

@@ -1,6 +1,7 @@
 from typing import Dict, List, Tuple
 
 import torch
+from attr import dataclass
 from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
@@ -12,22 +13,34 @@ from torch import Tensor
 from tqdm import tqdm
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
+from text3d2video.attn_processors.extraction_injection_attn import (
+    ExtractionInjectionAttn,
+)
 from text3d2video.backprojection import (
     aggregate_spatial_features_dict,
     project_visible_verts_to_cameras,
     rasterize_and_render_vert_features_dict,
 )
-from text3d2video.generative_rendering.configs import (
-    ReposableDiffusionConfig,
-)
-from text3d2video.generative_rendering.extraction_injection_attn import (
-    ExtractionInjectionAttn,
-)
-from text3d2video.generative_rendering.generative_rendering_pipeline import (
+from text3d2video.noise_initialization import NoiseInitializer
+from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
-from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.rendering import render_depth_map
+
+
+@dataclass
+class ReposableDiffusionConfig:
+    do_pre_attn_injection: bool
+    do_post_attn_injection: bool
+    aggregate_queries: bool
+    feature_blend_alpha: float
+    attend_to_self_kv: bool
+    mean_features_weight: float
+    chunk_size: int
+    num_inference_steps: int
+    guidance_scale: float
+    controlnet_conditioning_scale: float
+    module_paths: list[str]
 
 
 class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
@@ -108,6 +121,7 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         reposable_diffusion_config: ReposableDiffusionConfig,
         noise_initializer: NoiseInitializer,
         gr_save_config: GrSaveConfig,
+        generator=None,
     ):
         # setup configs for use throughout pipeline
         self.rd_config = reposable_diffusion_config
@@ -151,10 +165,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         self.attn_processor.set_attn_data_writer(data_artifact.attn_writer)
         self.gr_data_artifact.begin_recording(self.scheduler, n_frames)
 
-        # setup generator
-        generator = torch.Generator(device=self.device)
-        generator.manual_seed(self.rd_config.seed)
-
         # join meshes and cameras
         all_meshes = join_meshes_as_batch([frame_meshes, aggregation_meshes])
         all_cams = join_cameras_as_batch([frame_cams, aggregation_cams])
@@ -165,7 +175,7 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         all_indices = torch.arange(n_frames_total)
 
         # render depth maps
-        depth_maps = render_depth_map(all_meshes, all_cams, self.rd_config.resolution)
+        depth_maps = render_depth_map(all_meshes, all_cams, 512)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt(
@@ -286,7 +296,9 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             )
 
             # update latents
-            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            latents = self.scheduler.step(
+                noise_pred, t, latents, generator=generator
+            ).prev_sample
 
         self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
 

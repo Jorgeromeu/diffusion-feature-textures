@@ -18,15 +18,15 @@ run:
 
 prompt: "Realistic Deadpool, Simple White Background"
 video_artifact: "video"
-aggr_artifact: 'aggr'
+aggr_artifact: "aggr"
+seed: 0
 
 reposable_diffusion:
-  resolution: 512
-  seed: 1
+  chunk_size: 5
   attend_to_self_kv: true
   do_pre_attn_injection: true
   do_post_attn_injection: true
-  aggregate_queries: true 
+  aggregate_queries: true
   feature_blend_alpha: 1.0
   mean_features_weight: 0.5
   num_inference_steps: 10

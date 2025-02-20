@@ -4,7 +4,7 @@ from einops import rearrange
 from torch import Tensor
 
 from text3d2video.adain import adain_1D
-from text3d2video.attn_processor import DefaultAttnProcessor
+from text3d2video.attn_processors.attn_processor import DefaultAttnProcessor
 from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
     extended_attn_kv_hidden_states,

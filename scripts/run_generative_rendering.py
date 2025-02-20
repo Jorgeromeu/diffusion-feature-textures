@@ -10,15 +10,11 @@ from hydra.utils import instantiate
 
 import text3d2video.utilities.wandb_util as wbu
 import wandb
-from text3d2video.artifacts.anim_artifact import AnimationArtifact
+from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.configs import (
-    AnimationConfig,
+from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
-    RunConfig,
-)
-from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 from text3d2video.util import ordered_sample
@@ -33,7 +29,7 @@ class ModelConfig:
 
 @dataclass
 class RunGenerativeRenderingConfig:
-    run: RunConfig
+    run: wbu.RunConfig
     out_artifact: str
     prompt: str
     animation: AnimationConfig
@@ -41,6 +37,7 @@ class RunGenerativeRenderingConfig:
     generative_rendering: GenerativeRenderingConfig
     noise_initialization: Any
     model: ModelConfig
+    seed: int
 
 
 JOB_TYPE = "run_generative_rendering"
@@ -57,9 +54,6 @@ def run(cfg: RunGenerativeRenderingConfig):
     if not do_run:
         return
 
-    # supress warnings
-    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
-
     # disable gradients
     torch.set_grad_enabled(False)
 
@@ -72,12 +66,11 @@ def run(cfg: RunGenerativeRenderingConfig):
     uv_verts, uv_faces = animation.uv_data()
 
     # load pipeline
+
     device = torch.device("cuda")
     dtype = torch.float16
-
     sd_repo = cfg.model.sd_repo
     controlnet_repo = cfg.model.controlnet_repo
-
     controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(
         device
     )
@@ -86,11 +79,16 @@ def run(cfg: RunGenerativeRenderingConfig):
         sd_repo, controlnet=controlnet, torch_dtype=dtype
     ).to(device)
 
+    # set scheduler
     pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
         pipe.scheduler.config
     )
 
     noise_initializer = instantiate(cfg.noise_initialization)
+
+    # set seed
+    generator = torch.Generator(device=device)
+    generator.manual_seed(cfg.seed)
 
     # inference
     video_frames = pipe(
@@ -102,6 +100,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         generative_rendering_config=cfg.generative_rendering,
         noise_initializer=noise_initializer,
         gr_save_config=cfg.save_tensors,
+        generator=generator,
     )
 
     if cfg.save_tensors.enabled:

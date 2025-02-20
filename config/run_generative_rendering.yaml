@@ -8,6 +8,7 @@ animation:
   artifact_tag: "booty:latest"
   n_frames: 20
 
+seed: 0
 prompt: "Realistic Deadpool, Simple White Background"
 out_artifact: "video"
 
@@ -44,8 +45,6 @@ save_tensors:
     ]
 
 generative_rendering:
-  resolution: 512
-  seed: 1
   attend_to_self_kv: true
   do_pre_attn_injection: true
   do_post_attn_injection: true

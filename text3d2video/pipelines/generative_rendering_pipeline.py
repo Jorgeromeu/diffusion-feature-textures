@@ -1,13 +1,7 @@
 from typing import Dict, List, Tuple
 
 import torch
-from diffusers import (
-    AutoencoderKL,
-    ControlNetModel,
-    UNet2DConditionModel,
-    UniPCMultistepScheduler,
-)
-from diffusers.image_processor import VaeImageProcessor
+from attr import dataclass
 from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
@@ -17,23 +11,35 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 from torch import Tensor
 from tqdm import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
 
 from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
+from text3d2video.attn_processors.extraction_injection_attn import (
+    ExtractionInjectionAttn,
+)
 from text3d2video.backprojection import (
     aggregate_spatial_features_dict,
     project_visible_verts_to_cameras,
     rasterize_and_render_vert_features_dict,
 )
-from text3d2video.generative_rendering.configs import (
-    GenerativeRenderingConfig,
-)
-from text3d2video.generative_rendering.extraction_injection_attn import (
-    ExtractionInjectionAttn,
-)
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import render_depth_map
+
+
+# pylint: disable=too-many-instance-attributes
+@dataclass
+class GenerativeRenderingConfig:
+    do_pre_attn_injection: bool
+    do_post_attn_injection: bool
+    feature_blend_alpha: float
+    attend_to_self_kv: bool
+    mean_features_weight: float
+    chunk_size: int
+    num_keyframes: int
+    num_inference_steps: int
+    guidance_scale: float
+    controlnet_conditioning_scale: float
+    module_paths: list[str]
 
 
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
@@ -57,10 +63,10 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             meshes=meshes,
             verts_uvs=verts_uvs,
             faces_uvs=faces_uvs,
-            generator=generator,
             device=self.device,
             dtype=self.dtype,
             n_frames=len(meshes),
+            generator=generator,
         )
 
     def model_forward(
@@ -153,10 +159,14 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
         return noise_pred
 
-    def sample_keyframe_indices(self, n_frames: int) -> torch.Tensor:
+    def sample_keyframe_indices(
+        self, n_frames: int, generator: torch.Generator = None
+    ) -> torch.Tensor:
         if self.rd_config.num_keyframes > n_frames:
             raise ValueError("Number of keyframes is greater than number of frames")
-        return torch.randperm(n_frames)[: self.rd_config.num_keyframes]
+
+        randperm = torch.randperm(n_frames, generator=generator, device=self.device)
+        return randperm[: self.rd_config.num_keyframes]
 
     @torch.no_grad()
     def __call__(
@@ -169,6 +179,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         generative_rendering_config: GenerativeRenderingConfig,
         noise_initializer: NoiseInitializer,
         gr_save_config: GrSaveConfig,
+        generator=None,
     ):
         # setup configs for use throughout pipeline
         self.rd_config = generative_rendering_config
@@ -200,12 +211,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         self.attn_processor.gr_data_artifact = data_artifact
         self.gr_data_artifact.begin_recording(self.scheduler, n_frames)
 
-        # setup generator
-        generator = torch.Generator(device=self.device)
-        generator.manual_seed(self.rd_config.seed)
-
         # render depth maps for frames
-        depth_maps = render_depth_map(meshes, cameras, self.rd_config.resolution)
+        depth_maps = render_depth_map(meshes, cameras, 512)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
@@ -223,7 +230,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         vert_xys, vert_indices = project_visible_verts_to_cameras(meshes, cameras)
 
         # denoising loop
-        for i, t in enumerate(tqdm(self.scheduler.timesteps)):
+        for t in tqdm(self.scheduler.timesteps):
             self.gr_data_artifact.latents_writer.write_latents_batched(t, latents)
 
             # update timestep
@@ -234,7 +241,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             latents_stacked = self.scheduler.scale_model_input(latents_stacked, t)
 
             # sample keyframe indices
-            kf_indices = self.sample_keyframe_indices(n_frames)
+            kf_indices = self.sample_keyframe_indices(n_frames, generator)
 
             # Feature Extraction Step
             kf_latents = latents_stacked[:, kf_indices]
@@ -273,7 +280,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 t, aggregated_3d_features
             )
 
-            # do inference in chunks
+            # do denoising in chunks
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
                 chunk_feature_images = rasterize_and_render_vert_features_dict(
@@ -304,14 +311,15 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             noise_pred_all = torch.cat(noise_preds, dim=1)
 
             # preform classifier free guidance
-            noise_pred_uncond, noise_pred_text = noise_pred_all
-            guidance_direction = noise_pred_text - noise_pred_uncond
-            noise_pred = (
-                noise_pred_uncond + self.rd_config.guidance_scale * guidance_direction
+            noise_pred_uncond, noise_pred_cond = noise_pred_all
+            noise_pred = noise_pred_uncond + self.rd_config.guidance_scale * (
+                noise_pred_cond - noise_pred_uncond
             )
 
             # update latents
-            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            latents = self.scheduler.step(
+                noise_pred, t, latents, generator=generator
+            ).prev_sample
 
         self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
 

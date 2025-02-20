@@ -11,22 +11,19 @@ from hydra.utils import instantiate
 import text3d2video.utilities.wandb_util as wbu
 import wandb
 from scripts.run_generative_rendering import ModelConfig
-from text3d2video.artifacts.anim_artifact import AnimationArtifact
+from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.configs import (
-    AnimationConfig,
+from text3d2video.pipelines.reposable_diffusion_pipeline import (
     ReposableDiffusionConfig,
-    RunConfig,
-)
-from text3d2video.generative_rendering.reposable_diffusion_pipeline import (
     ReposableDiffusionPipeline,
 )
 
 
 @dataclass
 class RunReposableDiffusionConfig:
-    run: RunConfig
+    run: wbu.RunConfig
+    seed: int
     video_artifact: str
     aggr_artifact: str
     prompt: str
@@ -93,6 +90,9 @@ def run(cfg: RunReposableDiffusionConfig):
 
     noise_initializer = instantiate(cfg.noise_initialization)
 
+    generator = torch.Generator(device=device)
+    generator.manual_seed(cfg.seed)
+
     # inference
     video_frames = pipe(
         cfg.prompt,
@@ -105,6 +105,7 @@ def run(cfg: RunReposableDiffusionConfig):
         reposable_diffusion_config=cfg.reposable_diffusion,
         noise_initializer=noise_initializer,
         gr_save_config=cfg.save_tensors,
+        generator=generator,
     )
 
     vid_frames = video_frames[0 : len(frame_cams)]
