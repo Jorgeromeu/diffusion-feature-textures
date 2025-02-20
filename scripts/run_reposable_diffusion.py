@@ -14,6 +14,7 @@ from scripts.run_generative_rendering import ModelConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
+from text3d2video.pipelines.pipeline_utils import load_pipeline_from_model_config
 from text3d2video.pipelines.reposable_diffusion_pipeline import (
     ReposableDiffusionConfig,
     ReposableDiffusionPipeline,
@@ -49,9 +50,6 @@ def run(cfg: RunReposableDiffusionConfig):
     if not do_run:
         return
 
-    # supress warnings
-    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
-
     # disable gradients
     torch.set_grad_enabled(False)
 
@@ -71,21 +69,8 @@ def run(cfg: RunReposableDiffusionConfig):
 
     # load pipeline
     device = torch.device("cuda")
-    dtype = torch.float16
-
-    sd_repo = cfg.model.sd_repo
-    controlnet_repo = cfg.model.controlnet_repo
-
-    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(
-        device
-    )
-
-    pipe: ReposableDiffusionPipeline = ReposableDiffusionPipeline.from_pretrained(
-        sd_repo, controlnet=controlnet, torch_dtype=dtype
-    ).to(device)
-
-    pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
-        pipe.scheduler.config
+    pipe = load_pipeline_from_model_config(
+        ReposableDiffusionPipeline, cfg.model, device
     )
 
     noise_initializer = instantiate(cfg.noise_initialization)

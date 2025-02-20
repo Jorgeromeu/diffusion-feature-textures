@@ -1,4 +1,3 @@
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,14 +16,11 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
     GenerativeRenderingPipeline,
 )
+from text3d2video.pipelines.pipeline_utils import (
+    ModelConfig,
+    load_pipeline_from_model_config,
+)
 from text3d2video.util import ordered_sample
-
-
-@dataclass
-class ModelConfig:
-    sd_repo: str
-    controlnet_repo: str
-    scheduler: Any
 
 
 @dataclass
@@ -66,22 +62,9 @@ def run(cfg: RunGenerativeRenderingConfig):
     uv_verts, uv_faces = animation.uv_data()
 
     # load pipeline
-
     device = torch.device("cuda")
-    dtype = torch.float16
-    sd_repo = cfg.model.sd_repo
-    controlnet_repo = cfg.model.controlnet_repo
-    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(
-        device
-    )
-
-    pipe: GenerativeRenderingPipeline = GenerativeRenderingPipeline.from_pretrained(
-        sd_repo, controlnet=controlnet, torch_dtype=dtype
-    ).to(device)
-
-    # set scheduler
-    pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
-        pipe.scheduler.config
+    pipe = load_pipeline_from_model_config(
+        GenerativeRenderingPipeline, cfg.model, device
     )
 
     noise_initializer = instantiate(cfg.noise_initialization)

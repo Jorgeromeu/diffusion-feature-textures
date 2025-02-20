@@ -8,7 +8,6 @@ from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor
 
-from text3d2video.adain import adain_2D
 from text3d2video.attn_processors.attn_processor import DefaultAttnProcessor
 from text3d2video.util import blend_features
 from text3d2video.utilities.attention_utils import (
