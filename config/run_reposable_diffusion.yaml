@@ -13,9 +13,6 @@ target_frames:
   artifact_tag: "booty:latest"
   n_frames: 20
 
-run:
-  job_type: "reposable_diffusion"
-
 prompt: "Realistic Deadpool, Simple White Background"
 video_artifact: "video"
 aggr_artifact: "aggr"

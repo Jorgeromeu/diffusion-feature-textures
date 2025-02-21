@@ -20,7 +20,6 @@ class RunConfig:
     instant_exit: bool
     download_artifacts: bool
     name: Optional[str]
-    job_type: Optional[str]
     group: Optional[str]
     tags: list[str]
 
@@ -29,26 +28,29 @@ class RunConfig:
 ARTIFACTS_LOCAL_PATH = "/tmp/local_artifacts/"
 
 
-def setup_run(run_config: RunConfig, cfg: DictConfig):
+def setup_run(cfg: DictConfig, job_type: str) -> bool:
     """
     Setup wandb run and log its config
     """
+
+    run_config = cfg.run
 
     wandb_mode = "online" if run_config.wandb else "disabled"
 
     wandb.init(
         project="diffusion-3d-features",
-        job_type=run_config.job_type,
+        job_type=job_type,
         mode=wandb_mode,
         tags=run_config.tags,
         group=run_config.group,
         name=run_config.name,
     )
 
-    # update run config config
-    wandb.config.update(
-        OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    )
+    # log run config
+    config = cfg.copy()
+    del config.run
+    config_dict = OmegaConf.to_container(config, resolve=True, throw_on_missing=True)
+    wandb.config.update(config_dict)
 
     do_run = True
     if run_config.instant_exit:

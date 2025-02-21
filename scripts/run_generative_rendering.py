@@ -26,7 +26,6 @@ from text3d2video.util import ordered_sample
 @dataclass
 class RunGenerativeRenderingConfig:
     run: wbu.RunConfig
-    out_artifact: str
     prompt: str
     animation: AnimationConfig
     save_tensors: GrSaveConfig
@@ -45,8 +44,7 @@ cs.store(name=JOB_TYPE, node=RunGenerativeRenderingConfig)
 @hydra.main(config_path="../config", config_name=JOB_TYPE)
 def run(cfg: RunGenerativeRenderingConfig):
     # init wandb
-    cfg.run.job_type = JOB_TYPE
-    do_run = wbu.setup_run(cfg.run, cfg)
+    do_run = wbu.setup_run(cfg, JOB_TYPE)
     if not do_run:
         return
 
@@ -90,7 +88,7 @@ def run(cfg: RunGenerativeRenderingConfig):
         pipe.gr_data_artifact.log_if_enabled()
 
     # save video
-    video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
+    video_artifact = VideoArtifact.create_empty_artifact("video")
     video_artifact.write_frames(video_frames, fps=10)
 
     # log sampled frames

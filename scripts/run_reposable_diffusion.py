@@ -1,10 +1,8 @@
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
 import hydra
 import torch
-from diffusers import ControlNetModel
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 
@@ -25,8 +23,6 @@ from text3d2video.pipelines.reposable_diffusion_pipeline import (
 class RunReposableDiffusionConfig:
     run: wbu.RunConfig
     seed: int
-    video_artifact: str
-    aggr_artifact: str
     prompt: str
     target_frames: AnimationConfig
     source_frames: AnimationConfig
@@ -45,8 +41,7 @@ cs.store(name=JOB_TYPE, node=RunReposableDiffusionConfig)
 @hydra.main(config_path="../config", config_name=JOB_TYPE)
 def run(cfg: RunReposableDiffusionConfig):
     # init wandb
-    cfg.run.job_type = JOB_TYPE
-    do_run = wbu.setup_run(cfg.run, cfg)
+    do_run = wbu.setup_run(cfg, JOB_TYPE)
     if not do_run:
         return
 
@@ -100,7 +95,7 @@ def run(cfg: RunReposableDiffusionConfig):
         pipe.gr_data_artifact.log_if_enabled()
 
     # save video
-    video_artifact = VideoArtifact.create_empty_artifact(cfg.video_artifact)
+    video_artifact = VideoArtifact.create_empty_artifact("video")
     video_artifact.write_frames(vid_frames, fps=10)
     video_artifact.log_if_enabled()
 
