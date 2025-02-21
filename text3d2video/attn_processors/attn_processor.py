@@ -29,6 +29,8 @@ class DefaultAttnProcessor:
     attn_writer: AttnFeaturesWriter = None
     chunk_frame_indices: Tensor = None
 
+    # public
+
     def set_attn_data_writer(self, attn_writer: AttnFeaturesWriter):
         self.attn_writer = attn_writer
 
@@ -37,6 +39,8 @@ class DefaultAttnProcessor:
 
     def set_chunk_frame_indices(self, chunk_frame_indices: Tensor):
         self.chunk_frame_indices = chunk_frame_indices
+
+    # protected
 
     def write_qkv(self, qry: Tensor, key: Tensor, val: Tensor):
         if self.attn_writer is None:

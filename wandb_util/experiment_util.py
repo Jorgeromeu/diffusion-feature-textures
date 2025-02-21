@@ -4,9 +4,8 @@ import tabulate
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-import text3d2video.utilities.wandb_util as wbu
 import wandb
-from scripts.configs import RunConfig
+import wandb_util.wandb_util as wbu
 from text3d2video.utilities.omegaconf_util import (
     dictconfig_diff,
     dictconfig_flattened_keys,
@@ -243,7 +242,7 @@ class WandbExperiment:
         if wbu.wandb_is_enabled():
             wandb.finish()
 
-        run_config: RunConfig = cfg.run
+        run_config: wbu.RunConfig = cfg.run
 
         # set experiment tag
         if run_config.tags is None:

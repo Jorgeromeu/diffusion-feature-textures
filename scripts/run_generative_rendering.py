@@ -3,12 +3,11 @@ from typing import Any
 
 import hydra
 import torch
-from diffusers import ControlNetModel
+import wandb
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 
-import text3d2video.utilities.wandb_util as wbu
-import wandb
+import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact

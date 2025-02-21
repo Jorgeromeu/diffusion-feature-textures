@@ -6,7 +6,7 @@ from hydra.initialize import initialize
 from omegaconf import OmegaConf
 
 import scripts.run_generative_rendering
-import text3d2video.utilities.wandb_util as wbu
+import wandb_util.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig, RunGenerativeRenderingConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
@@ -16,15 +16,15 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
 from text3d2video.rendering import render_depth_map
-from text3d2video.utilities.experiment_util import (
-    WandbExperiment,
-    object_to_instantiate_config,
-)
 from text3d2video.utilities.video_comparison import (
     group_into_array,
     video_grid,
 )
 from text3d2video.utilities.video_util import pil_frames_to_clip
+from wandb_util.experiment_util import (
+    WandbExperiment,
+    object_to_instantiate_config,
+)
 
 """
 Example experiment which runs generative rendering on a set of scenes and prompts

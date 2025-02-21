@@ -4,13 +4,13 @@ from typing import Any
 import hydra
 import numpy as np
 import torch
+import wandb
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.renderer import FoVPerspectiveCameras
 
-import text3d2video.utilities.wandb_util as wbu
-import wandb
+import wandb_util.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact

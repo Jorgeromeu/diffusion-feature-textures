@@ -98,6 +98,9 @@ class DiffusionDataManager:
         self.h5_write_fp.close()
 
 
+# Implement various data writers here
+
+
 class DiffusionDataWriter:
     """
     Abstract base class for a diffusion data writer
@@ -229,3 +232,6 @@ class AttnFeaturesWriter(DiffusionDataWriter):
     def read_val(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "val")
         return self.read_tensor(path)
+
+
+# ---

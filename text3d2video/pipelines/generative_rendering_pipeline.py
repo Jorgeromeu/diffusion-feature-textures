@@ -198,7 +198,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             spatial_qry_extraction_paths=[],
             unet_chunk_size=2,
         )
-
         self.unet.set_attn_processor(self.attn_processor)
 
         # configure scheduler
