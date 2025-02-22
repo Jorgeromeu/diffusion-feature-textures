@@ -12,7 +12,6 @@ from pytorch3d.structures import Meshes, join_meshes_as_batch
 from torch import Tensor
 from tqdm import tqdm
 
-from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
@@ -120,7 +119,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         faces_uvs: torch.Tensor,
         reposable_diffusion_config: ReposableDiffusionConfig,
         noise_initializer: NoiseInitializer,
-        gr_save_config: GrSaveConfig,
         generator=None,
     ):
         # setup configs for use throughout pipeline
@@ -159,12 +157,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
         n_aggr_frames = len(aggregation_meshes)
         n_frames_total = n_frames + n_aggr_frames
 
-        # setup data artifact
-        data_artifact = GrDataArtifact.init_from_config(gr_save_config)
-        self.gr_data_artifact = data_artifact
-        self.attn_processor.set_attn_data_writer(data_artifact.attn_writer)
-        self.gr_data_artifact.begin_recording(self.scheduler, n_frames)
-
         # join meshes and cameras
         all_meshes = join_meshes_as_batch([frame_meshes, aggregation_meshes])
         all_cams = join_cameras_as_batch([frame_cams, aggregation_cams])
@@ -198,8 +190,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
-            self.gr_data_artifact.latents_writer.write_latents_batched(t, latents)
-
             # set attn processor timestep
             self.attn_processor.set_cur_timestep(t)
 
@@ -227,11 +217,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             layer_resolutions = {
                 layer: feature.shape[-1] for layer, feature in spatial_features.items()
             }
-
-            # save aggregated features
-            self.gr_data_artifact.gr_writer.write_vertex_features(
-                t, aggregated_3d_features
-            )
 
             # injection step on source frames
             source_feature_images = rasterize_and_render_vert_features_dict(
@@ -300,8 +285,6 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 noise_pred, t, latents, generator=generator
             ).prev_sample
 
-        self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
-
         # decode latents in chunks
         decoded_imgs = []
         for chunk_frame_indices in torch.split(all_indices, self.rd_config.chunk_size):
@@ -309,5 +292,4 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             chunk_images = self.decode_latents(chunk_latents, generator)
             decoded_imgs.extend(chunk_images)
 
-        self.gr_data_artifact.end_recording()
         return decoded_imgs

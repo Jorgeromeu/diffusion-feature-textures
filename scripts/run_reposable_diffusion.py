@@ -10,7 +10,6 @@ import wandb
 import wandb_util.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
-from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.pipelines.pipeline_utils import load_pipeline_from_model_config
 from text3d2video.pipelines.reposable_diffusion_pipeline import (
@@ -26,7 +25,6 @@ class RunReposableDiffusionConfig:
     prompt: str
     target_frames: AnimationConfig
     source_frames: AnimationConfig
-    save_tensors: GrSaveConfig
     reposable_diffusion: ReposableDiffusionConfig
     noise_initialization: Any
     model: ModelConfig
@@ -84,15 +82,11 @@ def run(cfg: RunReposableDiffusionConfig):
         uv_faces,
         reposable_diffusion_config=cfg.reposable_diffusion,
         noise_initializer=noise_initializer,
-        gr_save_config=cfg.save_tensors,
         generator=generator,
     )
 
     vid_frames = video_frames[0 : len(frame_cams)]
     aggr_frames = video_frames[len(frame_cams) :]
-
-    if cfg.save_tensors.enabled:
-        pipe.gr_data_artifact.log_if_enabled()
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact("video")
@@ -100,7 +94,7 @@ def run(cfg: RunReposableDiffusionConfig):
     video_artifact.log_if_enabled()
 
     # save aggregation video
-    aggr_artifact = VideoArtifact.create_empty_artifact(cfg.aggr_artifact)
+    aggr_artifact = VideoArtifact.create_empty_artifact("aggr")
     aggr_artifact.write_frames(aggr_frames, fps=10)
     aggr_artifact.log_if_enabled()
 

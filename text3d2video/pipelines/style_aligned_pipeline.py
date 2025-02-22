@@ -22,15 +22,15 @@ from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
 
 
 @dataclass
-class StyleAlignedSaveDataConfig:
+class StyleAlignedDataWriterConfig:
     enabled: bool
     save_latents: bool
     n_noise_levels: int
-    attn_layers: List[str] = None
+    attn_layers: List[str]
 
 
 class StyleAlignedDataWriter(DiffusionDataManager):
-    def __init__(self, h5_file_path, save_config: StyleAlignedSaveDataConfig):
+    def __init__(self, h5_file_path, save_config: StyleAlignedDataWriterConfig):
         super().__init__(h5_file_path, enabled=save_config.enabled)
         self.layer_paths = save_config.attn_layers
         self.latents_writer = LatentsWriter(
@@ -48,8 +48,8 @@ class StyleAlignedDataWriter(DiffusionDataManager):
     def create_disabled(cls):
         return cls(
             None,
-            StyleAlignedSaveDataConfig(
-                enabled=False, save_latents=False, n_noise_levels=0
+            StyleAlignedDataWriterConfig(
+                enabled=False, save_latents=False, n_noise_levels=0, attn_layers=[]
             ),
         )
 
@@ -75,7 +75,7 @@ class StyleAlignedPipeline(BaseStableDiffusionPipeline):
         num_inference_steps=30,
         guidance_scale=7.5,
         save_data_file=None,
-        save_data_config: StyleAlignedSaveDataConfig = None,
+        save_data_config: StyleAlignedDataWriterConfig = None,
         generator=None,
     ):
         # number of images being generated

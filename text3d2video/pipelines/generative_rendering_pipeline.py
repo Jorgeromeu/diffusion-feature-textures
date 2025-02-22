@@ -12,7 +12,6 @@ from pytorch3d.structures import Meshes
 from torch import Tensor
 from tqdm import tqdm
 
-from text3d2video.artifacts.gr_data import GrDataArtifact, GrSaveConfig
 from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
@@ -46,9 +45,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     attn_processor: ExtractionInjectionAttn
     rd_config: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
-
-    # diffusion data artifact
-    gr_data_artifact: GrDataArtifact = None
 
     def prepare_latents(
         self,
@@ -178,7 +174,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         faces_uvs: torch.Tensor,
         generative_rendering_config: GenerativeRenderingConfig,
         noise_initializer: NoiseInitializer,
-        gr_save_config: GrSaveConfig,
         generator=None,
     ):
         # setup configs for use throughout pipeline
@@ -204,12 +199,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         self.scheduler.set_timesteps(self.rd_config.num_inference_steps)
         n_frames = len(meshes)
 
-        # setup diffusion data
-        data_artifact = GrDataArtifact.init_from_config(gr_save_config)
-        self.gr_data_artifact = data_artifact
-        self.attn_processor.gr_data_artifact = data_artifact
-        self.gr_data_artifact.begin_recording(self.scheduler, n_frames)
-
         # render depth maps for frames
         depth_maps = render_depth_map(meshes, cameras, 512)
 
@@ -230,8 +219,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
-            self.gr_data_artifact.latents_writer.write_latents_batched(t, latents)
-
             # update timestep
             self.attn_processor.cur_timestep = t
 
@@ -254,10 +241,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 t,
             )
 
-            # save kf post attn features and indices
-            self.gr_data_artifact.gr_writer.write_kf_indices(t, kf_indices)
-            self.gr_data_artifact.gr_writer.write_kf_post_attn(t, post_attn_features)
-
             # unify spatial features across keyframes as vertex features
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
@@ -273,11 +256,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 layer: feature.shape[-1]
                 for layer, feature in post_attn_features.items()
             }
-
-            # save aggregated features
-            self.gr_data_artifact.gr_writer.write_vertex_features(
-                t, aggregated_3d_features
-            )
 
             # do denoising in chunks
             noise_preds = []
@@ -320,8 +298,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 noise_pred, t, latents, generator=generator
             ).prev_sample
 
-        self.gr_data_artifact.latents_writer.write_latents_batched(0, latents)
-
         # decode latents in chunks
         decoded_imgs = []
         for chunk_frame_indices in chunks_indices:
@@ -329,5 +305,4 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             chunk_images = self.decode_latents(chunk_latents, generator)
             decoded_imgs.extend(chunk_images)
 
-        self.gr_data_artifact.end_recording()
         return decoded_imgs

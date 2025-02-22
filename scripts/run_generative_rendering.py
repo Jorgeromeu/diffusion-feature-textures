@@ -3,10 +3,10 @@ from typing import Any
 
 import hydra
 import torch
-import wandb
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 
+import wandb
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
@@ -27,7 +27,6 @@ class RunGenerativeRenderingConfig:
     run: wbu.RunConfig
     prompt: str
     animation: AnimationConfig
-    save_tensors: GrSaveConfig
     generative_rendering: GenerativeRenderingConfig
     noise_initialization: Any
     model: ModelConfig
@@ -79,12 +78,8 @@ def run(cfg: RunGenerativeRenderingConfig):
         uv_faces,
         generative_rendering_config=cfg.generative_rendering,
         noise_initializer=noise_initializer,
-        gr_save_config=cfg.save_tensors,
         generator=generator,
     )
-
-    if cfg.save_tensors.enabled:
-        pipe.gr_data_artifact.log_if_enabled()
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact("video")

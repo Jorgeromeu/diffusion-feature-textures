@@ -4,12 +4,12 @@ from typing import Any
 import hydra
 import numpy as np
 import torch
-import wandb
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from pytorch3d.io import load_objs_as_meshes
 from pytorch3d.renderer import FoVPerspectiveCameras
 
+import wandb
 import wandb_util.wandb_util as wbu
 from scripts.run_generative_rendering import ModelConfig
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
@@ -87,15 +87,11 @@ def run(cfg: RunReposableDiffusionConfig):
         uv_faces,
         reposable_diffusion_config=cfg.reposable_diffusion,
         noise_initializer=noise_initializer,
-        gr_save_config=cfg.save_tensors,
         generator=generator,
     )
 
     vid_frames = video_frames[0 : len(frame_cams)]
     aggr_frames = video_frames[len(frame_cams) :]
-
-    if cfg.save_tensors.enabled:
-        pipe.gr_data_artifact.log_if_enabled()
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact("video")
