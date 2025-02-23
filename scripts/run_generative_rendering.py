@@ -19,7 +19,6 @@ from text3d2video.pipelines.pipeline_utils import (
     load_pipeline_from_model_config,
 )
 from text3d2video.util import ordered_sample
-from wandb_util.experiment_util import WandbRun
 
 
 @dataclass
@@ -33,7 +32,7 @@ class RunGenerativeRenderingConfig:
     seed: int
 
 
-class RunGenerativeRendering(WandbRun):
+class RunGenerativeRendering(wbu.WandbRun):
     job_type = "run_generative_rendering"
 
     def _run(self, cfg: RunGenerativeRenderingConfig):

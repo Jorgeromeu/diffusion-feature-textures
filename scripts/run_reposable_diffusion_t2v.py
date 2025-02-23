@@ -20,7 +20,6 @@ from text3d2video.pipelines.reposable_diffusion_pipeline import (
     ReposableDiffusionPipeline,
 )
 from text3d2video.utilities.camera_placement import turntable_extrinsics
-from wandb_util.experiment_util import WandbExperiment, WandbRun
 
 
 @dataclass
@@ -35,7 +34,7 @@ class RunReposableDiffusionT2VConfig:
     model: ModelConfig
 
 
-class RunReposableDiffusionT2V(WandbRun):
+class RunReposableDiffusionT2V(wbu.WandbRun):
     job_type = "run_reposable_diffusion_t2v"
 
     def _run(self, cfg: RunReposableDiffusionT2VConfig):

@@ -1,8 +1,9 @@
 import logging
+import multiprocessing as mp
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import torch
 from attr import dataclass
@@ -12,6 +13,7 @@ from torch import Tensor
 
 import wandb
 from wandb import Artifact
+from wandb.apis.public import Run
 
 
 @dataclass
@@ -257,3 +259,82 @@ class SimpleArtifact(ArtifactWrapper):
 
     def read_tensor(self):
         return torch.load(self.folder / "data.pt")
+
+
+class WandbRun:
+    job_type: str
+
+    def __init__(self):
+        pass
+
+    def _run(self, cfg: DictConfig):
+        pass
+
+    def execute(self, cfg: DictConfig):
+        # init wandb
+        do_run = setup_run(cfg, self.job_type)
+        if not do_run:
+            return
+
+        self._run(cfg)
+        run = wandb.run
+        wandb.finish()
+        return run
+
+
+@dataclass
+class RunDescriptor:
+    run_fun: WandbRun
+    config: DictConfig
+
+    def append_tags(self, tags: List[str]):
+        self.config.run.tags += tags
+
+    def as_process(self):
+        return mp.Process(
+            target=self.run_fun.execute,
+            args=(self.config,),
+        )
+
+
+class Experiment:
+    experiment_name: str
+    config: DictConfig
+
+    def specification(self) -> List[RunDescriptor]:
+        """
+        Return a list of run descriptors corresponding to the experiment
+        """
+        pass
+
+    def execute_runs(self, dry_run=False):
+        runs = self.specification()
+
+        if dry_run:
+            print(f"would execute {len(runs)} runs")
+            return
+
+        for run in runs:
+            run.append_tags([self.experiment_name])
+
+        processes = [run.as_process() for run in runs]
+
+        for p in processes:
+            p.start()
+            p.join()
+
+    def get_logged_runs(cls, filters=None) -> List[Run]:
+        """
+        Get all runs in the experiment
+        """
+
+        run_filters = {"tags": cls.experiment_name}
+        if filters is not None:
+            run_filters = {**run_filters, **filters}
+
+        api = wandb.Api()
+        project_name = "diffusion-3D-features"
+        runs = api.runs(project_name, filters=run_filters)
+        runs = list(runs)
+
+        return runs

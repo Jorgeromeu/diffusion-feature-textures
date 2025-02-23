@@ -16,7 +16,6 @@ from text3d2video.pipelines.reposable_diffusion_pipeline import (
     ReposableDiffusionConfig,
     ReposableDiffusionPipeline,
 )
-from wandb_util.experiment_util import WandbRun
 
 
 @dataclass
@@ -31,7 +30,7 @@ class RunReposableDiffusionConfig:
     model: ModelConfig
 
 
-class RunReposableDiffusion(WandbRun):
+class RunReposableDiffusion(wbu.WandbRun):
     job_type = "run_reposable_diffusion"
 
     def _run(self, cfg: RunReposableDiffusionConfig):
