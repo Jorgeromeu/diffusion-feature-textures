@@ -14,15 +14,19 @@ from scripts.run_reposable_diffusion_t2v import (
     RunReposableDiffusionT2V,
     RunReposableDiffusionT2VConfig,
 )
-from text3d2video.artifacts.anim_artifact import AnimationConfig
+from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
 from text3d2video.pipelines.reposable_diffusion_pipeline import ReposableDiffusionConfig
+from text3d2video.rendering import render_depth_map
 from text3d2video.utilities.video_comparison import video_grid
-from text3d2video.utilities.video_util import extend_clip_to_match_duration
+from text3d2video.utilities.video_util import (
+    extend_clip_to_match_duration,
+    pil_frames_to_clip,
+)
 from wandb_util.experiment_util import (
     object_to_instantiate_config,
 )
@@ -124,7 +128,22 @@ class MainExperiment(wbu.Experiment):
 
         return runs
 
-    def video_comparison(self):
+    def get_depth_video(self, fps=10):
+        r = self.get_logged_runs()[0]
+
+        n_frames = OmegaConf.create(r.config).animation.n_frames
+        anim = wbu.first_used_artifact_of_type(r, "animation")
+        anim = AnimationArtifact.from_wandb_artifact(anim)
+
+        frame_indices = anim.frame_indices(n_frames)
+        cams, meshes = anim.load_frames(frame_indices)
+        depth_frames = render_depth_map(meshes, cams)
+        return pil_frames_to_clip(depth_frames, fps=10)
+
+    def get_prompt(self):
+        return self.config.scenes[0].prompt
+
+    def video_comparison(self, with_labels=True):
         runs = self.get_logged_runs()
 
         for r in runs:
@@ -154,10 +173,23 @@ class MainExperiment(wbu.Experiment):
         max_duration = max([v.duration for v in videos])
         videos = [extend_clip_to_match_duration(v, max_duration) for v in videos]
 
+        videos = [self.get_depth_video()] + videos
+
         videos_grid = np.array([videos])
+
+        if with_labels:
+            x_labels = [
+                "Geometry",
+                "Per Frame",
+                "Generative Rendering",
+                "Ours (Target)",
+                "Ours (Source)",
+            ]
+        else:
+            x_labels = None
 
         return video_grid(
             videos_grid,
             col_gap_indices=[0, 1],
-            # x_labels=["Per Frame", "Generative Rendering", "Ours (Target)", "Ours (Source)"],
+            x_labels=x_labels,
         )

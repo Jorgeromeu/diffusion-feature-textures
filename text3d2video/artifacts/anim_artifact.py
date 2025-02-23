@@ -51,7 +51,7 @@ class AnimationArtifact(ArtifactWrapper):
         Returns indices of frames to render.
         if sample_n is not None, sample N evenly spaced frames
         """
-        meshes = torch.load(self._meshes_path(), weights_only=False)
+        meshes = torch.load(self._meshes_path())
         indices = list(range(len(meshes)))
         if sample_n is not None:
             indices = ordered_sample(indices, sample_n)
@@ -62,15 +62,15 @@ class AnimationArtifact(ArtifactWrapper):
         Returns the UV data for the mesh.
         :return: Tuple of (verts_uvs, faces_uvs)
         """
-        verts_uvs = torch.load(self._verts_uvs_path(), weights_only=False)
-        faces_uvs = torch.load(self._faces_uvs_path(), weights_only=False)
+        verts_uvs = torch.load(self._verts_uvs_path())
+        faces_uvs = torch.load(self._faces_uvs_path())
         return verts_uvs, faces_uvs
 
     def load_frames(
         self, indices=None, device: str = "cuda"
     ) -> Tuple[CamerasBase, Meshes]:
-        cams = torch.load(self._cams_path(), weights_only=False)
-        meshes = torch.load(self._meshes_path(), weights_only=False)
+        cams = torch.load(self._cams_path())
+        meshes = torch.load(self._meshes_path())
 
         if indices is not None:
             cams = cams[indices]
