@@ -45,7 +45,7 @@ class BadPosesExperiment(WandbExperiment):
     experiment_name = "bad_poses"
 
     def __init__(self):
-        self.run_fn = scripts.run_generative_rendering.run
+        self.run_fn = scripts.run_generative_rendering.main
 
     def run_configs(self):
         configs = []

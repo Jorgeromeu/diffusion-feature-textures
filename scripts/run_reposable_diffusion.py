@@ -16,6 +16,7 @@ from text3d2video.pipelines.reposable_diffusion_pipeline import (
     ReposableDiffusionConfig,
     ReposableDiffusionPipeline,
 )
+from wandb_util.experiment_util import WandbRun
 
 
 @dataclass
@@ -30,84 +31,80 @@ class RunReposableDiffusionConfig:
     model: ModelConfig
 
 
-JOB_TYPE = "run_reposable_diffusion"
+class RunReposableDiffusion(WandbRun):
+    job_type = "run_reposable_diffusion"
 
+    def _run(self, cfg: RunReposableDiffusionConfig):
+        # disable gradients
+        torch.set_grad_enabled(False)
+
+        # read animations
+        target_animation = AnimationArtifact.from_wandb_artifact_tag(
+            cfg.target_frames.artifact_tag, download=cfg.run.download_artifacts
+        )
+        uv_verts, uv_faces = target_animation.uv_data()
+        frame_indices = target_animation.frame_indices(cfg.target_frames.n_frames)
+        frame_cams, frame_meshes = target_animation.load_frames(frame_indices)
+
+        source_animation = AnimationArtifact.from_wandb_artifact_tag(
+            cfg.source_frames.artifact_tag, download=cfg.run.download_artifacts
+        )
+        frame_indices = source_animation.frame_indices(cfg.source_frames.n_frames)
+        aggr_cams, aggr_meshes = source_animation.load_frames(frame_indices)
+
+        # load pipeline
+        device = torch.device("cuda")
+        pipe = load_pipeline_from_model_config(
+            ReposableDiffusionPipeline, cfg.model, device
+        )
+
+        noise_initializer = instantiate(cfg.noise_initialization)
+
+        generator = torch.Generator(device=device)
+        generator.manual_seed(cfg.seed)
+
+        # inference
+        video_frames = pipe(
+            cfg.prompt,
+            frame_meshes,
+            frame_cams,
+            aggr_meshes,
+            aggr_cams,
+            uv_verts,
+            uv_faces,
+            reposable_diffusion_config=cfg.reposable_diffusion,
+            noise_initializer=noise_initializer,
+            generator=generator,
+        )
+
+        vid_frames = video_frames[0 : len(frame_cams)]
+        aggr_frames = video_frames[len(frame_cams) :]
+
+        # save video
+        video_artifact = VideoArtifact.create_empty_artifact("video")
+        video_artifact.write_frames(vid_frames, fps=10)
+        video_artifact.log_if_enabled()
+
+        # save aggregation video
+        aggr_artifact = VideoArtifact.create_empty_artifact("aggr")
+        aggr_artifact.write_frames(aggr_frames, fps=10)
+        aggr_artifact.log_if_enabled()
+
+        # log videos to run
+        wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})
+        wandb.log({"aggr": wandb.Video(str(aggr_artifact.get_mp4_path()))})
+
+
+job_type = RunReposableDiffusion.job_type
 cs = ConfigStore.instance()
-cs.store(name=JOB_TYPE, node=RunReposableDiffusionConfig)
+cs.store(name=job_type, node=RunReposableDiffusionConfig)
 
 
-@hydra.main(config_path="../config", config_name=JOB_TYPE)
-def run(cfg: RunReposableDiffusionConfig):
-    # init wandb
-    do_run = wbu.setup_run(cfg, JOB_TYPE)
-    if not do_run:
-        return
-
-    # disable gradients
-    torch.set_grad_enabled(False)
-
-    # read animations
-    target_animation = AnimationArtifact.from_wandb_artifact_tag(
-        cfg.target_frames.artifact_tag, download=cfg.run.download_artifacts
-    )
-    uv_verts, uv_faces = target_animation.uv_data()
-    frame_indices = target_animation.frame_indices(cfg.target_frames.n_frames)
-    frame_cams, frame_meshes = target_animation.load_frames(frame_indices)
-
-    source_animation = AnimationArtifact.from_wandb_artifact_tag(
-        cfg.source_frames.artifact_tag, download=cfg.run.download_artifacts
-    )
-    frame_indices = source_animation.frame_indices(cfg.source_frames.n_frames)
-    aggr_cams, aggr_meshes = source_animation.load_frames(frame_indices)
-
-    # load pipeline
-    device = torch.device("cuda")
-    pipe = load_pipeline_from_model_config(
-        ReposableDiffusionPipeline, cfg.model, device
-    )
-
-    noise_initializer = instantiate(cfg.noise_initialization)
-
-    generator = torch.Generator(device=device)
-    generator.manual_seed(cfg.seed)
-
-    # inference
-    video_frames = pipe(
-        cfg.prompt,
-        frame_meshes,
-        frame_cams,
-        aggr_meshes,
-        aggr_cams,
-        uv_verts,
-        uv_faces,
-        reposable_diffusion_config=cfg.reposable_diffusion,
-        noise_initializer=noise_initializer,
-        generator=generator,
-    )
-
-    vid_frames = video_frames[0 : len(frame_cams)]
-    aggr_frames = video_frames[len(frame_cams) :]
-
-    # save video
-    video_artifact = VideoArtifact.create_empty_artifact("video")
-    video_artifact.write_frames(vid_frames, fps=10)
-    video_artifact.log_if_enabled()
-
-    # save aggregation video
-    aggr_artifact = VideoArtifact.create_empty_artifact("aggr")
-    aggr_artifact.write_frames(aggr_frames, fps=10)
-    aggr_artifact.log_if_enabled()
-
-    # log videos to run
-    wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})
-    wandb.log({"aggr": wandb.Video(str(aggr_artifact.get_mp4_path()))})
-
-    # terminate run
-    run = wandb.run
-    wandb.finish()
-    return run
+@hydra.main(config_path="../config", config_name=job_type)
+def main(cfg: RunReposableDiffusionConfig):
+    run = RunReposableDiffusion()
+    run.execute(cfg)
 
 
 if __name__ == "__main__":
-    # pylint: disable=no-value-for-parameter
-    run()
+    main()

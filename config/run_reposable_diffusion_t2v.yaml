@@ -10,5 +10,7 @@ animation:
   artifact_tag: "booty:latest"
   n_frames: 20
 
+num_views: 10
+
 prompt: "Realistic Deadpool, Simple White Background"
 seed: 0

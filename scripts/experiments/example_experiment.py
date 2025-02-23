@@ -41,7 +41,7 @@ class ExampleExperimentConfig:
 
 class ExampleExperiment(WandbExperiment):
     def __init__(self):
-        self.run_fn = scripts.run_generative_rendering.run
+        self.run_fn = scripts.run_generative_rendering.main
         self.experiment_name = "example_experiment"
 
     def run_configs(self):
