@@ -5,11 +5,11 @@ defaults:
   - reposable_diffusion: default
 
 scenes: [
-    {
-      artifact_tag: "handstand:latest",
-      n_frames: 20,
-      prompt: "Realistic Deadpool, Simple White Background",
-    },
+    # {
+    #   artifact_tag: "handstand:latest",
+    #   n_frames: 20,
+    #   prompt: "Realistic Deadpool, Simple White Background",
+    # },
     # {
     #   artifact_tag: "rumba:latest",
     #   n_frames: 20,
@@ -26,5 +26,5 @@ scenes: [
     #   prompt: "Realistic Deadpool, Simple White Background",
     # },
     # { artifact_tag: "handstand:latest", n_frames: 20, prompt: "Stormtrooper" },
-    # { artifact_tag: "handstand:latest", n_frames: 20, prompt: "Abraham Lincoln" },
+    { artifact_tag: "handstand:latest", n_frames: 20, prompt: "Abraham Lincoln" },
   ]

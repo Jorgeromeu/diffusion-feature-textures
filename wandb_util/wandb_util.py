@@ -308,6 +308,7 @@ class Experiment:
         pass
 
     def execute_runs(self, dry_run=False):
+        mp.set_start_method("spawn")
         runs = self.specification()
 
         if dry_run:
