@@ -170,6 +170,9 @@ class MainExperiment(wbu.Experiment):
     def get_output_videos(self, per_frame_run, gr_run, rd_run):
         # find aggr and video artifacts
         for art in rd_run.logged_artifacts():
+            if art.type != "video":
+                continue
+
             if art.name.startswith("video"):
                 rd_video_art = art
             else:
@@ -181,6 +184,7 @@ class MainExperiment(wbu.Experiment):
 
         # get videos
         video_artifacts = [per_frame_video_art, gr_video_art, rd_video_art, rd_aggr_art]
+
         videos = [
             VideoArtifact.from_wandb_artifact(art).get_moviepy_clip()
             for art in video_artifacts
@@ -212,54 +216,3 @@ class MainExperiment(wbu.Experiment):
             labels = None
 
         return video_grid(videos, col_gap_indices=[0, 1, 2], x_labels=labels)
-
-    def video_comparison(self, with_labels=True):
-        runs = self.get_logged_runs()
-
-        for r in runs:
-            if r.job_type == "run_generative_rendering":
-                if OmegaConf.create(
-                    r.config
-                ).generative_rendering.do_pre_attn_injection:
-                    gr_run = r
-                else:
-                    per_frame_run = r
-            else:
-                rd_run = r
-
-        for art in rd_run.logged_artifacts():
-            if art.name.startswith("video"):
-                rd_video_art = art
-            else:
-                rd_aggr_art = art
-
-        gr_video_art = wbu.first_logged_artifact_of_type(gr_run, "video")
-        per_frame_video_art = wbu.first_logged_artifact_of_type(per_frame_run, "video")
-
-        video_artifacts = [per_frame_video_art, gr_video_art, rd_video_art, rd_aggr_art]
-        videos = [VideoArtifact.from_wandb_artifact(art) for art in video_artifacts]
-        videos = [art.get_moviepy_clip() for art in videos]
-
-        max_duration = max([v.duration for v in videos])
-        videos = [extend_clip_to_match_duration(v, max_duration) for v in videos]
-
-        videos = [self.get_depth_video()] + videos
-
-        videos_grid = np.array([videos])
-
-        if with_labels:
-            x_labels = [
-                "Geometry",
-                "Per Frame",
-                "Generative Rendering",
-                "Ours (Target)",
-                "Ours (Source)",
-            ]
-        else:
-            x_labels = None
-
-        return video_grid(
-            videos_grid,
-            col_gap_indices=[0, 1, 2],
-            x_labels=x_labels,
-        )
