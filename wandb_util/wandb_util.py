@@ -7,6 +7,7 @@ from typing import List, Optional
 
 import torch
 from attr import dataclass
+from cv2 import log
 from moviepy.editor import ImageSequenceClip
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
@@ -297,6 +298,21 @@ class RunDescriptor:
         )
 
 
+def spec_matches_run(spec: RunDescriptor, run: Run):
+    same_job_type = spec.run_fun.job_type == run.job_type
+
+    if not same_job_type:
+        return False
+
+    spec_config = spec.config.copy()
+    del spec_config.run
+    spec_config_dict = OmegaConf.to_container(
+        spec_config, resolve=True, throw_on_missing=True
+    )
+
+    return spec_config_dict == run.config
+
+
 class Experiment:
     experiment_name: str
     config: DictConfig
@@ -339,3 +355,42 @@ class Experiment:
         runs = list(runs)
 
         return runs
+
+    def sync_experiment(self, dry_run=False):
+        specification = self.specification()
+        existing_runs = self.get_logged_runs()
+
+        # find runs remaining to run
+        to_run = []
+        for spec in specification:
+            run_exists = any([spec_matches_run(spec, run) for run in existing_runs])
+            if not run_exists:
+                to_run.append(spec)
+
+        # find runs to delete
+        to_del = []
+        for run in existing_runs:
+            in_spac = any([spec_matches_run(spec, run) for spec in specification])
+            if not in_spac:
+                to_del.append(run)
+
+        if dry_run:
+            print(f"would execute {len(to_run)} runs")
+            print(f"would delete {len(to_del)} runs")
+            return
+
+        print(f"Deleting {len(to_del)} runs")
+        for run in to_del:
+            run.delete()
+
+        print(f"Executing {len(to_run)} runs")
+        mp.set_start_method("spawn")
+
+        for run in to_run:
+            run.append_tags([self.experiment_name])
+
+        processes = [run.as_process() for run in to_run]
+
+        for p in processes:
+            p.start()
+            p.join()

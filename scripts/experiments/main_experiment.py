@@ -1,3 +1,4 @@
+import itertools
 from dataclasses import dataclass
 from typing import List
 
@@ -22,21 +23,15 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
 )
 from text3d2video.pipelines.reposable_diffusion_pipeline import ReposableDiffusionConfig
 from text3d2video.rendering import render_depth_map
-from text3d2video.utilities.video_comparison import video_grid
+from text3d2video.utilities.video_comparison import group_into_array, video_grid
 from text3d2video.utilities.video_util import (
     extend_clip_to_match_duration,
     pil_frames_to_clip,
 )
+from wandb.apis.public import Run
 from wandb_util.experiment_util import (
     object_to_instantiate_config,
 )
-
-
-@dataclass
-class Scene:
-    prompt: str
-    artifact_tag: str
-    n_frames: int
 
 
 @dataclass
@@ -44,7 +39,8 @@ class MainExperimentConfig:
     model: ModelConfig
     generative_rendering: GenerativeRenderingConfig
     reposable_diffusion: ReposableDiffusionConfig
-    scenes: list[Scene]
+    animations: list[AnimationConfig]
+    prompts: list[str]
 
 
 class MainExperiment(wbu.Experiment):
@@ -68,15 +64,13 @@ class MainExperiment(wbu.Experiment):
             tags=[],
         )
 
-        for scene in self.config.scenes:
-            animation = AnimationConfig(
-                n_frames=scene.n_frames,
-                artifact_tag=scene.artifact_tag,
-            )
+        prompts = self.config.prompts
+        animations = self.config.animations
 
+        for prompt, animation in itertools.product(prompts, animations):
             gr_config = RunGenerativeRenderingConfig(
                 run=run_config,
-                prompt=scene.prompt,
+                prompt=prompt,
                 animation=animation,
                 generative_rendering=self.config.generative_rendering,
                 model=self.config.model,
@@ -86,7 +80,7 @@ class MainExperiment(wbu.Experiment):
 
             rd_config = RunReposableDiffusionT2VConfig(
                 run=run_config,
-                prompt=scene.prompt,
+                prompt=prompt,
                 animation=animation,
                 reposable_diffusion=self.config.reposable_diffusion,
                 model=self.config.model,
@@ -102,7 +96,7 @@ class MainExperiment(wbu.Experiment):
             per_frame_gr_config.do_post_attn_injection = False
             per_frame_config = RunGenerativeRenderingConfig(
                 run=run_config,
-                prompt=scene.prompt,
+                prompt=prompt,
                 animation=animation,
                 generative_rendering=per_frame_gr_config,
                 model=self.config.model,
@@ -128,20 +122,96 @@ class MainExperiment(wbu.Experiment):
 
         return runs
 
-    def get_depth_video(self, fps=10):
-        r = self.get_logged_runs()[0]
+    # Processing:
 
-        n_frames = OmegaConf.create(r.config).animation.n_frames
-        anim = wbu.first_used_artifact_of_type(r, "animation")
+    def get_depth_video(self, run):
+        n_frames = OmegaConf.create(run.config).animation.n_frames
+
+        vid = wbu.first_logged_artifact_of_type(run, "video")
+        vid = VideoArtifact.from_wandb_artifact(vid)
+        fps = vid.get_moviepy_clip().fps
+
+        anim = wbu.first_used_artifact_of_type(run, "animation")
         anim = AnimationArtifact.from_wandb_artifact(anim)
 
         frame_indices = anim.frame_indices(n_frames)
         cams, meshes = anim.load_frames(frame_indices)
         depth_frames = render_depth_map(meshes, cams)
-        return pil_frames_to_clip(depth_frames, fps=10)
+        return pil_frames_to_clip(depth_frames, fps)
 
-    def get_prompt(self):
-        return self.config.scenes[0].prompt
+    def get_grouped_runs(self):
+        runs = self.get_logged_runs()
+
+        # return scene
+        def scene_key(r):
+            cfg = OmegaConf.create(r.config)
+            anim: AnimationConfig = cfg.animation
+            prompt = cfg.prompt
+            return (prompt, anim.artifact_tag, anim.n_frames)
+
+        # return run type
+        def type_key(r):
+            job_type = r.job_type
+
+            if job_type == RunGenerativeRendering.job_type:
+                cfg = OmegaConf.create(r.config)
+
+                if not cfg.generative_rendering.do_pre_attn_injection:
+                    return 0
+                else:
+                    return 1
+
+            else:
+                return 2
+
+        runs_grouped = group_into_array(runs, dim_key_fns=[scene_key, type_key])
+        return runs_grouped
+
+    def get_output_videos(self, per_frame_run, gr_run, rd_run):
+        # find aggr and video artifacts
+        for art in rd_run.logged_artifacts():
+            if art.name.startswith("video"):
+                rd_video_art = art
+            else:
+                rd_aggr_art = art
+
+        # find artifacts for gr and per frame
+        gr_video_art = wbu.first_logged_artifact_of_type(gr_run, "video")
+        per_frame_video_art = wbu.first_logged_artifact_of_type(per_frame_run, "video")
+
+        # get videos
+        video_artifacts = [per_frame_video_art, gr_video_art, rd_video_art, rd_aggr_art]
+        videos = [
+            VideoArtifact.from_wandb_artifact(art).get_moviepy_clip()
+            for art in video_artifacts
+        ]
+
+        return videos
+
+    def row_videos(self, runs):
+        per_frame, gr, rd = runs
+        depth_video = self.get_depth_video(gr)
+        videos = self.get_output_videos(per_frame, gr, rd)
+
+        vids = [depth_video] + videos
+        vids = [extend_clip_to_match_duration(v, depth_video.duration) for v in vids]
+        return vids
+
+    def vid_comparison(self, grouped_runs, with_labels=False):
+        videos = np.array([self.row_videos(runs) for runs in grouped_runs])
+
+        labels = [
+            "Geometry",
+            "Per Frame",
+            "Generative Rendering",
+            "Ours (Target)",
+            "Ours (Source)",
+        ]
+
+        if not with_labels:
+            labels = None
+
+        return video_grid(videos, col_gap_indices=[0, 1, 2], x_labels=labels)
 
     def video_comparison(self, with_labels=True):
         runs = self.get_logged_runs()
@@ -190,6 +260,6 @@ class MainExperiment(wbu.Experiment):
 
         return video_grid(
             videos_grid,
-            col_gap_indices=[0, 1],
+            col_gap_indices=[0, 1, 2],
             x_labels=x_labels,
         )

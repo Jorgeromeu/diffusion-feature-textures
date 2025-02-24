@@ -4,27 +4,17 @@ defaults:
   - generative_rendering: default
   - reposable_diffusion: default
 
-scenes: [
-    # {
-    #   artifact_tag: "handstand:latest",
-    #   n_frames: 20,
-    #   prompt: "Realistic Deadpool, Simple White Background",
-    # },
-    # {
-    #   artifact_tag: "rumba:latest",
-    #   n_frames: 20,
-    #   prompt: "Realistic Deadpool, Simple White Background",
-    # },
-    # {
-    #   artifact_tag: "flair:latest",
-    #   n_frames: 20,
-    #   prompt: "Realistic Deadpool, Simple White Background",
-    # },
-    # {
-    #   artifact_tag: "backflip:latest",
-    #   n_frames: 20,
-    #   prompt: "Realistic Deadpool, Simple White Background",
-    # },
-    # { artifact_tag: "handstand:latest", n_frames: 20, prompt: "Stormtrooper" },
-    { artifact_tag: "handstand:latest", n_frames: 20, prompt: "Abraham Lincoln" },
+prompts:
+  - "Realistic Deadpool, Simple White Background"
+  - "Stormtrooper"
+  - "Abraham Lincoln"
+  - "Ironman"
+  - "Ninja"
+
+animations:
+  [
+    { artifact_tag: "handstand:latest", n_frames: 20 },
+    { artifact_tag: "booty:latest", n_frames: 20 },
+    { artifact_tag: "rumba:latest", n_frames: 20 },
+    { artifact_tag: "flair:latest", n_frames: 20 },
   ]
