@@ -1,9 +1,31 @@
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from einops import rearrange
+from jaxtyping import Float
+from pytorch3d.io import load_obj
+from pytorch3d.ops import interpolate_face_attributes
+from pytorch3d.renderer import (
+    CamerasBase,
+    FoVPerspectiveCameras,
+    MeshRasterizer,
+    RasterizationSettings,
+)
+from pytorch3d.structures import Meshes
 from torch import Tensor
+
+from text3d2video.rendering import make_feature_renderer
+from text3d2video.utilities.camera_placement import turntable_extrinsics
+from text3d2video.utilities.mesh_processing import normalize_meshes
+
+
+def read_obj_uvs(obj_path: str, device="cuda"):
+    _, faces, aux = load_obj(obj_path)
+    verts_uvs = aux.verts_uvs.to(device)
+    faces_uvs = faces.textures_idx.to(device)
+    return verts_uvs, faces_uvs
 
 
 def ordered_sample_indices(lst, n):
@@ -114,3 +136,11 @@ def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
 
     for tensor, shape in tensors:
         named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)
+
+
+def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
+    unique, inverse = torch.unique(tensor, sorted=True, return_inverse=True, dim=dim)
+    perm = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
+    inverse, perm = inverse.flip([0]), perm.flip([0])
+    unique_indices = inverse.new_empty(unique.size(0)).scatter_(0, inverse, perm)
+    return unique, unique_indices

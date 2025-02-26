@@ -17,7 +17,7 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 )
 from text3d2video.backprojection import (
     aggregate_spatial_features_dict,
-    project_visible_verts_to_cameras,
+    project_visible_verts_to_camera,
     rasterize_and_render_vert_features_dict,
 )
 from text3d2video.noise_initialization import NoiseInitializer
@@ -214,8 +214,13 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             torch.arange(0, n_frames), self.rd_config.chunk_size
         )
 
-        # get 2D vertex positions for each frame
-        vert_xys, vert_indices = project_visible_verts_to_cameras(meshes, cameras)
+        # precompute visible-vert rasterization for each frame
+        vert_xys = []
+        vert_indices = []
+        for cam, mesh in zip(cameras, meshes):
+            xys, idxs = project_visible_verts_to_camera(mesh, cam)
+            vert_xys.append(xys)
+            vert_indices.append(idxs)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):

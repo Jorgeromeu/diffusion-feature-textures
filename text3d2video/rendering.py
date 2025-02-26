@@ -12,20 +12,20 @@ from torch import nn
 
 
 class FeatureShader(nn.Module):
+    """
+    Simple shader that returns the texture features as the output, no shading
+    """
+
     def __init__(self, device="cuda", blend_params=BlendParams()):
         super().__init__()
         self.device = device
         self.blend_params = blend_params
 
     def forward(self, fragments, meshes: Meshes, **kwargs):
-        # get the vertex features
-        texels = meshes.sample_textures(fragments)
-
+        colors = meshes.sample_textures(fragments)
         valid_max = fragments.pix_to_face >= 0
-
-        blended_texels = torch.zeros_like(texels)
-        blended_texels[valid_max] = texels[valid_max]
-
+        blended_texels = torch.zeros_like(colors)
+        blended_texels[valid_max] = colors[valid_max]
         # TODO blending
         return blended_texels[:, :, :, 0, :]
 
@@ -44,14 +44,16 @@ def normalize_depth_map(depth):
     return depth
 
 
-def make_rasterizer(cameras=None, resolution=512):
-    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
+def make_mesh_rasterizer(cameras=None, resolution=512):
+    raster_settings = RasterizationSettings(
+        image_size=resolution, faces_per_pixel=1, blur_radius=0
+    )
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
     return rasterizer
 
 
 def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
-    rasterizer = make_rasterizer(resolution=resolution)
+    rasterizer = make_mesh_rasterizer(resolution=resolution)
     indices = torch.arange(0, len(meshes))
 
     all_depth_maps = []
