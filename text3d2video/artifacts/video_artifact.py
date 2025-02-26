@@ -5,8 +5,9 @@ from IPython.display import Video
 from moviepy.editor import VideoFileClip
 from PIL import Image
 
-import wandb_util.wandb_util as wbu
-from text3d2video.utilities.video_util import pil_frames_to_clip
+import text3d2video.wandb_util as wbu
+from text3d2video.artifacts.animation_artifact import AnimationArtifact
+from text3d2video.video_util import pil_frames_to_clip
 
 
 class VideoArtifact(wbu.ArtifactWrapper):
@@ -35,3 +36,10 @@ class VideoArtifact(wbu.ArtifactWrapper):
     def get_frame_nums(self):
         log_run = self.logged_by()
         return log_run.config["frame_indices"]
+
+    def get_animation_from_lineage(self):
+        log_run = self.logged_by()
+        animation = wbu.first_used_artifact_of_type(
+            log_run, AnimationArtifact.wandb_artifact_type
+        )
+        return AnimationArtifact.from_wandb_artifact(animation)

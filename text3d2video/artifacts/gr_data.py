@@ -1,4 +1,3 @@
-import pickle
 from dataclasses import dataclass
 from typing import Dict
 
@@ -7,12 +6,12 @@ from torch import Tensor
 
 from text3d2video.artifacts.diffusion_data import (
     AttnFeaturesWriter,
-    DiffusionDataManager,
+    DiffusionData,
     DiffusionDataWriter,
     LatentsWriter,
 )
 from text3d2video.util import assert_tensor_shapes
-from wandb_util.wandb_util import ArtifactWrapper
+from text3d2video.wandb_util import ArtifactWrapper
 
 
 @dataclass
@@ -190,7 +189,7 @@ class GrDataArtifact(ArtifactWrapper):
 
     # config for saving
     config: GrSaveConfig
-    diffusion_data: DiffusionDataManager
+    diffusion_data: DiffusionData
     # diffusion data writers
     attn_writer: AttnFeaturesWriter
     latents_writer: LatentsWriter
@@ -205,10 +204,12 @@ class GrDataArtifact(ArtifactWrapper):
         art.config = config
 
         # diffusion data
-        art.diffusion_data = DiffusionDataManager(
+        art.diffusion_data = DiffusionData(
             art.h5_file_path(),
             enabled=config.enabled,
-            save_layer=config.module_paths,
+            attn_paths=config.module_paths,
+            n_save_frames=config.n_frames,
+            n_save_steps=config.n_timesteps,
         )
 
         # writers
@@ -230,8 +231,8 @@ class GrDataArtifact(ArtifactWrapper):
         return art
 
     def begin_recording(self, scheduler: SchedulerMixin, n_frames: int):
-        self.diffusion_data.calculate_evenly_spaced_save_levels(scheduler, 5)
-        self.diffusion_data.calculate_evenly_spaced_save_frames(n_frames, 5)
+        self.diffusion_data.calculate_save_steps(scheduler)
+        self.diffusion_data.calculate_save_frames(n_frames)
         self.diffusion_data.begin_recording()
 
     def end_recording(self):

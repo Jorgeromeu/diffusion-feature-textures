@@ -4,15 +4,12 @@ Controllable 4D-guided video generation with T2I diffusion models using 3D consi
 
 ## Repository Structure
 
-- `blender_scripts` Utility Blender scripts
-- `config` yaml config files for all scripts/experiments
 - `data` contains some example meshes, animations, etc
 - `notebooks` contains some interactive notebooks
-- `visual_tests` notebooks for visualy testing the code
-- `scripts` contains the main entrypoints to our programs
-- `text3d2video` contains reusable functions/classes defined in our library
+- `scripts` contains the main entrypoints to our program
+- `text3d2video` contains reusable functions defined in our library
 
-## Environment setup
+## Getting Started
 
 First create and activate a conda environment
 

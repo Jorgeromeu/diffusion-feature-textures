@@ -5,6 +5,42 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Multiview Features",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/multiview_features.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Aggregate3D",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/aggregate_features.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
+            "name": "Generate Video",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "scripts/generate_video.py",
+            "cwd": "${cwd}",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+        },
+        {
             "name": "Generative Rendering",
             "type": "debugpy",
             "request": "launch",
@@ -15,19 +51,6 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },
-        },
-        {
-            "name": "Reposable Diffusion",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "scripts/run_reposable_diffusion.py",
-            "cwd": "${cwd}",
-            "justMyCode": true,
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            },
-            "args": ["run.wandb=false"]
         },
         {
             "name": "Current File",
