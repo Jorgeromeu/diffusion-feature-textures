@@ -17,7 +17,7 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 )
 from text3d2video.backprojection import (
     aggregate_spatial_features_dict,
-    project_visible_verts_to_cameras,
+    project_visible_verts_to_camera,
     rasterize_and_render_vert_features_dict,
 )
 from text3d2video.noise_initialization import NoiseInitializer
@@ -180,8 +180,13 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             all_meshes, all_cams, verts_uvs, faces_uvs, generator
         )
 
-        # get 2D vertex positions for each frame
-        vert_xys, vert_indices = project_visible_verts_to_cameras(all_meshes, all_cams)
+        # precompute visible-vert rasterization for each frame
+        vert_xys = []
+        vert_indices = []
+        for cam, mesh in zip(all_cams, all_meshes):
+            xys, idxs = project_visible_verts_to_camera(mesh, cam)
+            vert_xys.append(xys)
+            vert_indices.append(idxs)
 
         source_embeddings = stacked_text_embeddings[:, source_indices]
         source_depth_maps = [depth_maps[i] for i in source_indices.tolist()]
