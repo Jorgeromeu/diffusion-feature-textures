@@ -1,5 +1,4 @@
-import itertools
-from typing import Callable, Dict, List, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -17,9 +16,9 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.camera_placement import turntable_extrinsics
-from text3d2video.mesh_processing import normalize_meshes
 from text3d2video.rendering import make_feature_renderer
+from text3d2video.utilities.camera_placement import turntable_extrinsics
+from text3d2video.utilities.mesh_processing import normalize_meshes
 
 
 def read_obj_uvs(obj_path: str, device="cuda"):
@@ -27,12 +26,6 @@ def read_obj_uvs(obj_path: str, device="cuda"):
     verts_uvs = aux.verts_uvs.to(device)
     faces_uvs = faces.textures_idx.to(device)
     return verts_uvs, faces_uvs
-
-
-def group_list_by(lst: List, key: Callable):
-    sorted_list = sorted(lst, key=key)
-    groupby_result = itertools.groupby(sorted_list, key)
-    return [list(content) for _, content in groupby_result]
 
 
 def ordered_sample_indices(lst, n):

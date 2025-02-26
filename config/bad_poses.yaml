@@ -1,0 +1,49 @@
+defaults:
+  - hydra: default
+  - run: default
+  - model: stable_diffusion_v1_5
+  - noise_initialization: uv
+  - save_tensors: disabled
+
+prompt: "Realistic Deadpool, Simple White Background"
+
+animations:
+  [
+    { artifact_tag: "flair:latest", n_frames: 20 },
+    { artifact_tag: "booty:latest", n_frames: 20 },
+    { artifact_tag: "backflip:latest", n_frames: 20 },
+    { artifact_tag: "handstand:latest", n_frames: 20 },
+    { artifact_tag: "mixamo-human_barrel_roll:latest", n_frames: 20 },
+  ]
+
+generative_rendering:
+  resolution: 512
+  seed: 1
+  attend_to_self_kv: true
+  do_pre_attn_injection: true
+  do_post_attn_injection: true
+  feature_blend_alpha: 1.0
+  mean_features_weight: 0.5
+  chunk_size: 5
+  num_keyframes: 5
+  num_inference_steps: 10
+  guidance_scale: 7.5
+  controlnet_conditioning_scale: 1.0
+  module_paths: [
+      # "down_blocks.0.attentions.0.transformer_blocks.0.attn1",
+      # "down_blocks.0.attentions.1.transformer_blocks.0.attn1",
+      # "down_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      # "down_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      # "down_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      # "down_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      # "mid_block.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+      "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+    ]

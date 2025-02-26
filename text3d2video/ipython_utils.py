@@ -4,10 +4,8 @@ from typing import List
 import matplotlib.pyplot as plt
 import numpy as np
 from IPython.display import Video
-from matplotlib.axes import Axes
 from moviepy.editor import ImageSequenceClip
 from PIL.Image import Image
-from torch import Tensor
 
 
 def transpose_list_of_lists(lol: List[List]):
@@ -20,7 +18,6 @@ def display_ims_grid(
     col_titles=None,
     row_titles=None,
     transpose_images=False,
-    title=None,
 ):
     images = images.copy()
     if transpose_images:

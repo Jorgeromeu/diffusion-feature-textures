@@ -5,8 +5,8 @@ from IPython.display import Video
 from moviepy.editor import VideoFileClip
 from PIL import Image
 
-import text3d2video.wandb_util as wbu
-from text3d2video.video_util import pil_frames_to_clip
+import wandb_util.wandb_util as wbu
+from text3d2video.utilities.video_util import pil_frames_to_clip
 
 
 class VideoArtifact(wbu.ArtifactWrapper):
