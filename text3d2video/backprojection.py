@@ -17,10 +17,10 @@ from text3d2video.rendering import FeatureShader
 from text3d2video.util import sample_feature_map_ndc
 
 
-def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase):
+def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase, res=600):
     # rasterize mesh, to get visible verts
     raster_settings = RasterizationSettings(
-        image_size=600,
+        image_size=res,
         blur_radius=0.0,
         faces_per_pixel=1,
     )
