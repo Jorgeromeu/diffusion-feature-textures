@@ -44,14 +44,16 @@ def normalize_depth_map(depth):
     return depth
 
 
-def make_rasterizer(cameras=None, resolution=512):
-    raster_settings = RasterizationSettings(image_size=resolution, faces_per_pixel=1)
+def make_mesh_rasterizer(cameras=None, resolution=512):
+    raster_settings = RasterizationSettings(
+        image_size=resolution, faces_per_pixel=1, blur_radius=0
+    )
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
     return rasterizer
 
 
 def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
-    rasterizer = make_rasterizer(resolution=resolution)
+    rasterizer = make_mesh_rasterizer(resolution=resolution)
     indices = torch.arange(0, len(meshes))
 
     all_depth_maps = []

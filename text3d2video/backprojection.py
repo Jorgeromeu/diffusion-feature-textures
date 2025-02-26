@@ -171,7 +171,7 @@ def aggregate_feature_maps_to_uv_texture(
     uv_resolution: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
     vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-    interpolation_mode="nearest",
+    interpolation_mode="bilinear",
 ):
     # initialize empty uv map
     feature_dim = feature_maps.shape[1]
@@ -236,7 +236,6 @@ def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragm
     render_meshes.textures = texture
     shader = FeatureShader("cuda")
     render = shader(fragments, render_meshes)
-
     render = rearrange(render, "b h w c -> b c h w")
 
     return render
@@ -252,10 +251,6 @@ def rasterize_and_render_vt_features(
 
     fragments = rasterizer(meshes, cameras=cams)
     render = render_vert_features(vert_features, meshes, fragments)
-
-    # render = TF.resize(
-    #     render, resolution, interpolation=TF.InterpolationMode.NEAREST_EXACT
-    # )
 
     return render
 
