@@ -66,10 +66,12 @@ def aggregate_features_precomputed_vertex_positions(
     vert_features = torch.zeros(n_verts, feature_dim).cuda()
     vert_features_cnt = torch.zeros(n_verts).cuda()
 
-    for frame, feature_map in enumerate(feature_maps):
+    for i, feature_map in enumerate(feature_maps):
         # get features for each vertex, for given view
-        frame_vert_xys = vertex_positions[frame]
-        frame_vert_indices = vertex_indices[frame]
+        frame_vert_xys = vertex_positions[i]
+        frame_vert_indices = vertex_indices[i]
+
+        # project frame features to vertices
         frame_vert_features = sample_feature_map_ndc(
             feature_map,
             frame_vert_xys,

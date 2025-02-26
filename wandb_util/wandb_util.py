@@ -7,7 +7,6 @@ from typing import List, Optional
 
 import torch
 from attr import dataclass
-from cv2 import log
 from moviepy.editor import ImageSequenceClip
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
@@ -112,6 +111,34 @@ def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
         if artifact.type == artifact_type:
             return artifact
     return None
+
+
+def logged_artifacts(run, type=None, name_startswith=None):
+    artifacts = []
+    for art in run.logged_artifacts():
+        if type is not None and art.type != type:
+            continue
+
+        if name_startswith is not None and not art.name.startswith(name_startswith):
+            continue
+
+        artifacts.append(art)
+
+    return artifacts
+
+
+def used_artifacts(run, type=None, name_startswith=None):
+    artifacts = []
+    for art in run.used_artifacts():
+        if type is not None and art.type != type:
+            continue
+
+        if name_startswith is not None and not art.name.startswith(name_startswith):
+            continue
+
+        artifacts.append(art)
+
+    return artifacts
 
 
 def log_moviepy_clip(name, clip: ImageSequenceClip, fps=10):

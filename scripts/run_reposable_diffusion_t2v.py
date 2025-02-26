@@ -85,6 +85,9 @@ class RunReposableDiffusionT2V(wbu.WandbRun):
         vid_frames = video_frames[0 : len(frame_cams)]
         aggr_frames = video_frames[len(frame_cams) :]
 
+        print(len(aggr_frames))
+        print(len(aggr_meshes))
+
         # save video
         video_artifact = VideoArtifact.create_empty_artifact("video")
         video_artifact.write_frames(vid_frames, fps=10)

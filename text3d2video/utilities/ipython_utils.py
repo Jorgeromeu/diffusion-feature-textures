@@ -4,17 +4,24 @@ from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from einops import rearrange
 from IPython.display import HTML, Video
 from matplotlib.axes import Axes
 from moviepy.editor import VideoClip
-from PIL.Image import Image
+from PIL import Image
+from pytorch3d.renderer import FoVPerspectiveCameras, Textures
+from pytorch3d.structures import Meshes
 from torch import Tensor
 
 from text3d2video.feature_visualization import reduce_feature_map
+from text3d2video.rendering import make_feature_renderer
+from text3d2video.utilities.camera_placement import turntable_extrinsics
+from text3d2video.utilities.video_util import pil_frames_to_clip
 
 
 def display_ims_grid(
-    images: List[List[Image]],
+    images: List[List[Image.Image]],
     scale=2.5,
     col_titles=None,
     row_titles=None,
@@ -57,7 +64,7 @@ def display_ims_grid(
     plt.show()
 
 
-def display_ims(images: List[Image], scale=2, titles=None):
+def display_ims(images: List[Image.Image], scale=2, titles=None):
     if titles is not None:
         assert len(titles) == len(images)
 
@@ -148,3 +155,32 @@ def reduce_feature_maps(
     return images
 
     # display_ims_grid(images, scale=scale)
+
+
+def to_pil_image(feature_map: torch.Tensor, clip=False):
+    if clip:
+        feature_map_in = feature_map.clamp(0, 1)
+    else:
+        feature_map_in = feature_map
+
+    return Image.fromarray(
+        (feature_map_in.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+    )
+
+
+@torch.no_grad()
+def render_texture_360(mesh: Meshes, texture: Textures):
+    angles = np.linspace(0, 360, 10)
+    R, T = turntable_extrinsics(angles=angles, dists=1.5)
+    view_cams = FoVPerspectiveCameras(R=R, T=T, device="cuda", fov=65)
+
+    view_mesh = mesh.clone()
+    view_mesh.textures = texture
+    view_mesh = view_mesh.extend(len(view_cams))
+
+    renderer = make_feature_renderer(view_cams, 512)
+    renders = renderer(view_mesh)
+    renders = rearrange(renders, "B H W C -> B C H W")
+    renders = [to_pil_image(render.cpu(), clip=True) for render in renders]
+    clip = pil_frames_to_clip(renders, fps=10)
+    return clip
