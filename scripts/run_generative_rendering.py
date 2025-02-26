@@ -1,131 +1,100 @@
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
 import hydra
 import torch
-from diffusers import ControlNetModel
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 
-import text3d2video.utilities.wandb_util as wbu
 import wandb
-from text3d2video.artifacts.anim_artifact import AnimationArtifact
-from text3d2video.artifacts.gr_data import GrSaveConfig
+import wandb_util.wandb_util as wbu
+from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimationConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.configs import (
-    AnimationConfig,
+from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
-    RunConfig,
-)
-from text3d2video.generative_rendering.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
+)
+from text3d2video.pipelines.pipeline_utils import (
+    ModelConfig,
+    load_pipeline_from_model_config,
 )
 from text3d2video.util import ordered_sample
 
 
 @dataclass
-class ModelConfig:
-    sd_repo: str
-    controlnet_repo: str
-    scheduler: Any
-
-
-@dataclass
 class RunGenerativeRenderingConfig:
-    run: RunConfig
-    out_artifact: str
+    run: wbu.RunConfig
     prompt: str
     animation: AnimationConfig
-    save_tensors: GrSaveConfig
     generative_rendering: GenerativeRenderingConfig
     noise_initialization: Any
     model: ModelConfig
+    seed: int
 
 
-JOB_TYPE = "run_generative_rendering"
+class RunGenerativeRendering(wbu.WandbRun):
+    job_type = "run_generative_rendering"
+
+    def _run(self, cfg: RunGenerativeRenderingConfig):
+        # disable gradients
+        torch.set_grad_enabled(False)
+
+        # read animation
+        animation = AnimationArtifact.from_wandb_artifact_tag(
+            cfg.animation.artifact_tag, download=cfg.run.download_artifacts
+        )
+        frame_indices = animation.frame_indices(cfg.animation.n_frames)
+        cam_frames, mesh_frames = animation.load_frames(frame_indices)
+        uv_verts, uv_faces = animation.uv_data()
+
+        # load pipeline
+        device = torch.device("cuda")
+        pipe = load_pipeline_from_model_config(
+            GenerativeRenderingPipeline, cfg.model, device
+        )
+
+        noise_initializer = instantiate(cfg.noise_initialization)
+
+        # set seed
+        generator = torch.Generator(device=device)
+        generator.manual_seed(cfg.seed)
+
+        # inference
+        video_frames = pipe(
+            cfg.prompt,
+            mesh_frames,
+            cam_frames,
+            uv_verts,
+            uv_faces,
+            generative_rendering_config=cfg.generative_rendering,
+            noise_initializer=noise_initializer,
+            generator=generator,
+        )
+
+        # save video
+        video_artifact = VideoArtifact.create_empty_artifact("video")
+        video_artifact.write_frames(video_frames, fps=10)
+
+        # log sampled frames
+        sampled_frames = ordered_sample(video_frames, 5)
+        wandb.log({"frames": [wandb.Image(frame) for frame in sampled_frames]})
+
+        # log video to run
+        wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})
+
+        # save video artifact
+        video_artifact.log_if_enabled()
+
 
 cs = ConfigStore.instance()
-cs.store(name=JOB_TYPE, node=RunGenerativeRenderingConfig)
+cs.store(name=RunGenerativeRendering.job_type, node=RunGenerativeRenderingConfig)
 
 
-@hydra.main(config_path="../config", config_name=JOB_TYPE)
-def run(cfg: RunGenerativeRenderingConfig):
-    # init wandb
-    cfg.run.job_type = JOB_TYPE
-    do_run = wbu.setup_run(cfg.run, cfg)
-    if not do_run:
-        return
-
-    # supress warnings
-    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
-
-    # disable gradients
-    torch.set_grad_enabled(False)
-
-    # read animation
-    animation = AnimationArtifact.from_wandb_artifact_tag(
-        cfg.animation.artifact_tag, download=cfg.run.download_artifacts
-    )
-    frame_indices = animation.frame_indices(cfg.animation.n_frames)
-    cam_frames, mesh_frames = animation.load_frames(frame_indices)
-    uv_verts, uv_faces = animation.uv_data()
-
-    # load pipeline
-    device = torch.device("cuda")
-    dtype = torch.float16
-
-    sd_repo = cfg.model.sd_repo
-    controlnet_repo = cfg.model.controlnet_repo
-
-    controlnet = ControlNetModel.from_pretrained(controlnet_repo, torch_dtype=dtype).to(
-        device
-    )
-
-    pipe: GenerativeRenderingPipeline = GenerativeRenderingPipeline.from_pretrained(
-        sd_repo, controlnet=controlnet, torch_dtype=dtype
-    ).to(device)
-
-    pipe.scheduler = instantiate(cfg.model.scheduler).__class__.from_config(
-        pipe.scheduler.config
-    )
-
-    noise_initializer = instantiate(cfg.noise_initialization)
-
-    # inference
-    video_frames = pipe(
-        cfg.prompt,
-        mesh_frames,
-        cam_frames,
-        uv_verts,
-        uv_faces,
-        generative_rendering_config=cfg.generative_rendering,
-        noise_initializer=noise_initializer,
-        gr_save_config=cfg.save_tensors,
-    )
-
-    if cfg.save_tensors.enabled:
-        pipe.gr_data_artifact.log_if_enabled()
-
-    # save video
-    video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
-    video_artifact.write_frames(video_frames, fps=10)
-
-    # log sampled frames
-    sampled_frames = ordered_sample(video_frames, 5)
-    wandb.log({"frames": [wandb.Image(frame) for frame in sampled_frames]})
-
-    # log video to run
-    wandb.log({"video": wandb.Video(str(video_artifact.get_mp4_path()))})
-
-    # save video artifact
-    video_artifact.log_if_enabled()
-
-    run = wandb.run
-    wandb.finish()
-    return run
+@hydra.main(config_path="../config", config_name=RunGenerativeRendering.job_type)
+def main(cfg: RunGenerativeRenderingConfig):
+    run = RunGenerativeRendering()
+    run.execute(cfg)
 
 
 if __name__ == "__main__":
-    # pylint: disable=no-value-for-parameter
-    run()
+    main()

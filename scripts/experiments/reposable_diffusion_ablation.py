@@ -9,23 +9,21 @@ import scripts.run_generative_rendering
 import scripts.run_reposable_diffusion
 from scripts.run_generative_rendering import ModelConfig
 from scripts.run_reposable_diffusion import RunReposableDiffusionConfig
+from text3d2video.artifacts.anim_artifact import AnimationConfig
 from text3d2video.artifacts.gr_data import GrSaveConfig
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.generative_rendering.configs import (
-    AnimationConfig,
-    ReposableDiffusionConfig,
-    RunConfig,
-)
 from text3d2video.noise_initialization import UVNoiseInitializer
-from text3d2video.utilities.experiment_util import (
-    WandbExperiment,
-    object_to_instantiate_config,
-)
+from text3d2video.pipelines.reposable_diffusion_pipeline import ReposableDiffusionConfig
 from text3d2video.utilities.video_comparison import (
     group_into_array,
     video_grid,
 )
 from text3d2video.utilities.video_util import extend_clip_to_match_duration
+from wandb_util.experiment_util import (
+    WandbExperiment,
+    object_to_instantiate_config,
+)
+from wandb_util.wandb_util import RunConfig
 
 """
 Example experiment which runs generative rendering on a set of scenes and prompts

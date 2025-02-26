@@ -1,0 +1,19 @@
+defaults:
+  - model: stable_diffusion_v1_5
+  - noise_initialization: uv
+  - generative_rendering: default
+  - reposable_diffusion: default
+
+prompts:
+  - "Realistic Deadpool, Simple White Background"
+  - "Stormtrooper"
+  - "Abraham Lincoln"
+  - "Ironman"
+
+animations:
+  [
+    { artifact_tag: "handstand:latest", n_frames: 20 },
+    { artifact_tag: "booty:latest", n_frames: 20 },
+    { artifact_tag: "rumba:latest", n_frames: 20 },
+    { artifact_tag: "flair:latest", n_frames: 20 },
+  ]

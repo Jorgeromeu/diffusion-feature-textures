@@ -17,10 +17,10 @@ from text3d2video.rendering import FeatureShader
 from text3d2video.util import sample_feature_map_ndc
 
 
-def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase):
+def project_visible_verts_to_cameras(meshes: Meshes, cameras: CamerasBase, res=600):
     # rasterize mesh, to get visible verts
     raster_settings = RasterizationSettings(
-        image_size=600,
+        image_size=res,
         blur_radius=0.0,
         faces_per_pixel=1,
     )
@@ -66,10 +66,12 @@ def aggregate_features_precomputed_vertex_positions(
     vert_features = torch.zeros(n_verts, feature_dim).cuda()
     vert_features_cnt = torch.zeros(n_verts).cuda()
 
-    for frame, feature_map in enumerate(feature_maps):
+    for i, feature_map in enumerate(feature_maps):
         # get features for each vertex, for given view
-        frame_vert_xys = vertex_positions[frame]
-        frame_vert_indices = vertex_indices[frame]
+        frame_vert_xys = vertex_positions[i]
+        frame_vert_indices = vertex_indices[i]
+
+        # project frame features to vertices
         frame_vert_features = sample_feature_map_ndc(
             feature_map,
             frame_vert_xys,
