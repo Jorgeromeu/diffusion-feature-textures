@@ -1,1 +1,1 @@
-method: RANDOM
+_target_: text3d2video.noise_initialization.RandomNoiseInitializer

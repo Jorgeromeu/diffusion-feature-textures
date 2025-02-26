@@ -1,0 +1,17 @@
+defaults:
+  - hydra: default
+  - run: default
+  - model: stable_diffusion_v1_5
+  - noise_initialization: uv
+  - reposable_diffusion: default
+
+source_frames:
+  artifact_tag: "booty:latest"
+  n_frames: 1
+
+target_frames:
+  artifact_tag: "booty:latest"
+  n_frames: 20
+
+prompt: "Realistic Deadpool, Simple White Background"
+seed: 0

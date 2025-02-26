@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
@@ -6,34 +5,26 @@ import torch
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
-from text3d2video.h5_util import (
+from text3d2video.util import assert_tensor_shape, assert_tensor_shapes, ordered_sample
+from text3d2video.utilities.h5_util import (
     print_datasets,
     read_tensor_from_dataset,
     write_tensor_as_dataset,
 )
-from text3d2video.util import assert_tensor_shape, assert_tensor_shapes, ordered_sample
 
 
-@dataclass
-class DiffusionDataCfg:
-    enabled: bool
-    n_save_steps: int
-    n_save_frames: int
-    attn_paths: list[str]
-
-
-class DiffusionData:
+class DiffusionDataManager:
     """
-    Class to manage reading and writing data extracted during diffusion inference
+    Class to manage reading and writing data extracted during diffusion inference to disk
     """
 
+    # save config
     enabled: bool
-    n_save_steps: int
-    n_save_frames: int
-    attn_paths: list[str]
+    layer_paths: list[str]
+    save_noise_levels: list[int]
+    save_frame_indices: list[int]
 
-    _save_step_times: list[int]
-    _save_frame_indices: list[int]
+    # h5 file path and file pointer
     h5_file_path: Path
     h5_write_fp: h5py.File
 
@@ -41,82 +32,62 @@ class DiffusionData:
         self,
         h5_file_path: Path,
         enabled=True,
-        n_save_steps: int = -1,
-        n_save_frames: int = -1,
-        attn_paths: list[str] = [],
+        save_layer: list[str] = [],
+        save_frame_indices: list[int] = [],
+        save_noise_levels: list[int] = [],
     ):
         self.h5_file_path = h5_file_path
 
         # save config
         self.enabled = enabled
-        self.n_save_steps = n_save_steps
-        self.n_save_frames = n_save_frames
-        self.attn_paths = attn_paths
-
-        # intiialize to empty
-        self._save_frame_indices = []
-        self._save_step_times = []
+        self.layer_paths = save_layer
+        self.save_frame_indices = save_frame_indices
+        self.save_noise_levels = save_noise_levels
 
         # initialize to None
         self.h5_write_fp = None
 
-    def calculate_save_steps(self, scheduler: SchedulerMixin):
-        n_save_steps = self.n_save_steps
-        all_timesteps = [int(t) for t in scheduler.timesteps]
+    def calculate_evenly_spaced_save_levels(
+        self, scheduler: SchedulerMixin, n_levels: int = -1
+    ):
+        """
+        Calculate the noise levels to save based on the scheduler and the number of levels to save
+        """
 
-        if n_save_steps == -1:
-            self._save_step_times = all_timesteps
+        all_noise_levels = [int(t) for t in scheduler.timesteps] + [0]
+
+        # use all timesteps
+        if n_levels == -1:
+            self.save_noise_levels = all_noise_levels
             return
 
-        self._save_step_times = ordered_sample(all_timesteps[:-1], self.n_save_steps)
+        # use ordered sample
+        self.save_noise_levels = ordered_sample(all_noise_levels, n_levels)
 
-    def calculate_save_frames(self, n_frames: int):
-        n_save_frames = self.n_save_frames
+    def calculate_evenly_spaced_save_frames(
+        self, n_frames: int, n_save_frames: int = -1
+    ):
+        """
+        Calculate the frames to save based on the number of frames and the number of frames to save
+        """
+
         all_frame_indices = list(range(n_frames))
 
         if n_save_frames == -1:
-            self._save_frame_indices = all_frame_indices
+            self.save_frame_indices = all_frame_indices
             return
 
-        self._save_frame_indices = ordered_sample(all_frame_indices, n_save_frames)
+        self.save_frame_indices = ordered_sample(all_frame_indices, n_save_frames)
 
     def should_save(self, t: int = None, frame_i: int = None, attn_path: str = None):
-        valid_timestep = t is None or t in self.save_times
+        valid_timestep = t is None or t in self.save_noise_levels
         valid_frame = frame_i is None or frame_i in self.save_frame_indices
-        valid_attn_path = attn_path is None or attn_path in self.attn_paths
+        valid_attn_path = attn_path is None or attn_path in self.layer_paths
 
         return self.enabled and valid_timestep and valid_frame and valid_attn_path
 
     def print_datasets(self, prefix: str = ""):
         print_datasets(self.h5_file_path, parent_path=prefix)
-
-    @property
-    def save_times(self):
-        """
-        Return the diffusion times at which we save data
-        """
-        return self._save_step_times + [0]
-
-    @property
-    def save_step_times(self):
-        """
-        Return the timesteps at which we save data
-        """
-        return self._save_step_times
-
-    @property
-    def save_frame_indices(self):
-        """
-        Return the frame indices at which we save data
-        """
-        return self._save_frame_indices
-
-    @property
-    def save_module_paths(self):
-        """
-        Return the module paths at which we save data
-        """
-        return self.attn_paths
 
     def begin_recording(self):
         self.h5_write_fp = h5py.File(self.h5_file_path, "w")
@@ -127,14 +98,17 @@ class DiffusionData:
         self.h5_write_fp.close()
 
 
+# Implement various data writers here
+
+
 class DiffusionDataWriter:
     """
     Abstract base class for a diffusion data writer
     """
 
-    diff_data: DiffusionData
+    diff_data: DiffusionDataManager
 
-    def __init__(self, diff_data: DiffusionData, data_path: str):
+    def __init__(self, diff_data: DiffusionDataManager, data_path: str):
         self.diff_data = diff_data
         self.data_path = data_path
 
@@ -161,7 +135,7 @@ class LatentsWriter(DiffusionDataWriter):
     enabled: bool
 
     def __init__(
-        self, diff_data: DiffusionData, enabled=True, data_path: str = "latents"
+        self, diff_data: DiffusionDataManager, enabled=True, data_path: str = "latents"
     ):
         super().__init__(diff_data, data_path)
         self.enabled = enabled
@@ -258,3 +232,6 @@ class AttnFeaturesWriter(DiffusionDataWriter):
     def read_val(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "val")
         return self.read_tensor(path)
+
+
+# ---
