@@ -4,7 +4,7 @@ from diffusers.schedulers.scheduling_utils import SchedulerMixin
 
 from text3d2video.artifacts.diffusion_data import (
     AttnFeaturesWriter,
-    DiffusionDataManager,
+    DiffusionDataLogger,
     LatentsWriter,
 )
 from wandb_util.wandb_util import ArtifactWrapper
@@ -28,7 +28,7 @@ class SdDataArtifact(ArtifactWrapper):
 
     # config for saving
     config: SdDataConfig
-    diffusion_data: DiffusionDataManager
+    diffusion_data: DiffusionDataLogger
     # diffusion data writers
     attn_writer: AttnFeaturesWriter
     latents_writer: LatentsWriter
@@ -42,10 +42,10 @@ class SdDataArtifact(ArtifactWrapper):
         art.config = config
 
         # diffusion data
-        art.diffusion_data = DiffusionDataManager(
+        art.diffusion_data = DiffusionDataLogger(
             art.h5_file_path(),
             enabled=config.enabled,
-            save_layer=config.module_paths,
+            path_greenlist=config.module_paths,
         )
 
         # writers
@@ -62,7 +62,7 @@ class SdDataArtifact(ArtifactWrapper):
 
     def begin_recording(self, scheduler: SchedulerMixin, n_frames: int):
         self.diffusion_data.calculate_evenly_spaced_save_noise_levels(scheduler)
-        self.diffusion_data.calculate_evenly_spaced_save_frames(n_frames)
+        self.diffusion_data.calc_evenly_spaced_frame_indices(n_frames)
         self.diffusion_data.begin_recording()
 
     def end_recording(self):

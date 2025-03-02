@@ -67,6 +67,27 @@ class DefaultAttnProcessor:
             chunk_frame_indices=chunk_frame_indices,
         )
 
+    def write_y(self, y: Tensor):
+        if self.attn_writer is None:
+            return
+
+        unstacked_y = rearrange(y, "(b f) t c -> b f t c", b=self.chunk_size)
+
+        timestep = self.cur_timestep
+        chunk_frame_indices = self.chunk_frame_indices
+
+        if timestep is None or chunk_frame_indices is None:
+            raise ValueError(
+                "Timestep and chunk_frame_indices must be set to write qkv"
+            )
+
+        self.attn_writer.write_attn_out_batched(
+            timestep,
+            self._cur_module_path,
+            unstacked_y,
+            chunk_frame_indices=chunk_frame_indices,
+        )
+
     def __init__(
         self,
         model,
@@ -101,8 +122,9 @@ class DefaultAttnProcessor:
         val = attn.to_v(kv_hidden_states)
 
         self.write_qkv(qry, key, val)
-
-        return memory_efficient_attention(attn, key, qry, val, attention_mask)
+        y = memory_efficient_attention(attn, key, qry, val, attention_mask)
+        self.write_y(y)
+        return y
 
     def _call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
@@ -112,8 +134,9 @@ class DefaultAttnProcessor:
         qry = attn.to_q(hidden_states)
 
         self.write_qkv(qry, key, val)
-
-        return memory_efficient_attention(attn, key, qry, val, attention_mask)
+        y = memory_efficient_attention(attn, key, qry, val, attention_mask)
+        self.write_y(y)
+        return y
 
     def __call__(
         self,

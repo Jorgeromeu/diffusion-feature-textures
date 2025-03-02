@@ -17,12 +17,7 @@ def display_ims_grid(
     scale=2.5,
     col_titles=None,
     row_titles=None,
-    transpose_images=False,
 ):
-    images = images.copy()
-    if transpose_images:
-        images = transpose_list_of_lists(images)
-
     n_rows = len(images)
     n_cols = len(images[0])
 
@@ -41,7 +36,8 @@ def display_ims_grid(
     for row_i in range(n_rows):
         for col_i in range(n_cols):
             ax = axs[row_i, col_i]
-            ax.imshow(images[row_i][col_i])
+            image = images[row_i][col_i]
+            ax.imshow(image)
             ax.set_xticks([])
             ax.set_yticks([])
 

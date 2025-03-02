@@ -13,16 +13,16 @@ from text3d2video.utilities.h5_util import (
 )
 
 
-class DiffusionDataManager:
+class DiffusionDataLogger:
     """
     Class to manage reading and writing data extracted during diffusion inference to disk
     """
 
     # save config
     enabled: bool
-    layer_paths: list[str]
-    save_noise_levels: list[int]
-    save_frame_indices: list[int]
+    path_greenlist: list[str]
+    noise_level_greenlist: list[int]
+    frame_indices_greenlist: list[int]
 
     # h5 file path and file pointer
     h5_file_path: Path
@@ -32,22 +32,29 @@ class DiffusionDataManager:
         self,
         h5_file_path: Path,
         enabled=True,
-        save_layer: list[str] = [],
-        save_frame_indices: list[int] = [],
-        save_noise_levels: list[int] = [],
+        path_greenlist: list[str] = None,
+        frame_indices_greenlist: list[int] = None,
+        noise_level_greenlist: list[int] = None,
     ):
+        if path_greenlist is None:
+            path_greenlist = []
+        if frame_indices_greenlist is None:
+            frame_indices_greenlist = []
+        if noise_level_greenlist is None:
+            noise_level_greenlist = []
+
         self.h5_file_path = h5_file_path
 
         # save config
         self.enabled = enabled
-        self.layer_paths = save_layer
-        self.save_frame_indices = save_frame_indices
-        self.save_noise_levels = save_noise_levels
+        self.path_greenlist = path_greenlist
+        self.frame_indices_greenlist = frame_indices_greenlist
+        self.noise_level_greenlist = noise_level_greenlist
 
         # initialize to None
         self.h5_write_fp = None
 
-    def calculate_evenly_spaced_save_levels(
+    def calc_evenly_spaced_noise_noise_levels(
         self, scheduler: SchedulerMixin, n_levels: int = -1
     ):
         """
@@ -58,15 +65,13 @@ class DiffusionDataManager:
 
         # use all timesteps
         if n_levels == -1:
-            self.save_noise_levels = all_noise_levels
+            self.noise_level_greenlist = all_noise_levels
             return
 
         # use ordered sample
-        self.save_noise_levels = ordered_sample(all_noise_levels, n_levels)
+        self.noise_level_greenlist = ordered_sample(all_noise_levels, n_levels)
 
-    def calculate_evenly_spaced_save_frames(
-        self, n_frames: int, n_save_frames: int = -1
-    ):
+    def calc_evenly_spaced_frame_indices(self, n_frames: int, n_save_frames: int = -1):
         """
         Calculate the frames to save based on the number of frames and the number of frames to save
         """
@@ -74,15 +79,15 @@ class DiffusionDataManager:
         all_frame_indices = list(range(n_frames))
 
         if n_save_frames == -1:
-            self.save_frame_indices = all_frame_indices
+            self.frame_indices_greenlist = all_frame_indices
             return
 
-        self.save_frame_indices = ordered_sample(all_frame_indices, n_save_frames)
+        self.frame_indices_greenlist = ordered_sample(all_frame_indices, n_save_frames)
 
-    def should_save(self, t: int = None, frame_i: int = None, attn_path: str = None):
-        valid_timestep = t is None or t in self.save_noise_levels
-        valid_frame = frame_i is None or frame_i in self.save_frame_indices
-        valid_attn_path = attn_path is None or attn_path in self.layer_paths
+    def should_write(self, t: int = None, frame_i: int = None, attn_path: str = None):
+        valid_timestep = t is None or t in self.noise_level_greenlist
+        valid_frame = frame_i is None or frame_i in self.frame_indices_greenlist
+        valid_attn_path = attn_path is None or attn_path in self.path_greenlist
 
         return self.enabled and valid_timestep and valid_frame and valid_attn_path
 
@@ -97,6 +102,10 @@ class DiffusionDataManager:
             return
         self.h5_write_fp.close()
 
+    def delete_data(self):
+        if self.h5_file_path.exists():
+            self.h5_file_path.unlink()
+
 
 # Implement various data writers here
 
@@ -106,9 +115,9 @@ class DiffusionDataWriter:
     Abstract base class for a diffusion data writer
     """
 
-    diff_data: DiffusionDataManager
+    diff_data: DiffusionDataLogger
 
-    def __init__(self, diff_data: DiffusionDataManager, data_path: str):
+    def __init__(self, diff_data: DiffusionDataLogger, data_path: str):
         self.diff_data = diff_data
         self.data_path = data_path
 
@@ -120,10 +129,12 @@ class DiffusionDataWriter:
         frame_i: int = None,
         attn_path: str = None,
     ):
-        if self.diff_data.should_save(t=timestep, frame_i=frame_i, attn_path=attn_path):
+        if self.diff_data.should_write(
+            t=timestep, frame_i=frame_i, attn_path=attn_path
+        ):
             write_tensor_as_dataset(self.diff_data.h5_write_fp, path, data)
 
-    def read_tensor(self, path: str):
+    def _read_tensor(self, path: str):
         return read_tensor_from_dataset(self.diff_data.h5_file_path, path)
 
 
@@ -135,7 +146,7 @@ class LatentsWriter(DiffusionDataWriter):
     enabled: bool
 
     def __init__(
-        self, diff_data: DiffusionDataManager, enabled=True, data_path: str = "latents"
+        self, diff_data: DiffusionDataLogger, enabled=True, data_path: str = "latents"
     ):
         super().__init__(diff_data, data_path)
         self.enabled = enabled
@@ -151,19 +162,19 @@ class LatentsWriter(DiffusionDataWriter):
 
     def write_latents_batched(self, t: int, latents: Tensor):
         assert_tensor_shape(latents, ("B", "C", "H", "W"))
-        for i in self.diff_data.save_frame_indices:
+        for i in self.diff_data.frame_indices_greenlist:
             self.write_latent(t, i, latents[i])
 
     def read_latent(self, t: int, frame_i: int):
         path = self._latent_path(t, frame_i)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_latents_at_frame(self, frame_i: int):
         times = self.diff_data.save_times
         return torch.stack([self.read_latent(t, frame_i) for t in times])
 
     def read_latents_at_time(self, t: int):
-        frame_indices = self.diff_data.save_frame_indices
+        frame_indices = self.diff_data.frame_indices_greenlist
         return torch.stack([self.read_latent(t, frame_i) for frame_i in frame_indices])
 
 
@@ -173,12 +184,19 @@ class AttnFeaturesWriter(DiffusionDataWriter):
     """
 
     def __init__(
-        self, diff_data, save_q=True, save_k=True, save_v=True, data_path="attn_data"
+        self,
+        diff_data,
+        save_q=True,
+        save_k=True,
+        save_v=True,
+        save_y=True,
+        data_path="attn_data",
     ):
         super().__init__(diff_data, data_path)
         self.save_q = save_q
         self.save_k = save_k
         self.save_v = save_v
+        self.save_y = save_y
 
     def _seq_path(self, t: int, frame_i: int, layer: str, seq_name: str):
         return f"{self.data_path}/time_{t}/frame_{frame_i}/{layer}/{seq_name}"
@@ -219,19 +237,36 @@ class AttnFeaturesWriter(DiffusionDataWriter):
             if self.save_v:
                 self.write_seq(t, frame_i, layer, "val", v[0, tensor_idx, ...])
 
+    def write_attn_out_batched(
+        self, t: int, layer: str, y: Tensor, chunk_frame_indices: Tensor
+    ):
+        if chunk_frame_indices is None:
+            chunk_frame_indices = torch.arange(y.shape[0])
+        assert_tensor_shapes([(y, ("B", "F", "T_kv", "D_v"))])
+
+        if not self.save_y:
+            return
+
+        for tensor_idx, frame_i in enumerate(chunk_frame_indices):
+            self.write_seq(t, frame_i, layer, "attn_out", y[0, tensor_idx, ...])
+
     # reading
+
+    def read_attn_out(self, t: int, frame_i: int, layer: str):
+        path = self._seq_path(t, frame_i, layer, "attn_out")
+        return self._read_tensor(path)
 
     def read_qry(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "qry")
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_key(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "key")
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_val(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "val")
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
 
 # ---

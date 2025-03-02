@@ -1,24 +1,11 @@
 from typing import Dict, List, Tuple
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-import torchvision.transforms.functional as TF
 from einops import rearrange
-from jaxtyping import Float
 from pytorch3d.io import load_obj
-from pytorch3d.ops import interpolate_face_attributes
-from pytorch3d.renderer import (
-    CamerasBase,
-    FoVPerspectiveCameras,
-    MeshRasterizer,
-    RasterizationSettings,
-)
-from pytorch3d.structures import Meshes
 from torch import Tensor
-
-from text3d2video.rendering import make_feature_renderer
-from text3d2video.utilities.camera_placement import turntable_extrinsics
-from text3d2video.utilities.mesh_processing import normalize_meshes
 
 
 def read_obj_uvs(obj_path: str, device="cuda"):
@@ -144,3 +131,9 @@ def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     inverse, perm = inverse.flip([0]), perm.flip([0])
     unique_indices = inverse.new_empty(unique.size(0)).scatter_(0, inverse, perm)
     return unique, unique_indices
+
+
+def create_object_array(data: List, shape: Tuple) -> List:
+    arr = np.empty(shape, dtype=object)
+    arr.fill(data)
+    return arr

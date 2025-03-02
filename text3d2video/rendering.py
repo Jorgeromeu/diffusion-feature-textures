@@ -22,7 +22,10 @@ class FeatureShader(nn.Module):
 
     def forward(self, fragments, meshes: Meshes, **kwargs):
         colors = meshes.sample_textures(fragments)
-        return colors[:, :, :, 0, :]
+        mask = fragments.pix_to_face >= 0
+        output = torch.zeros_like(colors)
+        output[mask] = colors[mask]
+        return output[:, :, :, 0, :]
 
 
 def normalize_depth_map(depth):

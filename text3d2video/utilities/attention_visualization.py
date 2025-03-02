@@ -82,7 +82,7 @@ def concatenate_images(images: List[Image]):
 
 def coord_to_pixel(coord, size):
     """
-    Convert normalized coordinates to pixel coordinates
+    Convert cartesian coordinate to pixel coordinates
     :param coord: (2,) tensor of normalized coordinates [0,1]
     :param size: (2,) tensor of image size
     """
@@ -173,7 +173,12 @@ def add_pixel_marker(
     return ax.add_patch(rect)
 
 
-def compute_attn_weights(qrys, keys, temperature=1, device="cuda"):
+def compute_attn_weights(
+    qrys: Float[Tensor, "b t d"],
+    keys: Float[Tensor, "b t d"],
+    temperature=1,
+    device="cuda",
+) -> Float[Tensor, "b t_q t_kv"]:
     """
     Compute attention weights for key/qry pair
     :param qrys: (b, t, d) tensor of queries
