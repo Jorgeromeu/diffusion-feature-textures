@@ -16,4 +16,7 @@ animations:
     { artifact_tag: "booty:latest", n_frames: 20 },
     { artifact_tag: "rumba:latest", n_frames: 20 },
     { artifact_tag: "flair:latest", n_frames: 20 },
+    { artifact_tag: "mma:latest", n_frames: 20 },
+    { artifact_tag: "kick:latest", n_frames: 20 },
+    { artifact_tag: "backflip:latest", n_frames: 20 },
   ]

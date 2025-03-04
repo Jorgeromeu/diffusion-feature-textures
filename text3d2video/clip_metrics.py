@@ -21,7 +21,7 @@ class CLIPMetrics:
         )
         self.processor = CLIPProcessor.from_pretrained(model_repo)
 
-    def _get_clip_output(self, video: VideoArtifact):
+    def get_clip_output(self, video: VideoArtifact):
         # get prompt
         generation_run = video.logged_by()
         prompt = OmegaConf.create(generation_run.config).prompt
@@ -38,7 +38,7 @@ class CLIPMetrics:
         return outputs
 
     def prompt_fidelity(self, video: VideoArtifact):
-        outs = self._get_clip_output(video)
+        outs = self.get_clip_output(video)
 
         image_embeds = outs.image_embeds
         text_embed = outs.text_embeds[0]
@@ -54,7 +54,7 @@ class CLIPMetrics:
         return average_sim
 
     def frame_consistency(self, video: VideoArtifact):
-        outs = self._get_clip_output(video)
+        outs = self.get_clip_output(video)
         image_embeds = outs.image_embeds
 
         similarities = []
