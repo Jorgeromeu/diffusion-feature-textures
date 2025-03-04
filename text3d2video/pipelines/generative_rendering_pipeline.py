@@ -17,7 +17,7 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 )
 from text3d2video.backprojection import (
     aggregate_spatial_features_dict,
-    project_visible_verts_to_camera,
+    project_visible_texels_to_camera,
     rasterize_and_render_vert_features_dict,
 )
 from text3d2video.noise_initialization import NoiseInitializer
@@ -215,12 +215,21 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         )
 
         # precompute visible-vert rasterization for each frame
-        vert_xys = []
-        vert_indices = []
+        texel_xys = []
+        texel_uvs = []
         for cam, mesh in zip(cameras, meshes):
-            xys, idxs = project_visible_verts_to_camera(mesh, cam)
-            vert_xys.append(xys)
-            vert_indices.append(idxs)
+            xys, uvs = project_visible_texels_to_camera(
+                mesh, cam, verts_uvs, faces_uvs, 64
+            )
+            texel_xys.append(xys)
+            texel_uvs.append(uvs)
+
+        # vert_xys = []
+        # vert_indices = []
+        # for cam, mesh in zip(cameras, meshes):
+        #     xys, idxs = project_visible_verts_to_camera(mesh, cam)
+        #     vert_xys.append(xys)
+        #     vert_indices.append(idxs)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
@@ -247,8 +256,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             )
 
             # unify spatial features across keyframes as vertex features
-            kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
-            kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
+            # kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
+            # kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
+
+            kf_texel_xys = [texel_xys[i] for i in kf_indices.tolist()]
+            kf_texel_uvs = [texel_uvs[i] for i in kf_indices.tolist()]
 
             aggregated_3d_features = aggregate_spatial_features_dict(
                 post_attn_features,
