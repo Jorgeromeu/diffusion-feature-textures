@@ -379,4 +379,6 @@ def main_exp_video(
     if not with_labels:
         labels = None
 
+    print(labels)
+
     return video_grid(clips, x_labels=labels)

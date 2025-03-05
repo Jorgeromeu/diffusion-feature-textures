@@ -62,8 +62,8 @@ class AnimationArtifact(ArtifactWrapper):
         Returns the UV data for the mesh.
         :return: Tuple of (verts_uvs, faces_uvs)
         """
-        verts_uvs = torch.load(self._verts_uvs_path(), weights_only=False)
-        faces_uvs = torch.load(self._faces_uvs_path(), weights_only=False)
+        verts_uvs = torch.load(self._verts_uvs_path())
+        faces_uvs = torch.load(self._faces_uvs_path())
         return verts_uvs.to(device), faces_uvs.to(device)
 
     def load_frames(
