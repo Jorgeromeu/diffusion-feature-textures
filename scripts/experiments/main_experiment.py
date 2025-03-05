@@ -6,8 +6,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
+from moviepy.editor import VideoClip
 from omegaconf import DictConfig, OmegaConf
-from sympy import per
 
 import wandb_util.wandb_util as wbu
 from scripts.run_generative_rendering import (
@@ -179,11 +179,6 @@ class MainExperiment(wbu.Experiment):
         )
         return runs_grouped
 
-    def get_output_video(self, run):
-        for art in run.logged_artifacts():
-            if art.type == "video":
-                return VideoArtifact.from_wandb_artifact(art)
-
     def get_output_videos(self, per_frame_run, gr_run, rd_run):
         # find aggr and video artifacts
         for art in rd_run.logged_artifacts():
@@ -343,9 +338,45 @@ def uv_mse(cams, meshes, frames, verts_uvs, faces_uvs, texture_res=512):
     return torch.mean(mse)
 
 
-def main_exp_video(groups: np.array):
-    def get_clip(r: VideoGenerationRun):
-        return VideoGenerationRun(r).get_logged_video_art().get_moviepy_clip
+def main_exp_video(
+    groups: np.array, add_depth=True, pad_lengths=True, with_labels=False
+):
+    runs = np.vectorize(VideoGenerationRun)(groups)
 
-    clips = np.vectorize(get_clip)(groups)
-    return video_grid(clips)
+    labels = ["ControlNet", "Generative Rendering", "Ours"]
+
+    def get_clip(r: VideoGenerationRun):
+        return r.get_logged_video_art().get_moviepy_clip()
+
+    clips = np.vectorize(get_clip)(runs)
+
+    if add_depth:
+        # get depth clips
+        controlnet_runs = runs[:, 0]
+
+        def get_depth_clip(r: VideoGenerationRun):
+            _, meshes, cams = r.get_frames_meshes_cams()
+            depth_frames = render_depth_map(meshes, cams)
+            return pil_frames_to_clip(depth_frames, clips[0][0].fps)
+
+        depth_clips = np.vectorize(get_depth_clip)(controlnet_runs)
+
+        clips = np.hstack([depth_clips[:, None], clips])
+        labels += [""]
+
+    if pad_lengths:
+
+        def get_duration(clip: VideoClip):
+            return clip.duration
+
+        durations = np.vectorize(get_duration)(clips)
+        max_duration = np.max(durations)
+
+        clips = np.vectorize(lambda c: extend_clip_to_match_duration(c, max_duration))(
+            clips
+        )
+
+    if not with_labels:
+        labels = None
+
+    return video_grid(clips, x_labels=labels)

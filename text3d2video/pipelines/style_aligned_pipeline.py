@@ -18,6 +18,7 @@ from text3d2video.artifacts.diffusion_data import (
 from text3d2video.attn_processors.style_aligned_attn import (
     StyleAlignedAttentionProcessor,
 )
+from text3d2video.noise_initialization import FixedNoiseInitializer
 from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
 
 
@@ -67,6 +68,15 @@ class StyleAlignedPipeline(BaseStableDiffusionPipeline):
         scheduler: UniPCMultistepScheduler,
     ):
         super().__init__(vae, text_encoder, tokenizer, unet, scheduler)
+
+    def prepare_latents(self, batch_size: int, generator=None):
+        noise_init = FixedNoiseInitializer()
+        return noise_init.initial_noise(
+            generator=generator,
+            device=self.device,
+            dtype=self.dtype,
+            n_frames=batch_size,
+        )
 
     @torch.no_grad()
     def __call__(
