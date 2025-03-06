@@ -7,6 +7,7 @@ from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
+    MeshRenderer,
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
@@ -16,13 +17,14 @@ from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
 from text3d2video.backprojection import (
-    aggregate_spatial_features_dict,
+    aggregate_views_uv_texture,
+    make_repeated_uv_texture,
     project_visible_texels_to_camera,
-    rasterize_and_render_vert_features_dict,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
-from text3d2video.rendering import render_depth_map
+from text3d2video.rendering import TextureShader, make_mesh_rasterizer, render_depth_map
+from text3d2video.util import map_dict
 
 
 # pylint: disable=too-many-instance-attributes
@@ -215,21 +217,16 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         )
 
         # precompute visible-vert rasterization for each frame
+
+        uv_res = 100
         texel_xys = []
         texel_uvs = []
         for cam, mesh in zip(cameras, meshes):
             xys, uvs = project_visible_texels_to_camera(
-                mesh, cam, verts_uvs, faces_uvs, 64
+                mesh, cam, verts_uvs, faces_uvs, uv_res, raster_res=2000
             )
             texel_xys.append(xys)
             texel_uvs.append(uvs)
-
-        # vert_xys = []
-        # vert_indices = []
-        # for cam, mesh in zip(cameras, meshes):
-        #     xys, idxs = project_visible_verts_to_camera(mesh, cam)
-        #     vert_xys.append(xys)
-        #     vert_indices.append(idxs)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
@@ -255,34 +252,64 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 t,
             )
 
-            # unify spatial features across keyframes as vertex features
-            # kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
-            # kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
+            # TODO directly return unstacked
+            uncond_post_attn_features = {
+                key: f[0] for key, f in post_attn_features.items()
+            }
+            cond_post_attn_features = {
+                key: f[1] for key, f in post_attn_features.items()
+            }
+
+            # calculate resolution for each layer
+            layer_resolutions = map_dict(post_attn_features, lambda l, x: x.shape[-1])
 
             kf_texel_xys = [texel_xys[i] for i in kf_indices.tolist()]
             kf_texel_uvs = [texel_uvs[i] for i in kf_indices.tolist()]
 
-            aggregated_3d_features = aggregate_spatial_features_dict(
-                post_attn_features,
-                meshes.num_verts_per_mesh()[0],
-                kf_vert_xys,
-                kf_vert_indices,
-            )
+            def aggregate(layer, features):
+                uv_map_first = aggregate_views_uv_texture(
+                    features,
+                    uv_res,
+                    kf_texel_xys,
+                    kf_texel_uvs,
+                    interpolation_mode="bilinear",
+                ).to(torch.float32)
 
-            layer_resolutions = {
-                layer: feature.shape[-1]
-                for layer, feature in post_attn_features.items()
-            }
+                return uv_map_first
+
+            aggregated_uncond = map_dict(uncond_post_attn_features, aggregate)
+            aggregated_cond = map_dict(cond_post_attn_features, aggregate)
 
             # do denoising in chunks
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
-                chunk_feature_images = rasterize_and_render_vert_features_dict(
-                    aggregated_3d_features,
-                    meshes[chunk_frame_indices],
-                    cameras[chunk_frame_indices],
-                    resolutions=layer_resolutions,
-                )
+                chunk_cams = cameras[chunk_frame_indices]
+                chunk_meshes = meshes[chunk_frame_indices]
+
+                def render(layer, texture):
+                    tex = make_repeated_uv_texture(
+                        texture, faces_uvs, verts_uvs, len(chunk_cams)
+                    )
+                    tex.sampling_mode = "bilinear"
+
+                    rasterizer = make_mesh_rasterizer(
+                        cameras=chunk_cams, resolution=layer_resolutions[layer]
+                    )
+                    shader = TextureShader()
+                    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+
+                    render_meshes = chunk_meshes.clone()
+                    render_meshes.textures = tex
+                    return renderer(render_meshes)
+
+                renders_uncond = map_dict(aggregated_uncond, render)
+                renders_cond = map_dict(aggregated_cond, render)
+
+                feature_images = {}
+                for layer in uncond_post_attn_features.keys():
+                    feature_images[layer] = torch.stack(
+                        [renders_uncond[layer], renders_cond[layer]]
+                    )
 
                 # Diffusion step #2 with pre and post attn feature injection
                 # get chunk inputs
@@ -296,7 +323,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     chunk_depth_maps,
                     t,
                     pre_attn_features,
-                    chunk_feature_images,
+                    feature_images,
                     chunk_frame_indices,
                 )
                 noise_preds.append(noise_pred)

@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Tuple
+from typing import List, Tuple
 
 import torch
 from einops import rearrange
@@ -15,7 +15,7 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import TextureShader, make_mesh_rasterizer
+from text3d2video.rendering import TextureShader
 from text3d2video.util import sample_feature_map_ndc, unique_with_indices
 
 # Inverse Rendering
@@ -215,7 +215,7 @@ def aggregate_views_uv_texture_mean(
     feature_dim = feature_maps.shape[1]
 
     uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
-    counts = torch.zeros(uv_resolution, uv_resolution)
+    counts = torch.zeros(uv_resolution, uv_resolution).to(feature_maps.device)
 
     for i, feature_map in enumerate(feature_maps):
         xy_coords = texel_xys[i]
@@ -239,9 +239,6 @@ def aggregate_views_uv_texture_mean(
     uv_map /= counts_prime.unsqueeze(-1)
 
     return uv_map
-
-
-# GR Aggregation, combine mean and inpainted texture
 
 
 def gr_aggregate_views_uv_texture(
@@ -301,18 +298,24 @@ def gr_aggregate_views_vert_texture(
 # Rendering
 
 
+# TODO delete
 def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragments):
     vert_features = vert_features.unsqueeze(0).expand(len(meshes), -1, -1)
     texture = TexturesVertex(vert_features)
+
+    # render_textures(texture, fragments)
+    # print(fragments.pix_to_face.shape)
+    # print(vert_features.shape)
+
     render_meshes = meshes.clone()
     render_meshes.textures = texture
     shader = TextureShader("cuda")
     render = shader(fragments, render_meshes)
     render = rearrange(render, "b h w c -> b c h w")
-
     return render
 
 
+# TODO delete
 def rasterize_and_render_vt_features(
     vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
 ):
@@ -327,72 +330,15 @@ def rasterize_and_render_vt_features(
     return render
 
 
-def rasterize_and_render_texture(
-    texture: TexturesUV, meshes: Meshes, cams: CamerasBase
+def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
+    extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
+    return TexturesVertex(extended_vt_features)
+
+
+def make_repeated_uv_texture(
+    uv_map: Float[Tensor, "h w c"], faces_uvs: Tensor, verts_uvs: Tensor, N=1
 ):
-    render_meshes = meshes.clone()
-    render_texture = texture.clone()
-    render_texture = render_texture.extend(len(meshes))
-    render_meshes.textures = render_texture
-
-    rasterizer = make_mesh_rasterizer()
-    fragments = rasterizer(render_meshes, cameras=cams)
-
-    shader = TextureShader()
-    render = shader(fragments, render_meshes)
-    render = rearrange(render, "b h w c -> b c h w")
-
-    return render
-
-
-# all operate on dicts
-
-
-def diffusion_dict_map(
-    all_features: Dict[str, Tensor], f: Callable
-) -> Dict[str, Tensor]:
-    all_out_features = {}
-
-    """
-    Utility for applying a per-element function to a dictionary of features for each frame
-    """
-
-    # iterate over modules
-    for module, module_features in all_features.items():
-        stacked_out_features = []
-        # iterate over batches
-        for batch_features in module_features:
-            # apply function to batch of features
-            out_features = f(batch_features, module)
-            stacked_out_features.append(out_features)
-        stacked_out_features = torch.stack(stacked_out_features)
-        all_out_features[module] = stacked_out_features
-    return all_out_features
-
-
-def aggregate_spatial_features_dict(
-    spatial_diffusion_features: Dict[str, Float[Tensor, "n c h w"]],
-    n_vertices: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-) -> Dict[str, Float[Tensor, "b v c"]]:
-    return diffusion_dict_map(
-        spatial_diffusion_features,
-        lambda feature_maps, _: gr_aggregate_views_vert_texture(
-            feature_maps, n_vertices, vertex_positions, vertex_indices
-        ),
-    )
-
-
-def rasterize_and_render_vert_features_dict(
-    aggregated_features: Dict[str, Float[Tensor, "b v c"]],
-    meshes: Meshes,
-    cams: CamerasBase,
-    resolutions: Dict[str, int] = None,
-):
-    return diffusion_dict_map(
-        aggregated_features,
-        lambda vt_ft, module: rasterize_and_render_vt_features(
-            vt_ft, meshes, cams, resolution=resolutions[module]
-        ),
-    )
+    extended_uv_map = uv_map.unsqueeze(0).expand(N, -1, -1, -1)
+    extended_faces_uvs = faces_uvs.unsqueeze(0).expand(N, -1, -1)
+    extended_verts_uvs = verts_uvs.unsqueeze(0).expand(N, -1, -1)
+    return TexturesUV(extended_uv_map, extended_faces_uvs, extended_verts_uvs)
