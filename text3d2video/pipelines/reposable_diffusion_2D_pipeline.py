@@ -85,20 +85,7 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
             spatial_post_attn_extraction_paths=config.spatial_extraction_layers,
         )
 
-        controlnet_attn_processor = ExtractionInjectionAttn(
-            self.controlnet,
-            do_spatial_qry_extraction=config.do_qry_injection_controlnet,
-            do_spatial_post_attn_extraction=config.do_post_attn_injection_controlnet,
-            do_kv_extraction=config.do_kv_injection_controlnet,
-            attend_to_self_kv=False,
-            feature_blend_alpha=config.feature_blend_alpha,
-            kv_extraction_paths=config.kv_extraction_layers,
-            spatial_qry_extraction_paths=config.controlnet_layers,
-            spatial_post_attn_extraction_paths=config.controlnet_layers,
-        )
-
         self.unet.set_attn_processor(unet_attn_processor)
-        self.controlnet.set_attn_processor(controlnet_attn_processor)
 
         # denoising loop
         for i, t in enumerate(tqdm(self.scheduler.timesteps)):
@@ -115,7 +102,6 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
             src_latents_batched = rearrange(src_latents, "b f c h w -> (b f) c h w")
             src_embeddings_batched = rearrange(src_embeddings, "b f t d -> (b f) t d")
 
-            controlnet_attn_processor.set_extraction_mode()
             processed_ctrl_image = self.preprocess_controlnet_images([src_depth] * 2)
             down_residuals, mid_residual = self.controlnet(
                 src_latents_batched,
@@ -127,9 +113,6 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
                 return_dict=False,
             )
 
-            controlnet_kv_features = controlnet_attn_processor.kv_features
-            controlnet_qrys = controlnet_attn_processor.spatial_qry_features
-
             unet_attn_processor.set_extraction_mode()
             noise_preds_src = self.unet(
                 src_latents_batched,
@@ -138,7 +121,6 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
                 down_block_additional_residuals=down_residuals,
                 encoder_hidden_states=src_embeddings_batched,
             ).sample
-
             noise_preds_src = rearrange(
                 noise_preds_src, "(b f) c h w -> b f c h w", b=2
             )
@@ -155,7 +137,6 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
                 warped = torch.stack(warped)
                 return warped
 
-            warped_controlnet_qrys = diffusion_dict_map(controlnet_qrys, warp_to_tgts)
             warped_unet_qrys = diffusion_dict_map(unet_qrys, warp_to_tgts)
             warped_unet_post_attn = diffusion_dict_map(unet_post_attn, warp_to_tgts)
 
@@ -165,12 +146,6 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
             tgt_embeddings_batched = rearrange(tgt_embeddings, "b f t d -> (b f) t d")
 
             # Target feature extraction for loss calculation
-
-            controlnet_attn_processor.set_injection_mode(
-                pre_attn_features=controlnet_kv_features,
-                qry_features=warped_controlnet_qrys,
-            )
-
             processed_ctrl_image = self.preprocess_controlnet_images(tgt_depths * 2)
             down_residuals, mid_residual = self.controlnet(
                 tgt_latents_batched,
@@ -195,10 +170,20 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
                 down_block_additional_residuals=down_residuals,
                 encoder_hidden_states=tgt_embeddings_batched,
             ).sample
-
             noise_preds_tgt = rearrange(
                 noise_preds_tgt, "(b f) c h w -> b f c h w", b=2
             )
+
+            # noise_preds_tgt_no_injection = self.unet(
+            #     tgt_latents_batched,
+            #     t,
+            #     mid_block_additional_residual=mid_residual,
+            #     down_block_additional_residuals=down_residuals,
+            #     encoder_hidden_states=tgt_embeddings_batched,
+            # ).sample
+            # noise_preds_tgt_no_injection = rearrange(
+            #     noise_preds_tgt, "(b f) c h w -> b f c h w", b=2
+            # )
 
             noise_preds = torch.cat([noise_preds_src, noise_preds_tgt], dim=1)
 
