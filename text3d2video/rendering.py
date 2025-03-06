@@ -1,33 +1,34 @@
 import torch
 import torchvision.transforms.functional as TF
+from einops import rearrange
+from jaxtyping import Float
 from pytorch3d.renderer import (
-    BlendParams,
-    CamerasBase,
     MeshRasterizer,
-    MeshRenderer,
     RasterizationSettings,
+    TexturesUV,
+    TexturesVertex,
 )
 from pytorch3d.structures import Meshes
-from torch import nn
+from torch import Tensor, nn
 
 
-class FeatureShader(nn.Module):
+class TextureShader(nn.Module):
     """
-    Simple shader that returns the texture features as the output, no shading
+    Simple shader, that returns textured colors of mesh, no shading
     """
 
-    def __init__(self, device="cuda", blend_params=BlendParams()):
+    def __init__(self, device="cuda"):
         super().__init__()
         self.device = device
-        self.blend_params = blend_params
 
     def forward(self, fragments, meshes: Meshes, **kwargs):
         colors = meshes.sample_textures(fragments)
-        valid_max = fragments.pix_to_face >= 0
-        blended_texels = torch.zeros_like(colors)
-        blended_texels[valid_max] = colors[valid_max]
-        # TODO blending
-        return blended_texels[:, :, :, 0, :]
+        mask = fragments.pix_to_face > 0
+        output = torch.zeros_like(colors)
+        output[mask] = colors[mask]
+        output = output[:, :, :, 0, :]
+        output = rearrange(output, "b h w c -> b c h w")
+        return output
 
 
 def normalize_depth_map(depth):
@@ -44,9 +45,18 @@ def normalize_depth_map(depth):
     return depth
 
 
-def make_mesh_rasterizer(cameras=None, resolution=512):
+def make_mesh_rasterizer(
+    cameras=None,
+    resolution=512,
+    faces_per_pixel=1,
+    blur_radius=0,
+    bin_size=0,
+):
     raster_settings = RasterizationSettings(
-        image_size=resolution, faces_per_pixel=1, blur_radius=0
+        image_size=resolution,
+        faces_per_pixel=faces_per_pixel,
+        blur_radius=blur_radius,
+        bin_size=bin_size,
     )
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
     return rasterizer
@@ -69,17 +79,15 @@ def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
     return all_depth_maps
 
 
-def make_feature_renderer(cameras: CamerasBase, resolution: int, device="cuda"):
-    # create a rasterizer
-    raster_settings = RasterizationSettings(
-        image_size=resolution, blur_radius=0.0, faces_per_pixel=3, bin_size=0
-    )
+def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
+    extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
+    return TexturesVertex(extended_vt_features)
 
-    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings).to(
-        device
-    )
 
-    shader = FeatureShader()
-    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
-
-    return renderer
+def make_repeated_uv_texture(
+    uv_map: Float[Tensor, "h w c"], faces_uvs: Tensor, verts_uvs: Tensor, N=1
+):
+    extended_uv_map = uv_map.unsqueeze(0).expand(N, -1, -1, -1)
+    extended_faces_uvs = faces_uvs.unsqueeze(0).expand(N, -1, -1)
+    extended_verts_uvs = verts_uvs.unsqueeze(0).expand(N, -1, -1)
+    return TexturesUV(extended_uv_map, extended_faces_uvs, extended_verts_uvs)

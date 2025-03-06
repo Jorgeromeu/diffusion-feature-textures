@@ -1,20 +1,16 @@
-from typing import Callable, Dict, List, Tuple
+from typing import List, Tuple
 
 import torch
-from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     CamerasBase,
     MeshRasterizer,
     RasterizationSettings,
-    TexturesVertex,
 )
-from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import FeatureShader
 from text3d2video.util import sample_feature_map_ndc, unique_with_indices
 
 # Inverse Rendering
@@ -121,7 +117,7 @@ def project_visible_texels_to_camera(
 # Aggregation
 
 
-def aggregate_feature_maps_to_vert_texture(
+def aggregate_views_vert_texture(
     feature_maps: Float[Tensor, "n c h w"],
     n_verts: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
@@ -166,11 +162,11 @@ def aggregate_feature_maps_to_vert_texture(
     return vert_features
 
 
-def aggregate_feature_maps_to_uv_texture(
+def aggregate_views_uv_texture(
     feature_maps: Float[Tensor, "n c h w"],
     uv_resolution: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
+    texel_xys: List[Float[Tensor, "v 3"]],
+    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
     interpolation_mode="bilinear",
 ):
     # initialize empty uv map
@@ -178,8 +174,47 @@ def aggregate_feature_maps_to_uv_texture(
     uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
 
     for i, feature_map in enumerate(feature_maps):
-        xy_coords = vertex_positions[i]
-        uv_pix_coords = vertex_indices[i]
+        xys = texel_xys[i]
+        uvs = texel_uvs[i]
+
+        # mask of unfilled texels
+        mask = uv_map.sum(dim=-1) > 0
+        mask = ~mask
+
+        unfilled_indices = mask[uvs[:, 1], uvs[:, 0]]
+        empty_uvs = uvs[unfilled_indices]
+        empty_xys = xys[unfilled_indices]
+
+        # sample features
+        colors = sample_feature_map_ndc(
+            feature_map,
+            empty_xys,
+            mode=interpolation_mode,
+        ).to(uv_map)
+
+        # update uv map
+        uv_map[empty_uvs[:, 1], empty_uvs[:, 0]] = colors
+
+    # average features
+    return uv_map
+
+
+def aggregate_views_uv_texture_mean(
+    feature_maps: Float[Tensor, "n c h w"],
+    uv_resolution: int,
+    texel_xys: List[Float[Tensor, "v 3"]],
+    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
+    interpolation_mode="bilinear",
+):
+    # initialize empty uv map
+    feature_dim = feature_maps.shape[1]
+
+    uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
+    counts = torch.zeros(uv_resolution, uv_resolution).to(feature_maps.device)
+
+    for i, feature_map in enumerate(feature_maps):
+        xy_coords = texel_xys[i]
+        uv_pix_coords = texel_uvs[i]
 
         # sample features
         colors = sample_feature_map_ndc(
@@ -190,119 +225,12 @@ def aggregate_feature_maps_to_uv_texture(
 
         # update uv map
         uv_map[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] = colors
+        counts[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] += 1
 
     # average features
+
+    # clamp so lowest count is 1
+    counts_prime = torch.clamp(counts, min=1)
+    uv_map /= counts_prime.unsqueeze(-1)
+
     return uv_map
-
-
-def aggregate_spatial_features(
-    feature_maps: Float[Tensor, "n c h w"],
-    n_verts: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-):
-    vert_ft_mean = aggregate_feature_maps_to_vert_texture(
-        feature_maps,
-        n_verts,
-        vertex_positions,
-        vertex_indices,
-        mode="bilinear",
-        aggregation_type="mean",
-    )
-
-    vert_ft_first = aggregate_feature_maps_to_vert_texture(
-        feature_maps,
-        n_verts,
-        vertex_positions,
-        vertex_indices,
-        mode="bilinear",
-        aggregation_type="first",
-    )
-
-    w_mean = 0.5
-    w_inpainted = 1 - w_mean
-    vert_features = w_mean * vert_ft_mean + w_inpainted * vert_ft_first
-
-    return vert_features
-
-
-# Rendering
-
-
-def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragments):
-    vert_features = vert_features.unsqueeze(0).expand(len(meshes), -1, -1)
-    texture = TexturesVertex(vert_features)
-    render_meshes = meshes.clone()
-    render_meshes.textures = texture
-    shader = FeatureShader("cuda")
-    render = shader(fragments, render_meshes)
-    render = rearrange(render, "b h w c -> b c h w")
-
-    return render
-
-
-def rasterize_and_render_vt_features(
-    vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
-):
-    raster_settings = RasterizationSettings(
-        image_size=resolution, faces_per_pixel=1, bin_size=0
-    )
-    rasterizer = MeshRasterizer(cameras=cams, raster_settings=raster_settings)
-
-    fragments = rasterizer(meshes, cameras=cams)
-    render = render_vert_features(vert_features, meshes, fragments)
-
-    return render
-
-
-# all operate on dicts
-
-
-def diffusion_dict_map(
-    all_features: Dict[str, Tensor], f: Callable
-) -> Dict[str, Tensor]:
-    all_out_features = {}
-
-    """
-    Utility for applying a per-element function to a dictionary of features for each frame
-    """
-
-    # iterate over modules
-    for module, module_features in all_features.items():
-        stacked_out_features = []
-        # iterate over batches
-        for batch_features in module_features:
-            # apply function to batch of features
-            out_features = f(batch_features, module)
-            stacked_out_features.append(out_features)
-        stacked_out_features = torch.stack(stacked_out_features)
-        all_out_features[module] = stacked_out_features
-    return all_out_features
-
-
-def aggregate_spatial_features_dict(
-    spatial_diffusion_features: Dict[str, Float[Tensor, "n c h w"]],
-    n_vertices: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-) -> Dict[str, Float[Tensor, "b v c"]]:
-    return diffusion_dict_map(
-        spatial_diffusion_features,
-        lambda feature_maps, _: aggregate_spatial_features(
-            feature_maps, n_vertices, vertex_positions, vertex_indices
-        ),
-    )
-
-
-def rasterize_and_render_vert_features_dict(
-    aggregated_features: Dict[str, Float[Tensor, "b v c"]],
-    meshes: Meshes,
-    cams: CamerasBase,
-    resolutions: Dict[str, int] = None,
-):
-    return diffusion_dict_map(
-        aggregated_features,
-        lambda vt_ft, module: rasterize_and_render_vt_features(
-            vt_ft, meshes, cams, resolution=resolutions[module]
-        ),
-    )
