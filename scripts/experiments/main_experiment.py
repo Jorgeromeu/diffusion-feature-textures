@@ -28,7 +28,6 @@ from text3d2video.utilities.video_util import (
     extend_clip_to_match_duration,
     pil_frames_to_clip,
 )
-from wandb.apis.public import Run
 from wandb_util.experiment_util import (
     object_to_instantiate_config,
 )

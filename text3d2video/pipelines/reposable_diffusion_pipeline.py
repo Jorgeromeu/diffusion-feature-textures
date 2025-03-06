@@ -18,14 +18,18 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 )
 from text3d2video.backprojection import (
     aggregate_views_vert_texture,
-    make_repeated_vert_texture,
     project_visible_verts_to_camera,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
-from text3d2video.rendering import TextureShader, make_mesh_rasterizer, render_depth_map
+from text3d2video.rendering import (
+    TextureShader,
+    make_mesh_rasterizer,
+    make_repeated_vert_texture,
+    render_depth_map,
+)
 from text3d2video.util import map_dict
 
 

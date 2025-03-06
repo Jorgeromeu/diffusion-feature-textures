@@ -8,8 +8,7 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.backprojection import make_repeated_uv_texture
-from text3d2video.rendering import TextureShader
+from text3d2video.rendering import TextureShader, make_repeated_uv_texture
 
 
 class NoiseInitializer:

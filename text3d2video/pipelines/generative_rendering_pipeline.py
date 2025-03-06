@@ -18,12 +18,16 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 )
 from text3d2video.backprojection import (
     aggregate_views_uv_texture,
-    make_repeated_uv_texture,
     project_visible_texels_to_camera,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
-from text3d2video.rendering import TextureShader, make_mesh_rasterizer, render_depth_map
+from text3d2video.rendering import (
+    TextureShader,
+    make_mesh_rasterizer,
+    make_repeated_vert_texture,
+    render_depth_map,
+)
 from text3d2video.util import map_dict
 
 
@@ -261,7 +265,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             }
 
             # calculate resolution for each layer
-            layer_resolutions = map_dict(post_attn_features, lambda l, x: x.shape[-1])
+            layer_resolutions = map_dict(post_attn_features, lambda _, x: x.shape[-1])
 
             kf_texel_xys = [texel_xys[i] for i in kf_indices.tolist()]
             kf_texel_uvs = [texel_uvs[i] for i in kf_indices.tolist()]
@@ -287,7 +291,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 chunk_meshes = meshes[chunk_frame_indices]
 
                 def render(layer, texture):
-                    tex = make_repeated_uv_texture(
+                    tex = make_repeated_vert_texture(
                         texture, faces_uvs, verts_uvs, len(chunk_cams)
                     )
                     tex.sampling_mode = "bilinear"

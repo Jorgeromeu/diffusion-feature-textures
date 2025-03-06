@@ -1,21 +1,16 @@
 from typing import List, Tuple
 
 import torch
-from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     CamerasBase,
     MeshRasterizer,
     RasterizationSettings,
-    TexturesUV,
-    TexturesVertex,
 )
-from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import TextureShader
 from text3d2video.util import sample_feature_map_ndc, unique_with_indices
 
 # Inverse Rendering
@@ -239,106 +234,3 @@ def aggregate_views_uv_texture_mean(
     uv_map /= counts_prime.unsqueeze(-1)
 
     return uv_map
-
-
-def gr_aggregate_views_uv_texture(
-    feature_maps: Float[Tensor, "n c h w"],
-    uv_resolution: int,
-    texel_xys: List[Float[Tensor, "v 3"]],
-    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
-    interpolation_mode="bilinear",
-    mean_weight=0.5,
-):
-    mean_texture = aggregate_views_uv_texture_mean(
-        feature_maps, uv_resolution, texel_xys, texel_uvs, interpolation_mode
-    )
-    inpainted_texture = aggregate_views_uv_texture(
-        feature_maps, uv_resolution, texel_xys, texel_uvs, interpolation_mode
-    )
-
-    w_mean = mean_weight
-    w_inpainted = 1 - w_mean
-    texture = w_mean * mean_texture + w_inpainted * inpainted_texture
-
-    return texture
-
-
-def gr_aggregate_views_vert_texture(
-    feature_maps: Float[Tensor, "n c h w"],
-    n_verts: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-    mean_weight=0.5,
-):
-    vert_ft_mean = aggregate_views_vert_texture(
-        feature_maps,
-        n_verts,
-        vertex_positions,
-        vertex_indices,
-        mode="bilinear",
-        aggregation_type="mean",
-    )
-
-    vert_ft_first = aggregate_views_vert_texture(
-        feature_maps,
-        n_verts,
-        vertex_positions,
-        vertex_indices,
-        mode="bilinear",
-        aggregation_type="first",
-    )
-
-    w_mean = mean_weight
-    w_inpainted = 1 - w_mean
-    vert_features = w_mean * vert_ft_mean + w_inpainted * vert_ft_first
-
-    return vert_features
-
-
-# Rendering
-
-
-# TODO delete
-def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragments):
-    vert_features = vert_features.unsqueeze(0).expand(len(meshes), -1, -1)
-    texture = TexturesVertex(vert_features)
-
-    # render_textures(texture, fragments)
-    # print(fragments.pix_to_face.shape)
-    # print(vert_features.shape)
-
-    render_meshes = meshes.clone()
-    render_meshes.textures = texture
-    shader = TextureShader("cuda")
-    render = shader(fragments, render_meshes)
-    render = rearrange(render, "b h w c -> b c h w")
-    return render
-
-
-# TODO delete
-def rasterize_and_render_vt_features(
-    vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
-):
-    raster_settings = RasterizationSettings(
-        image_size=resolution, faces_per_pixel=1, bin_size=0
-    )
-    rasterizer = MeshRasterizer(cameras=cams, raster_settings=raster_settings)
-
-    fragments = rasterizer(meshes, cameras=cams)
-    render = render_vert_features(vert_features, meshes, fragments)
-
-    return render
-
-
-def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
-    extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
-    return TexturesVertex(extended_vt_features)
-
-
-def make_repeated_uv_texture(
-    uv_map: Float[Tensor, "h w c"], faces_uvs: Tensor, verts_uvs: Tensor, N=1
-):
-    extended_uv_map = uv_map.unsqueeze(0).expand(N, -1, -1, -1)
-    extended_faces_uvs = faces_uvs.unsqueeze(0).expand(N, -1, -1)
-    extended_verts_uvs = verts_uvs.unsqueeze(0).expand(N, -1, -1)
-    return TexturesUV(extended_uv_map, extended_faces_uvs, extended_verts_uvs)
