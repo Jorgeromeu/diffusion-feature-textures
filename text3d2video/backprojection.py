@@ -234,3 +234,29 @@ def aggregate_views_uv_texture_mean(
     uv_map /= counts_prime.unsqueeze(-1)
 
     return uv_map
+
+
+def update_uv_texture(
+    uv_map: Tensor,
+    feature_map: Tensor,
+    texel_xys: Tensor,
+    texel_uvs: Tensor,
+    interpolation="bilinear",
+):
+    # mask of unfilled texels
+    mask = uv_map.sum(dim=-1) > 0
+    mask = ~mask
+
+    unfilled_indices = mask[texel_uvs[:, 1], texel_uvs[:, 0]]
+    empty_uvs = texel_uvs[unfilled_indices]
+    empty_xys = texel_xys[unfilled_indices]
+
+    # sample features
+    colors = sample_feature_map_ndc(
+        feature_map,
+        empty_xys,
+        mode=interpolation,
+    ).to(uv_map)
+
+    # update uv map
+    uv_map[empty_uvs[:, 1], empty_uvs[:, 0]] = colors

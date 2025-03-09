@@ -59,15 +59,30 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         return image
 
+    def controlnet_forward(self, images, latents, t, embeddings, conditioning_scale):
+        processed_images = self.preprocess_controlnet_images(images)
+
+        down_residuals, mid_residual = self.controlnet(
+            latents,
+            t,
+            encoder_hidden_states=embeddings,
+            controlnet_cond=processed_images,
+            conditioning_scale=conditioning_scale,
+            guess_mode=False,
+            return_dict=False,
+        )
+
+        return down_residuals, mid_residual
+
     @torch.no_grad()
     def __call__(
         self,
         prompts: List[str],
         depth_maps: List[Image.Image],
         num_inference_steps=30,
-        guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
-        guess_mode=False,
+        w_joint=1.0,
+        w_text=0.0,
         generator=None,
     ):
         # number of images being generated
@@ -75,7 +90,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         # encode prompt
         cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
-        text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
 
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
@@ -85,60 +99,69 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
-            # duplicate latent for guidance
             latents = self.scheduler.scale_model_input(latents, t)
-            latents_duplicated = torch.cat([latents] * 2)
 
-            if guess_mode:
-                # Do ControlNet pass on cond latents only
-                processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
-                down_residuals, mid_residual = self.controlnet(
-                    latents,
-                    t,
-                    encoder_hidden_states=cond_embeddings,
-                    controlnet_cond=processed_ctrl_images,
-                    conditioning_scale=controlnet_conditioning_scale,
-                    guess_mode=False,
-                    return_dict=False,
-                )
+            # Do 4 passes through UNet:
+            # 0: no condition
+            # 1: text only
+            # 2: depth only
+            # 3: text and depth
 
-                mid_residual = torch.cat([torch.zeros_like(mid_residual), mid_residual])
-                down_residuals = [
-                    torch.cat([torch.zeros_like(residual), residual])
-                    for residual in down_residuals
-                ]
+            # ControlNet pass with cond and uncond embeddings
+            down_residuals, mid_residual = self.controlnet_forward(
+                depth_maps * 2,
+                torch.cat([latents] * 2),
+                t,
+                torch.cat([uncond_embeddings, cond_embeddings]),
+                controlnet_conditioning_scale,
+            )
 
-            # controlnet step
-            else:
-                # Do ControlNet pass on cond and uncond latents
-                processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
-                processed_ctrl_images = torch.cat([processed_ctrl_images] * 2)
-                down_residuals, mid_residual = self.controlnet(
-                    latents_duplicated,
-                    t,
-                    encoder_hidden_states=text_embeddings,
-                    controlnet_cond=processed_ctrl_images,
-                    conditioning_scale=controlnet_conditioning_scale,
-                    guess_mode=False,
-                    return_dict=False,
-                )
+            empty_mid_residual = torch.zeros_like(mid_residual[0:batch_size, ...])
+            empty_down_residuals = [
+                torch.zeros_like(residual[0:batch_size, ...])
+                for residual in down_residuals
+            ]
 
-            # diffusion step, with controlnet residuals
-            noise_pred = self.unet(
-                latents_duplicated,
+            mid_residual = torch.cat(
+                [empty_mid_residual, empty_mid_residual, mid_residual], dim=0
+            )
+            down_residuals = [
+                torch.cat([empty, empty, residual], dim=0)
+                for empty, residual in zip(empty_down_residuals, down_residuals)
+            ]
+
+            # UNet Pass
+            latents_input = torch.cat([latents] * 4, dim=0)
+            embeddings_input = torch.cat(
+                [
+                    uncond_embeddings,
+                    cond_embeddings,
+                    uncond_embeddings,
+                    cond_embeddings,
+                ],
+            )
+
+            noise_pred_all = self.unet(
+                latents_input,
                 t,
                 mid_block_additional_residual=mid_residual,
                 down_block_additional_residuals=down_residuals,
-                encoder_hidden_states=text_embeddings,
+                encoder_hidden_states=embeddings_input,
             ).sample
 
             # preform classifier free guidance
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            guidance_direction = noise_pred_text - noise_pred_uncond
-            noise_pred = noise_pred_uncond + guidance_scale * guidance_direction
+            eps_uncond, eps_text, eps_depth, eps_text_depth = noise_pred_all.chunk(4)
+
+            # eps = eps_depth + 7.5 * (eps_text_depth - eps_depth)
+
+            eps = (
+                eps_uncond
+                + 7.5 * (eps_text - eps_uncond)
+                + 4.5 * (eps_text_depth - eps_uncond)
+            )
 
             # update latents
-            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            latents = self.scheduler.step(eps, t, latents).prev_sample
 
         # decode latents
         return self.decode_latents(latents)

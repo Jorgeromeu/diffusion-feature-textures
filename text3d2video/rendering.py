@@ -87,7 +87,8 @@ def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
 def make_repeated_uv_texture(
     uv_map: Float[Tensor, "h w c"], faces_uvs: Tensor, verts_uvs: Tensor, N=1
 ):
-    extended_uv_map = uv_map.unsqueeze(0).expand(N, -1, -1, -1)
+    extended_uv_map = uv_map.to(torch.float32)  # pt3d requires float32 for textures
+    extended_uv_map = extended_uv_map.unsqueeze(0).expand(N, -1, -1, -1)
     extended_faces_uvs = faces_uvs.unsqueeze(0).expand(N, -1, -1)
     extended_verts_uvs = verts_uvs.unsqueeze(0).expand(N, -1, -1)
     return TexturesUV(extended_uv_map, extended_faces_uvs, extended_verts_uvs)

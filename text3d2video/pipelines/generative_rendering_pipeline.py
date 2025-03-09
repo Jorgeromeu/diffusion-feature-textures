@@ -25,6 +25,7 @@ from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
     make_mesh_rasterizer,
+    make_repeated_uv_texture,
     make_repeated_vert_texture,
     render_depth_map,
 )
@@ -291,7 +292,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 chunk_meshes = meshes[chunk_frame_indices]
 
                 def render(layer, texture):
-                    tex = make_repeated_vert_texture(
+                    tex = make_repeated_uv_texture(
                         texture, faces_uvs, verts_uvs, len(chunk_cams)
                     )
                     tex.sampling_mode = "bilinear"

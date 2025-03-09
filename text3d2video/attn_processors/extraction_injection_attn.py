@@ -269,3 +269,158 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
             attn_out = self._call_injection_mode(attn, hidden_states, attention_mask)
 
         return attn_out
+
+
+class UnifiedAttnProcessor(DefaultAttnProcessor):
+    """
+    General Purpose Attention processor that enables extracting and
+    injecting features in attention layers
+    """
+
+    # extraction settings
+    do_kv_extraction: bool
+    do_spatial_qry_extraction: bool
+    do_spatial_post_attn_extraction: bool
+    kv_extraction_paths: List[str]
+    spatial_qry_extraction_paths: List[str]
+    spatial_post_attn_extraction_paths: List[str]
+
+    # store extracted features here
+    extracted_kvs: Dict[str, Float[Tensor, "b t c"]] = {}
+    extracted_spatial_qrys: Dict[str, Float[Tensor, "b f t c"]] = {}
+    extracted_post_attns: Dict[str, Float[Tensor, "b f t c"]] = {}
+
+    # store injected features here
+    injected_kvs: Dict[str, Float[Tensor, "b t c"]] = {}
+    injected_qrys: Dict[str, Float[Tensor, "b c h w"]] = {}
+    injected_post_attns: Dict[str, Float[Tensor, "b c h w"]] = {}
+
+    def __init__(
+        self,
+        model,
+        do_kv_extraction=False,
+        do_spatial_qry_extraction=False,
+        do_spatial_post_attn_extraction=False,
+        kv_extraction_paths: List[str] = None,
+        spatial_qry_extraction_paths: List[str] = None,
+        spatial_post_attn_extraction_paths: List[str] = None,
+        also_attend_to_self: bool = False,
+        feature_blend_alhpa: bool = 1.0,
+    ):
+        DefaultAttnProcessor.__init__(self, model, 2)
+
+        # by default empty lists
+        kv_extraction_paths = kv_extraction_paths or []
+        spatial_qry_extraction_paths = spatial_qry_extraction_paths or []
+        spatial_post_attn_extraction_paths = spatial_post_attn_extraction_paths or []
+
+        # extraction config
+        self.do_kv_extraction = do_kv_extraction
+        self.do_spatial_qry_extraction = do_spatial_qry_extraction
+        self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
+        self.kv_extraction_paths = kv_extraction_paths
+        self.spatial_qry_extraction_paths = spatial_qry_extraction_paths
+        self.spatial_post_attn_extraction_paths = spatial_post_attn_extraction_paths
+
+        # injection config
+        self.also_attend_to_self = also_attend_to_self
+        self.feature_blend_alpha = feature_blend_alhpa
+
+    def _should_extract_qry(self):
+        return (
+            self.do_spatial_qry_extraction
+            and self._cur_module_path in self.spatial_qry_extraction_paths
+        )
+
+    def _should_extract_post_attn(self):
+        return (
+            self.do_spatial_post_attn_extraction
+            and self._cur_module_path in self.spatial_post_attn_extraction_paths
+        )
+
+    def _should_extract_kv(self):
+        return (
+            self.do_kv_extraction and self._cur_module_path in self.kv_extraction_paths
+        )
+
+    # public facing mode-setting methods
+
+    def clear_injected_features(self):
+        self.injected_kvs = {}
+        self.injected_qrys = {}
+        self.injected_post_attns = {}
+
+    def clear_extracted_features(self):
+        self.extracted_kvs = {}
+        self.extracted_spatial_qrys = {}
+        self.extracted_post_attns = {}
+
+    def disable_all_extraction(self):
+        self.do_kv_extraction = False
+        self.do_spatial_qry_extraction = False
+        self.do_spatial_post_attn_extraction = False
+
+    # functionality
+
+    def _reshape_seq_to_2D(self, sequence):
+        height = int(sqrt(sequence.shape[1]))
+        return rearrange(sequence, "b (h w) c -> b c h w", h=height)
+
+    def _reshape_2D_to_seq(self, feature_maps):
+        return rearrange(feature_maps, "b c h w -> b (h w) c")
+
+    def _call_cross_attn(
+        self, attn, hidden_states, encoder_hidden_states, attention_mask
+    ):
+        qry = attn.to_q(hidden_states)
+
+        kv_hidden_states = encoder_hidden_states
+        if attn.norm_cross is not None:
+            kv_hidden_states = attn.norm_cross(hidden_states)
+
+        key = attn.to_k(kv_hidden_states)
+        val = attn.to_v(kv_hidden_states)
+
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
+
+    def _call_self_attn(self, attn, hidden_states, attention_mask):
+        n_frames = hidden_states.shape[0]
+
+        # read injected kv features
+        injected_kv = self.injected_kvs.get(self._cur_module_path)
+
+        # no kvs provided: attend to self
+        if injected_kv is None:
+            kv_features = hidden_states
+
+        # kvs provided: attend to them
+        else:
+            kv_features = injected_kv
+
+            # concatenate self-hidden states
+            if self.also_attend_to_self:
+                kv_features = torch.cat([hidden_states, kv_features], dim=1)
+
+        # extract kv-features
+        if self._should_extract_kv():
+            self.extracted_kvs[self._cur_module_path] = kv_features
+
+        key = attn.to_k(kv_features)
+        val = attn.to_v(kv_features)
+        qry = attn.to_q(hidden_states)
+
+        # read injected query features
+        injected_qry = self.injected_qrys.get(self._cur_module_path)
+        if injected_qry is not None:
+            qry_square = self._reshape_seq_to_2D(qry)
+            blended = blend_features(
+                qry_square, injected_qry, self.feature_blend_alpha, channel_dim=1
+            )
+            qry = self._reshape_2D_to_seq(blended)
+
+        # extract spatial qry features
+        if self._should_extract_qry():
+            qrys_square = self._reshape_seq_to_2D(qry)
+            self.extracted_spatial_qrys[self._cur_module_path] = qrys_square
+
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
