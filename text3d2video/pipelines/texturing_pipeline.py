@@ -10,7 +10,6 @@ from pytorch3d.renderer import (
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
-from torchmetrics import Dice
 from tqdm import tqdm
 
 from text3d2video.attn_processors.extraction_injection_attn import (
@@ -37,10 +36,6 @@ class TexturingConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: list[str]
-
-
-def classifier_free_guidance(noise_pred_cond, noise_pred_uncond, guidance_scale):
-    return noise_pred_cond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
 
 
 @dataclass
@@ -198,7 +193,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         # render depth maps
         depth_maps = render_depth_map(meshes, cameras, 512)
 
-        uv_res = 100
+        uv_res = 64
         texel_xys = []
         texel_uvs = []
         for cam, view_mesh in zip(cameras, meshes):

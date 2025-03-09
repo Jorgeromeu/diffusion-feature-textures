@@ -4,6 +4,7 @@ from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.renderer import (
     MeshRasterizer,
+    MeshRenderer,
     RasterizationSettings,
     TexturesUV,
     TexturesVertex,
@@ -62,6 +63,23 @@ def make_mesh_rasterizer(
     return rasterizer
 
 
+def make_mesh_renderer(
+    resolution=512, faces_per_pixel=1, blur_radius=0, bin_size=0, shader=None
+):
+    rasterizer = make_mesh_rasterizer(
+        resolution=resolution,
+        faces_per_pixel=faces_per_pixel,
+        blur_radius=blur_radius,
+        bin_size=bin_size,
+    )
+
+    if shader is None:
+        shader = TextureShader()
+
+    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+    return renderer
+
+
 def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
     rasterizer = make_mesh_rasterizer(resolution=resolution)
     indices = torch.arange(0, len(meshes))
@@ -79,16 +97,27 @@ def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
     return all_depth_maps
 
 
-def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
+def make_repeated_vert_texture(
+    vert_features: Float[Tensor, "n c"], N=1, sampling_mode="bilinear"
+):
     extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
-    return TexturesVertex(extended_vt_features)
+    return TexturesVertex(extended_vt_features, sampling_mode)
 
 
 def make_repeated_uv_texture(
-    uv_map: Float[Tensor, "h w c"], faces_uvs: Tensor, verts_uvs: Tensor, N=1
+    uv_map: Float[Tensor, "h w c"],
+    faces_uvs: Tensor,
+    verts_uvs: Tensor,
+    N=1,
+    sampling_mode="bilinear",
 ):
     extended_uv_map = uv_map.to(torch.float32)  # pt3d requires float32 for textures
     extended_uv_map = extended_uv_map.unsqueeze(0).expand(N, -1, -1, -1)
     extended_faces_uvs = faces_uvs.unsqueeze(0).expand(N, -1, -1)
     extended_verts_uvs = verts_uvs.unsqueeze(0).expand(N, -1, -1)
-    return TexturesUV(extended_uv_map, extended_faces_uvs, extended_verts_uvs)
+    return TexturesUV(
+        extended_uv_map,
+        extended_faces_uvs,
+        extended_verts_uvs,
+        sampling_mode=sampling_mode,
+    )

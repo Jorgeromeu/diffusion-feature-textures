@@ -242,21 +242,29 @@ def update_uv_texture(
     texel_xys: Tensor,
     texel_uvs: Tensor,
     interpolation="bilinear",
+    update_unfilled=True,
 ):
     # mask of unfilled texels
-    mask = uv_map.sum(dim=-1) > 0
-    mask = ~mask
 
-    unfilled_indices = mask[texel_uvs[:, 1], texel_uvs[:, 0]]
-    empty_uvs = texel_uvs[unfilled_indices]
-    empty_xys = texel_xys[unfilled_indices]
+    if update_unfilled:
+        mask = uv_map.sum(dim=-1) > 0
+        mask = ~mask
+
+        unfilled_indices = mask[texel_uvs[:, 1], texel_uvs[:, 0]]
+        uvs = texel_uvs[unfilled_indices]
+        xys = texel_xys[unfilled_indices]
+    else:
+        uvs = texel_uvs
+        xys = texel_xys
 
     # sample features
     colors = sample_feature_map_ndc(
         feature_map,
-        empty_xys,
+        xys,
         mode=interpolation,
     ).to(uv_map)
 
     # update uv map
-    uv_map[empty_uvs[:, 1], empty_uvs[:, 0]] = colors
+    uv_map[uvs[:, 1], uvs[:, 0]] = colors
+
+    return uv_map

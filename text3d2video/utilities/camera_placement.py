@@ -96,16 +96,17 @@ def front_facing_extrinsics(degrees=0, xs=0, ys=0, zs=1.5):
 def turntable_extrinsics(
     dists=2,
     angles=0,
+    elev=0,
     vertical=False,
 ) -> FoVPerspectiveCameras:
     dists, angles = broadcast_inputs(dists, angles)
     n = len(angles)
 
     azim = angles
-    elev = [0] * n
+    elevs = [elev] * n
 
     if vertical:
         azim, elev = elev, azim
 
-    R, T = look_at_view_transform(dists, elev, azim)
+    R, T = look_at_view_transform(dists, elevs, azim)
     return R, T
