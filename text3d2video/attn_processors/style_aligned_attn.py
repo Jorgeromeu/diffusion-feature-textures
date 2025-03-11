@@ -68,11 +68,12 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
             ext_hidden_states = extended_attn_kv_hidden_states(
                 hidden_states, chunk_size=2
             )
-            ext_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
-            key = attn.to_k(ext_hidden_states)
-            val = attn.to_v(ext_hidden_states)
+            extended_all = extend_across_frame_dim(ext_hidden_states, n_frames)
 
-        self.write_qkv(qry_self, key, val)
+            key = attn.to_k(extended_all)
+            val = attn.to_v(extended_all)
+
+        # self.write_qkv(qry_self, key, val)
 
         return memory_efficient_attention(attn, key, qry_self, val, attention_mask)
 
@@ -86,7 +87,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         val_self = attn.to_v(hidden_states)
         qry_self = attn.to_q(hidden_states)
 
-        self.write_qkv(qry_self, key_self, val_self)
+        # self.write_qkv(qry_self, key_self, val_self)
 
         return memory_efficient_attention(
             attn, key_self, qry_self, val_self, attention_mask

@@ -25,7 +25,7 @@ from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
     make_mesh_rasterizer,
-    make_repeated_vert_texture,
+    make_repeated_uv_texture,
     render_depth_map,
 )
 from text3d2video.util import map_dict
@@ -189,14 +189,12 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         # set up attn processor
         self.attn_processor = ExtractionInjectionAttn(
             self.unet,
-            do_spatial_qry_extraction=False,
             do_spatial_post_attn_extraction=self.rd_config.do_post_attn_injection,
             do_kv_extraction=self.rd_config.do_pre_attn_injection,
-            attend_to_self_kv=self.rd_config.attend_to_self_kv,
+            also_attend_to_self=self.rd_config.attend_to_self_kv,
             feature_blend_alpha=self.rd_config.feature_blend_alpha,
             kv_extraction_paths=self.rd_config.module_paths,
             spatial_post_attn_extraction_paths=self.rd_config.module_paths,
-            spatial_qry_extraction_paths=[],
             unet_chunk_size=2,
         )
         self.unet.set_attn_processor(self.attn_processor)
@@ -258,10 +256,10 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
             # TODO directly return unstacked
             uncond_post_attn_features = {
-                key: f[0] for key, f in post_attn_features.items()
+                key: f[0 : f.shape[0] // 2] for key, f in post_attn_features.items()
             }
             cond_post_attn_features = {
-                key: f[1] for key, f in post_attn_features.items()
+                key: f[f.shape[0] // 2 :] for key, f in post_attn_features.items()
             }
 
             # calculate resolution for each layer
@@ -291,7 +289,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 chunk_meshes = meshes[chunk_frame_indices]
 
                 def render(layer, texture):
-                    tex = make_repeated_vert_texture(
+                    tex = make_repeated_uv_texture(
                         texture, faces_uvs, verts_uvs, len(chunk_cams)
                     )
                     tex.sampling_mode = "bilinear"

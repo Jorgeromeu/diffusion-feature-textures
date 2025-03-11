@@ -148,7 +148,7 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             do_spatial_qry_extraction=do_qry_extraction,
             do_spatial_post_attn_extraction=do_post_attn_extraction,
             do_kv_extraction=self.rd_config.do_pre_attn_injection,
-            attend_to_self_kv=self.rd_config.attend_to_self_kv,
+            also_attend_to_self=self.rd_config.attend_to_self_kv,
             feature_blend_alpha=self.rd_config.feature_blend_alpha,
             kv_extraction_paths=self.rd_config.module_paths,
             spatial_qry_extraction_paths=qry_extraction_paths,
