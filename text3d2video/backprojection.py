@@ -242,11 +242,11 @@ def update_uv_texture(
     texel_xys: Tensor,
     texel_uvs: Tensor,
     interpolation="bilinear",
-    update_unfilled=True,
+    update_empty_only=True,
 ):
     # mask of unfilled texels
 
-    if update_unfilled:
+    if update_empty_only:
         mask = uv_map.sum(dim=-1) > 0
         mask = ~mask
 

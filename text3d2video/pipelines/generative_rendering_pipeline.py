@@ -26,7 +26,6 @@ from text3d2video.rendering import (
     TextureShader,
     make_mesh_rasterizer,
     make_repeated_uv_texture,
-    make_repeated_vert_texture,
     render_depth_map,
 )
 from text3d2video.util import map_dict
