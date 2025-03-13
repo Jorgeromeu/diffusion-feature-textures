@@ -112,6 +112,12 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         self.spatial_post_attn_features = post_attn_features
         self.spatial_qry_features = qry_features
 
+    def set_no_injection_mode(self):
+        self.mode = AttnMode.FEATURE_INJECTION
+        self.kv_features = {}
+        self.spatial_post_attn_features = {}
+        self.spatial_qry_features = {}
+
     # functionality
 
     def _call_extraction_mode(

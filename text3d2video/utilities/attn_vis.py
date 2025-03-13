@@ -7,7 +7,7 @@ from einops import einsum, rearrange
 from jaxtyping import Float
 from matplotlib.axes import Axes
 from rerun import Image
-from torch import FloatTensor, Tensor
+from torch import Tensor
 
 from text3d2video.utilities.attention_visualization import (
     add_pixel_marker,

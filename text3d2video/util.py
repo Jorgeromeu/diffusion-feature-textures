@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -137,3 +137,7 @@ def create_object_array(data: List, shape: Tuple) -> List:
     arr = np.empty(shape, dtype=object)
     arr.fill(data)
     return arr
+
+
+def map_dict(dict: Dict, callable: Callable):
+    return {k: callable(k, v) for k, v in dict.items()}

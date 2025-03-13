@@ -6,6 +6,7 @@ from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
+    MeshRenderer,
     join_cameras_as_batch,
 )
 from pytorch3d.structures import Meshes, join_meshes_as_batch
@@ -16,15 +17,20 @@ from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
 from text3d2video.backprojection import (
-    aggregate_spatial_features_dict,
+    aggregate_views_vert_texture,
     project_visible_verts_to_camera,
-    rasterize_and_render_vert_features_dict,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
-from text3d2video.rendering import render_depth_map
+from text3d2video.rendering import (
+    TextureShader,
+    make_mesh_rasterizer,
+    make_repeated_vert_texture,
+    render_depth_map,
+)
+from text3d2video.util import map_dict
 
 
 @dataclass
@@ -211,25 +217,50 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 t,
             )
 
-            # aggregate spatial features
-            aggregated_3d_features = aggregate_spatial_features_dict(
-                spatial_features,
-                aggregation_meshes.num_verts_per_mesh()[0],
-                src_vert_xys,
-                src_vert_indices,
-            )
+            # TODO directly return unstacked
+            uncond_spatial_features = map_dict(spatial_features, lambda _, x: x[0])
+            cond_spatial_features = map_dict(spatial_features, lambda _, x: x[1])
 
-            layer_resolutions = {
-                layer: feature.shape[-1] for layer, feature in spatial_features.items()
-            }
+            layer_resolutions = map_dict(spatial_features, lambda _, x: x.shape[-1])
 
-            # injection step on source frames
-            source_feature_images = rasterize_and_render_vert_features_dict(
-                aggregated_3d_features,
-                all_meshes[source_indices],
-                all_cams[source_indices],
-                resolutions=layer_resolutions,
-            )
+            def aggregate(layer, features):
+                n_verts = aggregation_meshes.num_verts_per_mesh()[0]
+                vt_features = aggregate_views_vert_texture(
+                    features,
+                    n_verts,
+                    src_vert_xys,
+                    src_vert_indices,
+                    mode="nearest",
+                    aggregation_type="first",
+                )
+                return vt_features
+
+            aggregated_cond = map_dict(cond_spatial_features, aggregate)
+            aggregated_uncond = map_dict(uncond_spatial_features, aggregate)
+
+            def render_src_frames(layer, texture):
+                texture = make_repeated_vert_texture(texture, len(source_indices))
+
+                # make renderer
+                rasterizer = make_mesh_rasterizer(
+                    cameras=all_cams[source_indices],
+                    resolution=layer_resolutions[layer],
+                )
+                shader = TextureShader()
+                renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+
+                render_meshes = all_meshes[source_indices]
+                render_meshes.textures = texture
+                return renderer(render_meshes)
+
+            src_rendered_cond = map_dict(aggregated_cond, render_src_frames)
+            src_rendered_uncond = map_dict(aggregated_uncond, render_src_frames)
+
+            src_feature_images = {}
+            for layer in src_rendered_cond.keys():
+                src_feature_images[layer] = torch.stack(
+                    [src_rendered_uncond[layer], src_rendered_cond[layer]]
+                )
 
             source_noise_preds = self.model_fwd_feature_injection(
                 source_latents,
@@ -237,7 +268,7 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 source_depth_maps,
                 t,
                 pre_attn_features,
-                source_feature_images,
+                src_feature_images,
                 source_indices,
             )
 
@@ -247,12 +278,29 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 chunk_cams = all_cams[frame_indices]
                 chunk_meshes = all_meshes[frame_indices]
 
-                chunk_feature_images = rasterize_and_render_vert_features_dict(
-                    aggregated_3d_features,
-                    chunk_meshes,
-                    chunk_cams,
-                    resolutions=layer_resolutions,
-                )
+                def render_src_frames(layer, texture):
+                    texture = make_repeated_vert_texture(texture, len(chunk_meshes))
+
+                    # make renderer
+                    rasterizer = make_mesh_rasterizer(
+                        cameras=chunk_cams,
+                        resolution=layer_resolutions[layer],
+                    )
+                    shader = TextureShader()
+                    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+
+                    render_meshes = chunk_meshes
+                    render_meshes.textures = texture
+                    return renderer(render_meshes)
+
+                chunk_uncond_features = map_dict(aggregated_uncond, render_src_frames)
+                chunk_cond_features = map_dict(aggregated_cond, render_src_frames)
+
+                chunk_feature_images = {}
+                for layer in src_rendered_cond.keys():
+                    chunk_feature_images[layer] = torch.stack(
+                        [chunk_uncond_features[layer], chunk_cond_features[layer]]
+                    )
 
                 chunk_latents = latents_stacked[:, frame_indices]
                 chunk_embeddings = stacked_text_embeddings[:, frame_indices]
