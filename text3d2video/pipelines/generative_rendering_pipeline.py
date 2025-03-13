@@ -6,7 +6,6 @@ from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
-    MeshRenderer,
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor
@@ -23,8 +22,8 @@ from text3d2video.backprojection import (
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
-    TextureShader,
     make_mesh_rasterizer,
+    make_mesh_renderer,
     make_repeated_vert_texture,
     render_depth_map,
 )
@@ -331,7 +330,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     tex = make_repeated_vert_texture(texture, len(chunk_cams))
                     tex.sampling_mode = "nearest"
 
-                    renderer = make_mesh_rasterizer(
+                    renderer = make_mesh_renderer(
                         cameras=chunk_cams, resolution=layer_resolutions[layer]
                     )
 

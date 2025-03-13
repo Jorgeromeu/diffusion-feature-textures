@@ -4,6 +4,7 @@ from einops import rearrange
 from jaxtyping import Float
 from pytorch3d.renderer import (
     MeshRasterizer,
+    MeshRenderer,
     RasterizationSettings,
     TexturesUV,
     TexturesVertex,
@@ -60,6 +61,29 @@ def make_mesh_rasterizer(
     )
     rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
     return rasterizer
+
+
+def make_mesh_renderer(
+    resolution=512,
+    faces_per_pixel=1,
+    blur_radius=0,
+    bin_size=0,
+    shader=None,
+    cameras=None,
+):
+    rasterizer = make_mesh_rasterizer(
+        resolution=resolution,
+        faces_per_pixel=faces_per_pixel,
+        blur_radius=blur_radius,
+        bin_size=bin_size,
+        cameras=cameras,
+    )
+
+    if shader is None:
+        shader = TextureShader()
+
+    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+    return renderer
 
 
 def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
