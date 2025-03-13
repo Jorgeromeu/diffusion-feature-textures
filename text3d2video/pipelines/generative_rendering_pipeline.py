@@ -22,7 +22,6 @@ from text3d2video.backprojection import (
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
-    make_mesh_rasterizer,
     make_mesh_renderer,
     make_repeated_vert_texture,
     render_depth_map,
@@ -47,7 +46,7 @@ class GenerativeRenderingConfig:
 
 
 @dataclass
-class ExtractedFeatures:
+class GrExtractedFeatures:
     cond_kv_features: Dict[str, Float[torch.Tensor, "b t d"]]
     uncond_kv_features: Dict[str, Float[torch.Tensor, "b t d"]]
     cond_post_attn_features: Dict[str, Float[torch.Tensor, "b f t d"]]
@@ -56,7 +55,7 @@ class ExtractedFeatures:
 
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
     attn_processor: ExtractionInjectionAttn
-    rd_config: GenerativeRenderingConfig
+    conf: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
 
     def prepare_latents(
@@ -81,11 +80,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     def sample_keyframe_indices(
         self, n_frames: int, generator: torch.Generator = None
     ) -> torch.Tensor:
-        if self.rd_config.num_keyframes > n_frames:
+        if self.conf.num_keyframes > n_frames:
             raise ValueError("Number of keyframes is greater than number of frames")
 
         randperm = torch.randperm(n_frames, generator=generator, device=self.device)
-        return randperm[: self.rd_config.num_keyframes]
+        return randperm[: self.conf.num_keyframes]
 
     def model_forward(
         self,
@@ -93,7 +92,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         embeddings: Float[Tensor, "b t d"],
         t: int,
         depth_maps: List[Image.Image],
-    ):
+    ) -> Tensor:
         # ControlNet Pass
         processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
         down_block_res_samples, mid_block_res_sample = self.controlnet(
@@ -101,7 +100,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             t,
             encoder_hidden_states=embeddings,
             controlnet_cond=processed_ctrl_images,
-            conditioning_scale=self.rd_config.controlnet_conditioning_scale,
+            conditioning_scale=self.conf.controlnet_conditioning_scale,
             guess_mode=False,
             return_dict=False,
         )
@@ -124,7 +123,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         uncond_embeddings: Float[Tensor, "t d"],
         depth_maps: List[Image.Image],
         t: int,
-    ):
+    ) -> GrExtractedFeatures:
         # do cond and uncond passes
         latents_duplicated = torch.cat([latents] * 2)
         both_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
@@ -156,7 +155,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             extracted_post_attn_uncond[layer] = post_attns[:n_frames]
             extracted_post_attn_cond[layer] = post_attns[n_frames:]
 
-        return ExtractedFeatures(
+        return GrExtractedFeatures(
             cond_kv_features=extracted_kv_cond,
             uncond_kv_features=extracted_kv_uncond,
             cond_post_attn_features=extracted_post_attn_cond,
@@ -174,19 +173,22 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         uncond_kv_features: Dict[str, Float[Tensor, "b t d"]],
         cond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
         uncond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
-    ):
+    ) -> Tensor:
         latents_duplicated = torch.cat([latents] * 2)
         embeddings = torch.cat([uncond_embeddings, cond_embeddings])
         depth_maps_duplicated = depth_maps * 2
 
+        # stack kv features
         injected_kvs = {}
-        injected_post_attn = {}
         for layer in cond_kv_features.keys():
             layer_kvs = torch.stack(
-                [uncond_kv_features[layer], uncond_kv_features[layer]]
+                [uncond_kv_features[layer], cond_kv_features[layer]]
             )
             injected_kvs[layer] = layer_kvs
 
+        # stack rendered features
+        injected_post_attn = {}
+        for layer in cond_rendered_features.keys():
             layer_post_attn = torch.stack(
                 [uncond_rendered_features[layer], cond_rendered_features[layer]]
             )
@@ -203,7 +205,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
         # classifier-free guidance
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
-        noise_pred_guided = noise_pred_uncond + self.rd_config.guidance_scale * (
+        noise_pred_guided = noise_pred_uncond + self.conf.guidance_scale * (
             noise_pred_cond - noise_pred_uncond
         )
 
@@ -224,24 +226,24 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         n_frames = len(meshes)
 
         # setup configs for use throughout pipeline
-        self.rd_config = generative_rendering_config
+        self.conf = generative_rendering_config
         self.noise_initializer = noise_initializer
 
         # set up attn processor
         self.attn_processor = ExtractionInjectionAttn(
             self.unet,
-            do_spatial_post_attn_extraction=self.rd_config.do_post_attn_injection,
-            do_kv_extraction=self.rd_config.do_pre_attn_injection,
-            also_attend_to_self=self.rd_config.attend_to_self_kv,
-            feature_blend_alpha=self.rd_config.feature_blend_alpha,
-            kv_extraction_paths=self.rd_config.module_paths,
-            spatial_post_attn_extraction_paths=self.rd_config.module_paths,
+            do_spatial_post_attn_extraction=self.conf.do_post_attn_injection,
+            do_kv_extraction=self.conf.do_pre_attn_injection,
+            also_attend_to_self=self.conf.attend_to_self_kv,
+            feature_blend_alpha=self.conf.feature_blend_alpha,
+            kv_extraction_paths=self.conf.module_paths,
+            spatial_post_attn_extraction_paths=self.conf.module_paths,
             unet_chunk_size=2,
         )
         self.unet.set_attn_processor(self.attn_processor)
 
         # configure scheduler
-        self.scheduler.set_timesteps(self.rd_config.num_inference_steps)
+        self.scheduler.set_timesteps(self.conf.num_inference_steps)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
@@ -250,9 +252,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         latents = self.prepare_latents(meshes, cameras, verts_uvs, faces_uvs, generator)
 
         # chunk indices to use in inference loop
-        chunks_indices = torch.split(
-            torch.arange(0, n_frames), self.rd_config.chunk_size
-        )
+        chunks_indices = torch.split(torch.arange(0, n_frames), self.conf.chunk_size)
 
         # render depth maps for frames
         depth_maps = render_depth_map(meshes, cameras, 512)
@@ -292,7 +292,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
             # Aggregate KF features to UV space
             layer_resolutions = map_dict(
-                extracted_features.cond_post_attn_features, lambda _, x: x.shape[-1]
+                extracted_features.cond_post_attn_features, lambda _, x: x.shape[0]
             )
 
             kf_texel_xys = [texel_xys[i] for i in kf_indices.tolist()]
