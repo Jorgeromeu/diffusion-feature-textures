@@ -226,17 +226,17 @@ def find_attn_layers(
     layers = sorted(layers, key=lambda x: x.unet_absolute_index())
 
     results = []
-    for l in layers:
-        resolution = l.layer_resolution(module)
+    for layer in layers:
+        resolution = layer.layer_resolution(module)
 
         if (
-            l.attn_type in layer_types
+            layer.attn_type in layer_types
             and resolution in resolutions
-            and l.block_type in block_types
+            and layer.block_type in block_types
         ):
             if return_as_string:
-                results.append(l.module_path())
+                results.append(layer.module_path())
             else:
-                results.append(l)
+                results.append(layer)
 
     return results

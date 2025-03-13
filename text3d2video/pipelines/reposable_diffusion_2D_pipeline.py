@@ -78,7 +78,7 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
             do_spatial_qry_extraction=config.do_qry_injection,
             do_spatial_post_attn_extraction=config.do_post_attn_injection,
             do_kv_extraction=config.do_kv_injection,
-            attend_to_self_kv=False,
+            also_attend_to_self=False,
             feature_blend_alpha=config.feature_blend_alpha,
             kv_extraction_paths=config.kv_extraction_layers,
             spatial_qry_extraction_paths=config.spatial_extraction_layers,
