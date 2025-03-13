@@ -4,13 +4,13 @@ from typing import Dict
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
-from text3d2video.artifacts.diffusion_data import (
+from text3d2video.util import assert_tensor_shapes
+from text3d2video.utilities.diffusion_data import (
     AttnFeaturesWriter,
     DiffusionDataLogger,
     DiffusionDataWriter,
     LatentsWriter,
 )
-from text3d2video.util import assert_tensor_shapes
 from wandb_util.wandb_util import ArtifactWrapper
 
 

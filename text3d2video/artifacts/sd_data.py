@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 
-from text3d2video.artifacts.diffusion_data import (
+from text3d2video.utilities.diffusion_data import (
     AttnFeaturesWriter,
     DiffusionDataLogger,
     LatentsWriter,

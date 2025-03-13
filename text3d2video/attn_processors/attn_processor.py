@@ -5,11 +5,11 @@ from diffusers.models.attention_processor import Attention
 from einops import rearrange
 from torch import Tensor
 
-from text3d2video.artifacts.diffusion_data import AttnFeaturesWriter
 from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.utilities.attention_utils import (
     memory_efficient_attention,
 )
+from text3d2video.utilities.diffusion_data import AttnFeaturesWriter
 
 
 class DefaultAttnProcessor:

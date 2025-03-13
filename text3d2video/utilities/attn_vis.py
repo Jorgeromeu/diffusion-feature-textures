@@ -3,18 +3,36 @@ from typing import List
 
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from einops import einsum, rearrange
 from jaxtyping import Float
 from matplotlib.axes import Axes
 from rerun import Image
 from torch import Tensor
 
-from text3d2video.utilities.attention_visualization import (
-    add_pixel_marker,
-    coord_to_pixel,
-    pixel_coord_flattened,
-    reshape_concatenated,
-)
+from text3d2video.utilities.matplotlib_utils import add_pixel_marker, coord_to_pixel
+
+
+def pixel_coord_flattened(pix_coord: Tensor, size: Tensor):
+    """
+    Convert pixel coordinates to flattened index
+    :param pix_coord: (2,) tensor of pixel coordinates
+    :param size: (2,) tensor of image size
+    """
+    return pix_coord[0] + pix_coord[1] * size[0]
+
+
+def reshape_concatenated(
+    seq: Tensor,
+    layer_res: int,
+):
+    """
+    Reshape a key/value to a square grid
+    :param seq: (n, T) tensor
+    :param layer_res: resolution of the layer before flattening/concatenating
+    : return: (n, h, w) tensor
+    """
+    return rearrange(seq, "(n h w) d -> d h (n w)", w=layer_res, h=layer_res)
 
 
 def split_into_heads(
@@ -193,5 +211,7 @@ def plot_ca_weights(
     #     )
 
 
-def plot_ca_map(ax: Axes, attn_weights: Tensor, token_idx: int, img: Image):
-    pass
+def concatenate_images(images: List[Image]):
+    val_images = torch.stack([TF.to_tensor(img) for img in images])
+    val_image = rearrange(val_images, "b c h w -> c h (b w)")
+    return TF.to_pil_image(val_image)

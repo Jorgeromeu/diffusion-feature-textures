@@ -36,6 +36,7 @@ class DiffusionDataLogger:
         frame_indices_greenlist: list[int] = None,
         noise_level_greenlist: list[int] = None,
     ):
+        # default to empty list
         if path_greenlist is None:
             path_greenlist = []
         if frame_indices_greenlist is None:
@@ -84,15 +85,28 @@ class DiffusionDataLogger:
 
         self.frame_indices_greenlist = ordered_sample(all_frame_indices, n_save_frames)
 
-    def should_write(self, t: int = None, frame_i: int = None, attn_path: str = None):
-        valid_timestep = t is None or t in self.noise_level_greenlist
-        valid_frame = frame_i is None or frame_i in self.frame_indices_greenlist
-        valid_attn_path = attn_path is None or attn_path in self.path_greenlist
+    def _in_greenlist(self, x, greenlist):
+        return greenlist == [] or x in greenlist
 
-        return self.enabled and valid_timestep and valid_frame and valid_attn_path
+    def should_write(self, t: int = None, frame_i: int = None, attn_path: str = None):
+        # only write if for each provided index, it is in greenlist, or greenlist is empty
+
+        valid_t = t is None or self._in_greenlist(t, self.noise_level_greenlist)
+        valid_frame = frame_i is None or self._in_greenlist(
+            frame_i, self.frame_indices_greenlist
+        )
+        valid_path = attn_path is None or self._in_greenlist(
+            attn_path, self.path_greenlist
+        )
+
+        return valid_t and valid_frame and valid_path
 
     def print_datasets(self, prefix: str = ""):
         print_datasets(self.h5_file_path, parent_path=prefix)
+
+    def memory_usage(self):
+        gbs = self.h5_file_path.stat().st_size
+        return gbs / 1e9
 
     def begin_recording(self):
         self.h5_write_fp = h5py.File(self.h5_file_path, "w")
@@ -267,6 +281,3 @@ class AttnFeaturesWriter(DiffusionDataWriter):
     def read_val(self, t: int, frame_i: int, layer: str):
         path = self._seq_path(t, frame_i, layer, "val")
         return self._read_tensor(path)
-
-
-# ---

@@ -10,15 +10,15 @@ from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from text3d2video.artifacts.diffusion_data import (
-    AttnFeaturesWriter,
-    DiffusionDataLogger,
-    LatentsWriter,
-)
 from text3d2video.attn_processors.style_aligned_attn import (
     StyleAlignedAttentionProcessor,
 )
 from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
+from text3d2video.utilities.diffusion_data import (
+    AttnFeaturesWriter,
+    DiffusionDataLogger,
+    LatentsWriter,
+)
 
 
 class StyleAlignedLogger(DiffusionDataLogger):
