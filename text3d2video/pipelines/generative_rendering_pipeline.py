@@ -282,7 +282,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             kf_indices = self.sample_keyframe_indices(n_frames, generator)
 
             # Feature Extraction on keyframes
-            extracted_features = self.model_forward_extraction(
+            kf_features = self.model_forward_extraction(
                 latents[kf_indices],
                 cond_embeddings[kf_indices],
                 uncond_embeddings[kf_indices],
@@ -292,7 +292,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
             # Aggregate KF features to UV space
             layer_resolutions = map_dict(
-                extracted_features.cond_post_attn_features, lambda _, x: x.shape[0]
+                kf_features.cond_post_attn_features, lambda _, x: x.shape[-1]
             )
 
             kf_texel_xys = [texel_xys[i] for i in kf_indices.tolist()]
@@ -313,11 +313,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 return texture
 
             aggregated_uncond = map_dict(
-                extracted_features.uncond_post_attn_features, aggregate
+                kf_features.uncond_post_attn_features, aggregate
             )
-            aggregated_cond = map_dict(
-                extracted_features.cond_post_attn_features, aggregate
-            )
+            aggregated_cond = map_dict(kf_features.cond_post_attn_features, aggregate)
 
             # denoising in chunks
             noise_preds = []
@@ -354,8 +352,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     chunk_uncond_embeddings,
                     chunk_depth_maps,
                     t,
-                    extracted_features.cond_kv_features,
-                    extracted_features.uncond_kv_features,
+                    kf_features.cond_kv_features,
+                    kf_features.uncond_kv_features,
                     renders_cond,
                     renders_uncond,
                 )
