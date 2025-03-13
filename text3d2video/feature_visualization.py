@@ -22,24 +22,28 @@ class RgbPcaUtil:
 
     pca: faiss.PCAMatrix
     feature_dim: int
+    upper_percentile: int
+    lower_percentile: int
 
     # min and max values for each channel
     channel_min: Tensor
     channel_max: Tensor
 
-    @classmethod
-    def init_from_features(
-        cls, features: Tensor, lower_percentile=1, upper_percentile=99
-    ):
-        pca = cls(features.shape[1])
-        pca.fit(features, lower_percentile, upper_percentile)
-        return pca
-
-    def __init__(self, feature_dim: int):
+    def __init__(self, feature_dim: int, upper_percentile=99, lower_percentile=1):
         self.pca = faiss.PCAMatrix(feature_dim, 3)
+        self.upper_percentile = upper_percentile
+        self.lower_percentile = lower_percentile
         self.feature_dim = feature_dim
 
-    def fit(self, features: Tensor, lower_percentile=1, upper_percentile=99):
+    @classmethod
+    def init_from_features(
+        cls, features: Tensor, upper_percentile=99, lower_percentile=1
+    ):
+        pca = cls(features.shape[1], upper_percentile, lower_percentile)
+        pca.fit(features)
+        return pca
+
+    def fit(self, features: Tensor):
         """
         Fit PCA matrix to features
         :param features: N x D tensor
@@ -51,8 +55,12 @@ class RgbPcaUtil:
 
         # compute min and max for each channel
         reduced_features = self.apply(features)
-        self.channel_min = np.percentile(reduced_features, lower_percentile, axis=0)
-        self.channel_max = np.percentile(reduced_features, upper_percentile, axis=0)
+        self.channel_min = np.percentile(
+            reduced_features, self.lower_percentile, axis=0
+        )
+        self.channel_max = np.percentile(
+            reduced_features, self.upper_percentile, axis=0
+        )
 
         normalized = self.normalize(reduced_features)
         return normalized

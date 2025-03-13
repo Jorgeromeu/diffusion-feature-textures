@@ -1,5 +1,6 @@
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, List, Tuple
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -130,6 +131,12 @@ def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     inverse, perm = inverse.flip([0]), perm.flip([0])
     unique_indices = inverse.new_empty(unique.size(0)).scatter_(0, inverse, perm)
     return unique, unique_indices
+
+
+def create_object_array(data: List, shape: Tuple) -> List:
+    arr = np.empty(shape, dtype=object)
+    arr.fill(data)
+    return arr
 
 
 def map_dict(dict: Dict, callable: Callable):
