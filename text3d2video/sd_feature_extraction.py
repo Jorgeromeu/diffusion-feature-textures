@@ -201,48 +201,6 @@ def read_layer_paths(
     return enc_layers, mid_layers, dec_layers
 
 
-class HookManager:
-    """
-    Utility class to manage hooks for a model
-    """
-
-    # keep track of named hooks
-    _named_handles: Dict[str, torch.utils.hooks.RemovableHandle]
-
-    def __init__(self) -> None:
-        self._named_handles = {}
-
-    def named_hooks(self) -> Set[str]:
-        return set(self._named_handles.keys())
-
-    def add_named_hook(
-        self,
-        name: str,
-        module: nn.Module,
-        hook: Callable[[nn.Module, Tensor, Tensor], Tensor],
-    ):
-        """
-        Create a named hook
-        """
-
-        # remove existing hook
-        self.clear_named_hook(name)
-
-        # register and save hook
-        handle = module.register_forward_hook(hook)
-        self._named_handles[name] = handle
-
-    def clear_named_hook(self, name: str):
-        if self._named_handles.get(name):
-            self._named_handles[name].remove()
-            del self._named_handles[name]
-
-    def clear_all_hooks(self):
-        for handle in self._named_handles.values():
-            handle.remove()
-        self._named_handles = {}
-
-
 def find_attn_layers(
     module: nn.Module,
     layer_types: AttnType = None,

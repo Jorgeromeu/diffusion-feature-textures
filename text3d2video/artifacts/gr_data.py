@@ -4,13 +4,13 @@ from typing import Dict
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from torch import Tensor
 
-from text3d2video.artifacts.diffusion_data import (
+from text3d2video.util import assert_tensor_shapes
+from text3d2video.utilities.diffusion_data import (
     AttnFeaturesWriter,
-    DiffusionDataManager,
+    DiffusionDataLogger,
     DiffusionDataWriter,
     LatentsWriter,
 )
-from text3d2video.util import assert_tensor_shapes
 from wandb_util.wandb_util import ArtifactWrapper
 
 
@@ -161,27 +161,27 @@ class GrDataWriter(DiffusionDataWriter):
 
     def read_kf_post_attn(self, t: int, layer: str) -> Dict[str, Tensor]:
         path = self._kf_features_path(t, layer)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_kf_indices(self, t: int) -> Tensor:
         path = self._kf_indices_path(t)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_vertex_features(self, t: int, layer: str) -> Dict[str, Tensor]:
         path = self._vert_features_path(t, layer)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_post_attn_pre_injection(self, t: int, frame_i: int, layer: str):
         path = self._post_attn_pre_injection_path(t, frame_i, layer)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_post_attn_post_injection(self, t: int, frame_i: int, layer: str):
         path = self._post_attn_post_injection_path(t, frame_i, layer)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
     def read_post_attn_render(self, t: int, frame_i: int, layer: str):
         path = self._post_attn_render_path(t, frame_i, layer)
-        return self.read_tensor(path)
+        return self._read_tensor(path)
 
 
 class GrDataArtifact(ArtifactWrapper):
@@ -189,7 +189,7 @@ class GrDataArtifact(ArtifactWrapper):
 
     # config for saving
     config: GrSaveConfig
-    diffusion_data: DiffusionDataManager
+    diffusion_data: DiffusionDataLogger
     # diffusion data writers
     attn_writer: AttnFeaturesWriter
     latents_writer: LatentsWriter
@@ -204,10 +204,10 @@ class GrDataArtifact(ArtifactWrapper):
         art.config = config
 
         # diffusion data
-        art.diffusion_data = DiffusionDataManager(
+        art.diffusion_data = DiffusionDataLogger(
             art.h5_file_path(),
             enabled=config.enabled,
-            save_layer=config.module_paths,
+            path_greenlist=config.module_paths,
         )
 
         # writers
@@ -229,8 +229,8 @@ class GrDataArtifact(ArtifactWrapper):
         return art
 
     def begin_recording(self, scheduler: SchedulerMixin, n_frames: int):
-        self.diffusion_data.calculate_evenly_spaced_save_levels(scheduler, 5)
-        self.diffusion_data.calculate_evenly_spaced_save_frames(n_frames, 5)
+        self.diffusion_data.calc_evenly_spaced_noise_noise_levels(scheduler, 5)
+        self.diffusion_data.calc_evenly_spaced_frame_indices(n_frames, 5)
         self.diffusion_data.begin_recording()
 
     def end_recording(self):
