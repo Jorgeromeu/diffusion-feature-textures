@@ -110,3 +110,14 @@ def turntable_extrinsics(
 
     R, T = look_at_view_transform(dists, elevs, azim)
     return R, T
+
+
+def cam_view_prompt(angle):
+    norm_angle = angle % 360
+
+    if norm_angle >= 315 or norm_angle <= 45:
+        return "front"
+    elif norm_angle >= 135 and norm_angle <= 225:
+        return "back"
+    else:
+        return "side"

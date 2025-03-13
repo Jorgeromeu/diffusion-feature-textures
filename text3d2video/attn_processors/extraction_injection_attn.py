@@ -384,8 +384,6 @@ class UnifiedAttnProcessor(DefaultAttnProcessor):
         return memory_efficient_attention(attn, key, qry, val, attention_mask)
 
     def _call_self_attn(self, attn, hidden_states, attention_mask):
-        n_frames = hidden_states.shape[0]
-
         # read injected kv features
         injected_kv = self.injected_kvs.get(self._cur_module_path)
 

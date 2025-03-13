@@ -64,13 +64,19 @@ def make_mesh_rasterizer(
 
 
 def make_mesh_renderer(
-    resolution=512, faces_per_pixel=1, blur_radius=0, bin_size=0, shader=None
+    resolution=512,
+    faces_per_pixel=1,
+    blur_radius=0,
+    bin_size=0,
+    shader=None,
+    cameras=None,
 ):
     rasterizer = make_mesh_rasterizer(
         resolution=resolution,
         faces_per_pixel=faces_per_pixel,
         blur_radius=blur_radius,
         bin_size=bin_size,
+        cameras=cameras,
     )
 
     if shader is None:

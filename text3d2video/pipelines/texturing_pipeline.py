@@ -23,6 +23,7 @@ from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
     make_mesh_rasterizer,
+    make_mesh_renderer,
     make_repeated_uv_texture,
     render_depth_map,
 )
@@ -103,7 +104,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         noise_cond = out_cond.noise_preds
         noise_uncond = out_uncond.noise_preds
 
-        noise = noise_uncond + 7.5 * (noise_cond - noise_uncond)
+        noise = noise_uncond + self.conf.guidance_scale * (noise_cond - noise_uncond)
 
         return TexturingGuidedModelOutput(
             noise,
@@ -167,7 +168,7 @@ class TexturingPipeline(BaseControlNetPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        prompt: str,
+        prompts: str,
         meshes: Meshes,
         cameras: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
@@ -181,7 +182,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         self.attn_processor = UnifiedAttnProcessor(
             self.unet,
             also_attend_to_self=True,
-            feature_blend_alhpa=1.0,
+            feature_blend_alhpa=0.8,
             kv_extraction_paths=conf.module_paths,
             spatial_qry_extraction_paths=conf.module_paths,
         )
@@ -193,7 +194,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         # render depth maps
         depth_maps = render_depth_map(meshes, cameras, 512)
 
-        uv_res = 64
+        uv_res = 200
         texel_xys = []
         texel_uvs = []
         for cam, view_mesh in zip(cameras, meshes):
@@ -204,7 +205,7 @@ class TexturingPipeline(BaseControlNetPipeline):
             texel_uvs.append(uvs)
 
         # encode prompt
-        cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * batch_size)
+        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
 
         # set timesteps
         self.scheduler.set_timesteps(conf.num_inference_steps)
@@ -260,11 +261,9 @@ class TexturingPipeline(BaseControlNetPipeline):
                     tex = make_repeated_uv_texture(uv_map, faces_uvs, verts_uvs)
                     tex.sampling_mode = "nearest"
 
-                    rasterizer = make_mesh_rasterizer(
+                    renderer = make_mesh_renderer(
                         cameras=view_cam, resolution=layer_resolutions[layer]
                     )
-                    shader = TextureShader()
-                    renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
 
                     render_mesh = view_mesh.clone()
                     render_mesh.textures = tex
