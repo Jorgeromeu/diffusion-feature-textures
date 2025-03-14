@@ -1,4 +1,5 @@
-do_pre_attn_injection: true
+do_pre_attn_injectio    "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+n: true
 do_post_attn_injection: true
 aggregate_queries: true
 feature_blend_alpha: 1.0

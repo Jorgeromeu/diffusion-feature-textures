@@ -114,11 +114,9 @@ def checkerboard_img(
     return TF.to_tensor(img)
 
 
-def gradient_img(res=100):
+def gradient_img(res=100, color_start=(0, 0, 255), color_end=(255, 0, 0)):
     # Define the image size and colors for the gradient
     width, height = (res, res)
-    color_start = (0, 0, 255)  # Start color (blue)
-    color_end = (255, 0, 0)  # End color (red)
 
     # Create an array to hold the gradient data
     gradient = np.zeros((height, width, 3), dtype=np.uint8)

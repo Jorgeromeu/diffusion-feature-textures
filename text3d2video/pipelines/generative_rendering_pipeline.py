@@ -22,6 +22,8 @@ from text3d2video.backprojection import (
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
+    make_mesh_renderer,
+    make_repeated_vert_texture,
     render_depth_map,
 )
 from text3d2video.util import map_dict
@@ -52,6 +54,13 @@ class GrExtractedFeatures:
     uncond_kv: Dict[str, Float[torch.Tensor, "b t d"]]
     cond_post_attn: Dict[str, Float[torch.Tensor, "b f t d"]]
     uncond_post_attn: Dict[str, Float[torch.Tensor, "b f t d"]]
+
+    def layer_resolution(self, layer):
+        feature = self.cond_post_attn.get(layer, None)
+        if feature is not None:
+            return feature.shape[-1]
+        else:
+            return None
 
 
 class GenerativeRenderingLogger(DiffusionDataLogger):
@@ -253,17 +262,14 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     def render_texture(
         self, texture: Float[Tensor, "v c"], cams, meshes, resolution: int
     ):
-        # tex = make_repeated_vert_texture(texture, len(cams))
-        # tex.sampling_mode = "nearest"
+        tex = make_repeated_vert_texture(texture, len(cams))
+        tex.sampling_mode = "nearest"
 
-        # renderer = make_mesh_renderer(cameras=cams, resolution=resolution)
+        renderer = make_mesh_renderer(cameras=cams, resolution=resolution)
 
-        # render_meshes = meshes.clone()
-        # render_meshes.textures = tex
-        # return renderer(render_meshes)
-
-        d = texture.shape[-1]
-        return torch.zeros(len(cams), d, resolution, resolution).to(texture)
+        render_meshes = meshes.clone()
+        render_meshes.textures = tex
+        return renderer(render_meshes)
 
     @torch.no_grad()
     def __call__(
@@ -280,13 +286,16 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     ):
         n_frames = len(meshes)
 
+        # configure scheduler
+        self.scheduler.set_timesteps(self.conf.num_inference_steps)
+
         if logger is not None:
             self.logger = logger
             self.logger.setup_logger(
                 self.scheduler, n_frames, generative_rendering_config.module_paths
             )
 
-        # setup configs for use throughout pipeline
+        # setup configs
         self.conf = generative_rendering_config
         self.noise_initializer = noise_initializer
 
@@ -303,15 +312,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         )
         self.unet.set_attn_processor(self.attn_processor)
 
-        # configure scheduler
-        self.scheduler.set_timesteps(self.conf.num_inference_steps)
-
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
 
         # initial latent noise
         latents = self.prepare_latents(meshes, cameras, verts_uvs, faces_uvs, generator)
-        # B, 4, 64, 64
 
         # chunk indices to use in inference loop
         chunks_indices = torch.split(torch.arange(0, n_frames), self.conf.chunk_size)
@@ -331,10 +336,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         for t in tqdm(self.scheduler.timesteps):
             self.attn_processor.cur_timestep = t
 
-            # sample keyframes
+            # Feature Extraction on keyframes
             kf_indices = self.sample_keyframe_indices(n_frames, generator)
 
-            # Feature Extraction on keyframes
             kf_features = self.model_forward_extraction(
                 latents[kf_indices],
                 cond_embeddings[kf_indices],
@@ -343,10 +347,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 t,
             )
 
-            # Aggregate KF features to UV space
-            layer_resolutions = map_dict(
-                kf_features.cond_post_attn, lambda _, x: x.shape[-1]
-            )
+            # aggregate keyframe-features to textures
 
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
@@ -371,7 +372,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                         texture,
                         cameras[chunk_frame_indices],
                         meshes[chunk_frame_indices],
-                        layer_resolutions[layer],
+                        kf_features.layer_resolution(layer),
                     )
 
                 renders_uncond = map_dict(textures_uncond, render_chunk)

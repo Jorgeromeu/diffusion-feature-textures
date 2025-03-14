@@ -131,42 +131,27 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
             src_vert_xys = [vert_xys[i] for i in src_indices.tolist()]
             src_vert_indices = [vert_indices[i] for i in src_indices.tolist()]
 
-            def aggregate(layer, features):
-                texture = aggregate_views_vert_texture(
+            def aggr_src_features(_, features):
+                return self.aggregate_features(
                     features,
                     tgt_meshes.num_verts_per_mesh()[0],
                     src_vert_xys,
                     src_vert_indices,
-                    mode="nearest",
-                    aggregation_type="first",
-                ).to(torch.float32)
-
-                return texture
-
-            layer_resolutions = map_dict(
-                features.cond_post_attn, lambda _, x: x.shape[-1]
-            )
-
-            textures_uncond = map_dict(features.uncond_post_attn, aggregate)
-            textures_cond = map_dict(features.cond_post_attn, aggregate)
-
-            def render_src_frames(layer, texture):
-                tex = make_repeated_vert_texture(texture, len(src_indices))
-                tex.sampling_mode = "nearest"
-
-                renderer = make_mesh_renderer(
-                    cameras=src_cams, resolution=layer_resolutions[layer]
                 )
 
-                render_meshes = src_meshes.clone()
-                render_meshes.textures = tex
-                return renderer(render_meshes)
+            textures_uncond = map_dict(features.uncond_post_attn, aggr_src_features)
+            textures_cond = map_dict(features.cond_post_attn, aggr_src_features)
+
+            def render_src_frames(layer, texture):
+                return self.render_texture(
+                    texture, src_cams, src_meshes, features.layer_resolution(layer)
+                )
 
             src_rendered_uncond = map_dict(textures_uncond, render_src_frames)
             src_rendered_cond = map_dict(textures_cond, render_src_frames)
 
             # Denoising source frames with injection
-            src_noise_pred = self.model_forward_injection(
+            src_noise_preds = self.model_forward_injection(
                 latents[src_indices],
                 cond_embeddings[src_indices],
                 uncond_embeddings[src_indices],
@@ -185,17 +170,12 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 def render_chunk_frames(layer, texture):
                     chunk_cams = all_cams[chunk_frame_indices]
                     chunk_meshes = all_meshes[chunk_frame_indices]
-
-                    tex = make_repeated_vert_texture(texture, len(chunk_frame_indices))
-                    tex.sampling_mode = "nearest"
-
-                    renderer = make_mesh_renderer(
-                        cameras=chunk_cams, resolution=layer_resolutions[layer]
+                    return self.render_texture(
+                        texture,
+                        chunk_cams,
+                        chunk_meshes,
+                        features.layer_resolution(layer),
                     )
-
-                    render_meshes = chunk_meshes.clone()
-                    render_meshes.textures = tex
-                    return renderer(render_meshes)
 
                 chunk_rendered_uncond = map_dict(textures_uncond, render_chunk_frames)
                 chunk_rendered_cond = map_dict(textures_cond, render_chunk_frames)
@@ -216,7 +196,7 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
 
             # Denoise all
             tgt_noise_preds = torch.cat(tgt_noise_preds)
-            all_noise_preds = torch.cat([tgt_noise_preds, src_noise_pred])
+            all_noise_preds = torch.cat([tgt_noise_preds, src_noise_preds])
             latents = self.scheduler.step(
                 all_noise_preds, t, latents, generator=generator
             ).prev_sample
