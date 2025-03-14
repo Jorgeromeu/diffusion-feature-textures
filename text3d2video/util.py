@@ -30,7 +30,7 @@ def ordered_sample_indices(lst, n):
     step = (len(lst) - 1) / (n - 1)
     # Use the calculated step to select indices
     indices = [round(i * step) for i in range(n)]
-    return indices
+    return np.array(indices, dtype=int)
 
 
 def ordered_sample(lst, n):

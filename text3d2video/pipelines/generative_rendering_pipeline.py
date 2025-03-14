@@ -2,6 +2,7 @@ from typing import Dict, List
 
 import torch
 from attr import dataclass
+from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
@@ -16,17 +17,17 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 )
 from text3d2video.backprojection import (
     aggregate_views_vert_texture,
-    project_visible_texels_to_camera,
     project_visible_verts_to_camera,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
-    make_mesh_renderer,
-    make_repeated_vert_texture,
     render_depth_map,
 )
 from text3d2video.util import map_dict
+from text3d2video.utilities.diffusion_data import (
+    DiffusionDataLogger,
+)
 
 
 # pylint: disable=too-many-instance-attributes
@@ -47,16 +48,37 @@ class GenerativeRenderingConfig:
 
 @dataclass
 class GrExtractedFeatures:
-    cond_kv_features: Dict[str, Float[torch.Tensor, "b t d"]]
-    uncond_kv_features: Dict[str, Float[torch.Tensor, "b t d"]]
-    cond_post_attn_features: Dict[str, Float[torch.Tensor, "b f t d"]]
-    uncond_post_attn_features: Dict[str, Float[torch.Tensor, "b f t d"]]
+    cond_kv: Dict[str, Float[torch.Tensor, "b t d"]]
+    uncond_kv: Dict[str, Float[torch.Tensor, "b t d"]]
+    cond_post_attn: Dict[str, Float[torch.Tensor, "b f t d"]]
+    uncond_post_attn: Dict[str, Float[torch.Tensor, "b f t d"]]
+
+
+class GenerativeRenderingLogger(DiffusionDataLogger):
+    def __init__(self, h5_file_path, enabled=True, n_save_frames=5, n_save_levels=8):
+        self.n_frames = n_save_frames
+        self.n_times = n_save_levels
+        super().__init__(
+            h5_file_path,
+            enabled,
+            [],
+            [],
+            [],
+        )
+
+    def setup_logger(
+        self, scheduler: SchedulerMixin, n_frames: int, modules: list[str]
+    ):
+        self.path_greenlist = modules
+        self.calc_evenly_spaced_frame_indices(n_frames, self.n_frames)
+        self.calc_evenly_spaced_noise_noise_levels(scheduler, self.n_times)
 
 
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
     attn_processor: ExtractionInjectionAttn
     conf: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
+    logger: GenerativeRenderingLogger
 
     def prepare_latents(
         self,
@@ -156,10 +178,10 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             extracted_post_attn_cond[layer] = post_attns[n_frames:]
 
         return GrExtractedFeatures(
-            cond_kv_features=extracted_kv_cond,
-            uncond_kv_features=extracted_kv_uncond,
-            cond_post_attn_features=extracted_post_attn_cond,
-            uncond_post_attn_features=extracted_post_attn_uncond,
+            cond_kv=extracted_kv_cond,
+            uncond_kv=extracted_kv_uncond,
+            cond_post_attn=extracted_post_attn_cond,
+            uncond_post_attn=extracted_post_attn_uncond,
         )
 
     def model_forward_injection(
@@ -211,6 +233,38 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
         return noise_pred_guided
 
+    def aggregate_features(
+        self,
+        feature_maps: Float[Tensor, "b c h w"],
+        n_verts: int,
+        vert_xys: List,
+        vert_indices: List,
+    ) -> Float[Tensor, "v c"]:
+        texture = aggregate_views_vert_texture(
+            feature_maps,
+            n_verts,
+            vert_xys,
+            vert_indices,
+            mode="nearest",
+            aggregation_type="first",
+        ).to(torch.float32)
+        return texture
+
+    def render_texture(
+        self, texture: Float[Tensor, "v c"], cams, meshes, resolution: int
+    ):
+        # tex = make_repeated_vert_texture(texture, len(cams))
+        # tex.sampling_mode = "nearest"
+
+        # renderer = make_mesh_renderer(cameras=cams, resolution=resolution)
+
+        # render_meshes = meshes.clone()
+        # render_meshes.textures = tex
+        # return renderer(render_meshes)
+
+        d = texture.shape[-1]
+        return torch.zeros(len(cams), d, resolution, resolution).to(texture)
+
     @torch.no_grad()
     def __call__(
         self,
@@ -222,8 +276,15 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         generative_rendering_config: GenerativeRenderingConfig,
         noise_initializer: NoiseInitializer,
         generator=None,
+        logger=None,
     ):
         n_frames = len(meshes)
+
+        if logger is not None:
+            self.logger = logger
+            self.logger.setup_logger(
+                self.scheduler, n_frames, generative_rendering_config.module_paths
+            )
 
         # setup configs for use throughout pipeline
         self.conf = generative_rendering_config
@@ -250,6 +311,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
         # initial latent noise
         latents = self.prepare_latents(meshes, cameras, verts_uvs, faces_uvs, generator)
+        # B, 4, 64, 64
 
         # chunk indices to use in inference loop
         chunks_indices = torch.split(torch.arange(0, n_frames), self.conf.chunk_size)
@@ -258,21 +320,12 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         depth_maps = render_depth_map(meshes, cameras, 512)
 
         # precompute texture rasterization for efficient projection
-        uv_res = 350
-        texel_xys = []
-        texel_uvs = []
         vert_xys = []
         vert_indices = []
         for cam, mesh in zip(cameras, meshes):
             xys, indices = project_visible_verts_to_camera(mesh, cam)
             vert_xys.append(xys)
             vert_indices.append(indices)
-
-            xys, uvs = project_visible_texels_to_camera(
-                mesh, cam, verts_uvs, faces_uvs, uv_res, raster_res=2000
-            )
-            texel_xys.append(xys)
-            texel_uvs.append(uvs)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
@@ -292,68 +345,47 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
             # Aggregate KF features to UV space
             layer_resolutions = map_dict(
-                kf_features.cond_post_attn_features, lambda _, x: x.shape[-1]
+                kf_features.cond_post_attn, lambda _, x: x.shape[-1]
             )
 
-            kf_texel_xys = [texel_xys[i] for i in kf_indices.tolist()]
-            kf_texel_uvs = [texel_uvs[i] for i in kf_indices.tolist()]
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
 
-            def aggregate(layer, features):
-                texture = aggregate_views_vert_texture(
+            def aggr_kf_features(_, features):
+                return self.aggregate_features(
                     features,
                     meshes.num_verts_per_mesh()[0],
                     kf_vert_xys,
                     kf_vert_indices,
-                    mode="nearest",
-                    aggregation_type="first",
-                ).to(torch.float32)
+                )
 
-                return texture
-
-            aggregated_uncond = map_dict(
-                kf_features.uncond_post_attn_features, aggregate
-            )
-            aggregated_cond = map_dict(kf_features.cond_post_attn_features, aggregate)
+            textures_uncond = map_dict(kf_features.uncond_post_attn, aggr_kf_features)
+            textures_cond = map_dict(kf_features.cond_post_attn, aggr_kf_features)
 
             # denoising in chunks
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
-                chunk_cams = cameras[chunk_frame_indices]
-                chunk_meshes = meshes[chunk_frame_indices]
-
-                # Render
-                def render(layer, texture):
-                    tex = make_repeated_vert_texture(texture, len(chunk_cams))
-                    tex.sampling_mode = "nearest"
-
-                    renderer = make_mesh_renderer(
-                        cameras=chunk_cams, resolution=layer_resolutions[layer]
+                # render chunk post-attn features
+                def render_chunk(layer, texture):
+                    return self.render_texture(
+                        texture,
+                        cameras[chunk_frame_indices],
+                        meshes[chunk_frame_indices],
+                        layer_resolutions[layer],
                     )
 
-                    render_meshes = chunk_meshes.clone()
-                    render_meshes.textures = tex
-                    return renderer(render_meshes)
+                renders_uncond = map_dict(textures_uncond, render_chunk)
+                renders_cond = map_dict(textures_cond, render_chunk)
 
-                renders_uncond = map_dict(aggregated_uncond, render)
-                renders_cond = map_dict(aggregated_cond, render)
-
-                # Diffusion step #2 with pre and post attn feature injection
-                # get chunk inputs
-                chunk_latents = latents[chunk_frame_indices]
-                chunk_cond_embeddings = cond_embeddings[chunk_frame_indices]
-                chunk_uncond_embeddings = uncond_embeddings[chunk_frame_indices]
-                chunk_depth_maps = [depth_maps[i] for i in chunk_frame_indices.tolist()]
-
+                # Diffusion step with pre-and post-attn injection
                 noise_pred = self.model_forward_injection(
-                    chunk_latents,
-                    chunk_cond_embeddings,
-                    chunk_uncond_embeddings,
-                    chunk_depth_maps,
+                    latents[chunk_frame_indices],
+                    cond_embeddings[chunk_frame_indices],
+                    uncond_embeddings[chunk_frame_indices],
+                    [depth_maps[i] for i in chunk_frame_indices.tolist()],
                     t,
-                    kf_features.cond_kv_features,
-                    kf_features.uncond_kv_features,
+                    kf_features.cond_kv,
+                    kf_features.uncond_kv,
                     renders_cond,
                     renders_uncond,
                 )

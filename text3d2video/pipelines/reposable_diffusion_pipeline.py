@@ -144,11 +144,11 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 return texture
 
             layer_resolutions = map_dict(
-                features.cond_post_attn_features, lambda _, x: x.shape[-1]
+                features.cond_post_attn, lambda _, x: x.shape[-1]
             )
 
-            textures_uncond = map_dict(features.uncond_post_attn_features, aggregate)
-            textures_cond = map_dict(features.cond_post_attn_features, aggregate)
+            textures_uncond = map_dict(features.uncond_post_attn, aggregate)
+            textures_cond = map_dict(features.cond_post_attn, aggregate)
 
             def render_src_frames(layer, texture):
                 tex = make_repeated_vert_texture(texture, len(src_indices))
@@ -172,8 +172,8 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                 uncond_embeddings[src_indices],
                 [all_depth_maps[i] for i in src_indices.tolist()],
                 t,
-                features.cond_kv_features,
-                features.uncond_kv_features,
+                features.cond_kv,
+                features.uncond_kv,
                 src_rendered_cond,
                 src_rendered_uncond,
             )
@@ -206,8 +206,8 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                     uncond_embeddings[chunk_frame_indices],
                     [all_depth_maps[i] for i in chunk_frame_indices.tolist()],
                     t,
-                    features.cond_kv_features,
-                    features.uncond_kv_features,
+                    features.cond_kv,
+                    features.uncond_kv,
                     chunk_rendered_cond,
                     chunk_rendered_uncond,
                 )

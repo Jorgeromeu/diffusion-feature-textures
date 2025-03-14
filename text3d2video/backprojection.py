@@ -13,8 +13,6 @@ from torch import Tensor
 
 from text3d2video.util import sample_feature_map_ndc, unique_with_indices
 
-# Inverse Rendering
-
 
 def project_visible_verts_to_camera(
     meshes: Meshes, cameras: CamerasBase, raster_res=600
