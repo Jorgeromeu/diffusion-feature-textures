@@ -103,11 +103,9 @@ def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
     return all_depth_maps
 
 
-def make_repeated_vert_texture(
-    vert_features: Float[Tensor, "n c"], N=1, sampling_mode="bilinear"
-):
+def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
     extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
-    return TexturesVertex(extended_vt_features, sampling_mode)
+    return TexturesVertex(extended_vt_features)
 
 
 def make_repeated_uv_texture(

@@ -52,14 +52,14 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
     def __init__(
         self,
         model,
-        do_spatial_qry_extraction: bool,
-        do_spatial_post_attn_extraction: bool,
-        do_kv_extraction: bool,
-        attend_to_self_kv: bool,
-        feature_blend_alpha: bool,
-        kv_extraction_paths: List[str],
-        spatial_qry_extraction_paths: List[str],
-        spatial_post_attn_extraction_paths: List[str],
+        do_spatial_qry_extraction: bool = False,
+        do_spatial_post_attn_extraction: bool = False,
+        do_kv_extraction: bool = False,
+        also_attend_to_self: bool = False,
+        feature_blend_alpha: bool = 1.0,
+        kv_extraction_paths: List[str] = [],
+        spatial_qry_extraction_paths: List[str] = [],
+        spatial_post_attn_extraction_paths: List[str] = [],
         mode=AttnMode.FEATURE_INJECTION,
         unet_chunk_size=2,
     ):
@@ -67,7 +67,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         self.do_kv_extraction = do_kv_extraction
         self.do_spatial_qry_extraction = do_spatial_qry_extraction
         self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
-        self.attend_to_self_kv = attend_to_self_kv
+        self.attend_to_self_kv = also_attend_to_self
         self.feature_blend_alpha = feature_blend_alpha
         self.kv_extraction_paths = kv_extraction_paths
         self.spatial_qry_extraction_paths = spatial_qry_extraction_paths
@@ -151,9 +151,8 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 height = int(sqrt(qry.shape[1]))
                 qry_square = rearrange(
                     qry,
-                    "(b f) (h w) d -> b f d h w",
+                    "b (h w) d -> b d h w",
                     h=height,
-                    b=self.chunk_size,
                 )
                 self.spatial_qry_features[self._cur_module_path] = qry_square
 
@@ -163,9 +162,8 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 height = int(sqrt(attn_out.shape[1]))
                 attn_out_square = rearrange(
                     attn_out,
-                    "(b f) (h w) d -> b f d h w",
+                    "b (h w) d -> b d h w",
                     h=height,
-                    b=self.chunk_size,
                 )
                 self.spatial_post_attn_features[self._cur_module_path] = attn_out_square
 

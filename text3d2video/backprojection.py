@@ -13,8 +13,6 @@ from torch import Tensor
 
 from text3d2video.util import sample_feature_map_ndc, unique_with_indices
 
-# Inverse Rendering
-
 
 def project_visible_verts_to_camera(
     meshes: Meshes, cameras: CamerasBase, raster_res=600
@@ -127,8 +125,8 @@ def aggregate_views_vert_texture(
 ):
     # initialize empty vertex features
     feature_dim = feature_maps.shape[1]
-    vert_features = torch.zeros(n_verts, feature_dim).cuda()
-    vert_features_cnt = torch.zeros(n_verts).cuda()
+    vert_features = torch.zeros(n_verts, feature_dim).to(feature_maps)
+    vert_features_cnt = torch.zeros(n_verts).to(feature_maps)
 
     for i, feature_map in enumerate(feature_maps):
         # get features for each vertex, for given view
