@@ -286,18 +286,19 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     ):
         n_frames = len(meshes)
 
+        # setup configs
+        self.conf = generative_rendering_config
+        self.noise_initializer = noise_initializer
+
         # configure scheduler
         self.scheduler.set_timesteps(self.conf.num_inference_steps)
 
+        # setup logger
         if logger is not None:
             self.logger = logger
             self.logger.setup_logger(
                 self.scheduler, n_frames, generative_rendering_config.module_paths
             )
-
-        # setup configs
-        self.conf = generative_rendering_config
-        self.noise_initializer = noise_initializer
 
         # set up attn processor
         self.attn_processor = ExtractionInjectionAttn(
