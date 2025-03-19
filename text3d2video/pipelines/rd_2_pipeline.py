@@ -14,8 +14,10 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 from text3d2video.rendering import (
+    TextureShader,
     make_mesh_renderer,
     make_repeated_uv_texture,
+    precompute_rast_fragments,
     render_depth_map,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
@@ -80,6 +82,21 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         # render all depth maps
         depth_maps = render_depth_map(tgt_meshes, tgt_cams, 512)
 
+        layers = [
+            AttnLayerId.parse_module_path(path) for path in self.conf.module_paths
+        ]
+        screen_resolutions = list(
+            set([layer.layer_resolution(self.unet) for layer in layers])
+        )
+        layer_resolution_indices = {
+            layer.module_path(): screen_resolutions.index(
+                layer.layer_resolution(self.unet)
+            )
+            for layer in layers
+        }
+
+        fragments = precompute_rast_fragments(tgt_cams, tgt_meshes, screen_resolutions)
+
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
 
@@ -88,7 +105,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
             tgt_meshes, tgt_cams, verts_uvs, faces_uvs, generator
         )
 
-        # Read Features
+        # READ FEATURES
         kvs_cond_dsets = {}
         kvs_uncond_dsets = {}
         textures_cond_dsets = {}
@@ -119,10 +136,10 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
             def read_dataset(dsets):
                 return dataset_to_tensor(dsets[dset_index]).to(latents)
 
-            def read_dset_kv(layer, dsets):
+            def read_dset_kv(_, dsets):
                 return read_dataset(dsets)[0]
 
-            def read_dset_texture(layer, dsets):
+            def read_dset_texture(_, dsets):
                 return read_dataset(dsets)
 
             kvs_cond = dict_map(kvs_cond_dsets, read_dset_kv)
@@ -136,22 +153,27 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
             # Denoise target frames in chunks with injection
             noise_preds = []
             for chunk_frame_indices in torch.split(frame_indices, self.conf.chunk_size):
+                shader = TextureShader()
 
                 def render_chunk_frames(layer, texture):
-                    chunk_cams = tgt_cams[chunk_frame_indices]
-                    chunk_meshes = tgt_meshes[chunk_frame_indices]
                     tex = make_repeated_uv_texture(
                         texture,
                         faces_uvs,
                         verts_uvs,
-                        N=len(chunk_cams),
                         sampling_mode="nearest",
                     )
 
-                    renderer = make_mesh_renderer(cameras=chunk_cams, resolution=16)
-                    render_meshes = chunk_meshes.clone()
-                    render_meshes.textures = tex
-                    return renderer(render_meshes)
+                    res_idx = layer_resolution_indices[layer]
+
+                    renders = []
+                    for frame_i in chunk_frame_indices.tolist():
+                        mesh = tgt_meshes[frame_i]
+                        frags = fragments[res_idx][frame_i]
+                        mesh.textures = tex
+                        render = shader(frags, mesh)[0]
+                        renders.append(render)
+                    renders = torch.stack(renders)
+                    return renders
 
                 chunk_rendered_cond = dict_map(textures_cond, render_chunk_frames)
                 chunk_rendered_uncond = dict_map(textures_uncond, render_chunk_frames)

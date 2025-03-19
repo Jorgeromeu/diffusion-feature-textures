@@ -24,8 +24,10 @@ from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     make_mesh_renderer,
     make_repeated_vert_texture,
+    precompute_rasterization,
     render_depth_map,
 )
+from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
 from text3d2video.utilities.diffusion_data import (
     DiffusionDataLogger,
@@ -292,6 +294,20 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
         # configure scheduler
         self.scheduler.set_timesteps(self.conf.num_inference_steps)
+
+        # determine resolutions
+        layers = [
+            AttnLayerId.parse_module_path(path) for path in self.conf.module_paths
+        ]
+        layer_resolutions = set([layer.layer_resolution(self.unet) for layer in layers])
+        
+
+        render_resolutions = [3, 3, 3, 3]
+        uv_resolutions = [100, 100, 100, 100]
+
+        projections, fragments = precompute_rasterization(
+            cameras, meshes, verts_uvs, faces_uvs, render_resolutions, uv_resolutions
+        )
 
         # setup logger
         if logger is not None:

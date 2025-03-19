@@ -168,3 +168,19 @@ def precompute_rasterization(
             projections[frame_idx][res_i] = projection
 
     return projections, fragments
+
+
+def precompute_rast_fragments(cameras, meshes, raster_resolutions: list[int]):
+    fragments = defaultdict(lambda: dict())
+
+    for res_i, resolution in enumerate(raster_resolutions):
+        rasterizer = make_mesh_rasterizer(resolution=resolution)
+
+        for frame_i in range(len(cameras)):
+            cam = cameras[frame_i]
+            mesh = meshes[frame_i]
+
+            frags = rasterizer(mesh, cameras=cam)
+            fragments[res_i][frame_i] = frags
+
+    return fragments

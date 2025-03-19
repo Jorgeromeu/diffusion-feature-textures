@@ -25,7 +25,7 @@ from text3d2video.rendering import (
 
 # pylint: disable=too-many-instance-attributes
 @dataclass
-class TexturingConfig:
+class TexFusionConfig:
     num_inference_steps: int
     guidance_scale: float
     controlnet_conditioning_scale: float
@@ -33,7 +33,7 @@ class TexturingConfig:
 
 
 class TexFusionPipeline(BaseControlNetPipeline):
-    conf: TexturingConfig
+    conf: TexFusionConfig
 
     def model_forward_guided(
         self,
@@ -98,7 +98,7 @@ class TexFusionPipeline(BaseControlNetPipeline):
         cameras: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
-        conf: TexturingConfig,
+        conf: TexFusionConfig,
         generator=None,
     ):
         self.conf = conf
@@ -112,15 +112,13 @@ class TexFusionPipeline(BaseControlNetPipeline):
         # encode prompt
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_views)
 
-        uv_res = 120
-        texel_xys = []
-        texel_uvs = []
-        for cam, view_mesh in zip(cameras, meshes):
-            xys, uvs = project_visible_texels_to_camera(
-                view_mesh, cam, verts_uvs, faces_uvs, uv_res, raster_res=2000
+        uv_res = 250
+        projections = []
+        for cam, mesh in zip(cameras, meshes):
+            projection = project_visible_texels_to_camera(
+                mesh, cam, verts_uvs, faces_uvs, uv_res, raster_res=2000
             )
-            texel_xys.append(xys)
-            texel_uvs.append(uvs)
+            projections.append(projection)
 
         # set timesteps
         self.scheduler.set_timesteps(conf.num_inference_steps)
@@ -130,7 +128,7 @@ class TexFusionPipeline(BaseControlNetPipeline):
         )
         renderer = make_mesh_renderer(64)
 
-        # Attempt 1: normal denoising
+        # # Attempt 1: normal denoising
         # latents = torch.randn(
         #     n_views,
         #     4,
@@ -153,7 +151,7 @@ class TexFusionPipeline(BaseControlNetPipeline):
         #     latents = self.scheduler.step(noise_pred, t, latents).prev_sample
         # return self.decode_latents(latents)
 
-        # Attempt 2: denoise single view in uv space
+        # # Attempt 2: denoise rendered latent
         # latent_tex = torch.randn(
         #     uv_res, uv_res, 4, generator=generator, dtype=self.dtype, device=self.device
         # )
@@ -161,18 +159,19 @@ class TexFusionPipeline(BaseControlNetPipeline):
         # cam = cameras[0]
         # mesh = meshes[0]
 
-        # for t in tqdm(self.scheduler.timesteps):
-        #     render_meshes = mesh.clone()
-        #     render_meshes.textures = make_repeated_uv_texture(
-        #         latent_tex,
-        #         faces_uvs,
-        #         verts_uvs,
-        #         sampling_mode="nearest",
-        #         N=len(render_meshes),
-        #     )
-        #     rendered = renderer(render_meshes, cameras=cam)
-        #     rendered = rendered.to(latent_tex)
+        # # render
+        # render_meshes = mesh.clone()
+        # render_meshes.textures = make_repeated_uv_texture(
+        #     latent_tex,
+        #     faces_uvs,
+        #     verts_uvs,
+        #     sampling_mode="nearest",
+        #     N=len(render_meshes),
+        # )
+        # rendered = renderer(render_meshes, cameras=cam)
+        # rendered = rendered.to(latent_tex)
 
+        # for t in tqdm(self.scheduler.timesteps):
         #     noise_pred = self.model_forward_guided(
         #         rendered,
         #         t,
@@ -181,20 +180,11 @@ class TexFusionPipeline(BaseControlNetPipeline):
         #         [depth_maps[0]],
         #     )
 
-        #     denoised = self.scheduler.step(
+        #     rendered = self.scheduler.step(
         #         noise_pred, t, rendered, generator=generator
         #     ).prev_sample
 
-        #     update_uv_texture(
-        #         latent_tex,
-        #         denoised[0],
-        #         texel_xys[0],
-        #         texel_uvs[0],
-        #         update_empty_only=False,
-        #         interpolation="nearest",
-        #     )
-
-        # return self.decode_latents(denoised)
+        # return self.decode_latents(rendered)
 
         # Attempt 3: SIMS
         for t in tqdm(self.scheduler.timesteps):
@@ -204,13 +194,13 @@ class TexFusionPipeline(BaseControlNetPipeline):
 
             for i in range(0, n_views):
                 view_cam = cameras[i]
-                view_mesh = meshes[i]
+                mesh = meshes[i]
 
                 # render latent texture
-                view_mesh.textures = make_repeated_uv_texture(
+                mesh.textures = make_repeated_uv_texture(
                     latent_tex, faces_uvs, verts_uvs, sampling_mode="nearest"
                 )
-                render = renderer(view_mesh, cameras=view_cam).to(latent_tex)
+                render = renderer(mesh, cameras=view_cam).to(latent_tex)
 
                 # TODO
                 # add appropriate noise according to mask
@@ -223,15 +213,16 @@ class TexFusionPipeline(BaseControlNetPipeline):
                     uncond_embeddings[[i]],
                     [depth_maps[i]],
                 )
-                denoised = self.scheduler.step(noise_pred, t, render).prev_sample[0]
-                denoised_views.append(denoised)
+                rendered = self.scheduler.step(noise_pred, t, render).prev_sample[0]
+                denoised_views.append(rendered)
 
                 # update mask
+                projection = projections[i]
                 update_uv_texture(
                     mask,
                     torch.ones(1, uv_res, uv_res, device=self.device),
-                    texel_xys[i],
-                    texel_uvs[i],
+                    projection.xys,
+                    projection.uvs,
                     interpolation="nearest",
                     update_empty_only=False,
                 )
@@ -239,9 +230,9 @@ class TexFusionPipeline(BaseControlNetPipeline):
                 # update latent texture
                 update_uv_texture(
                     latent_tex,
-                    denoised,
-                    texel_xys[i],
-                    texel_uvs[i],
+                    rendered,
+                    projection.xys,
+                    projection.uvs,
                     interpolation="nearest",
                     update_empty_only=False,
                 )
