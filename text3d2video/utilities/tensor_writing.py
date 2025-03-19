@@ -1,7 +1,9 @@
 from pathlib import Path
 
 import h5py
-from rerun import Tensor
+from torch import Tensor
+
+from text3d2video.utilities.h5_util import dset_to_pt
 
 
 class H5logger:
@@ -26,48 +28,31 @@ class H5logger:
         if self.path.exists():
             self.path.unlink()
 
-    def log(self, path: str, tensor: Tensor, **attributes):
-        if path not in self.fp:
-            self.fp.create_group(path)
+    def write_dataset(
+        self,
+        path: str,
+        tensor: Tensor,
+        attrs: dict = None,
+    ):
+        tensor_np = tensor.cpu().numpy()
+        dataset = self.fp.create_dataset(path, data=tensor_np)
 
-        group = self.fp[path]
-        keys = list(group.keys())
-        step_idx = len(keys)
-        val_name = f"val_{step_idx}"
+        if attrs is not None:
+            for key, value in attrs.items():
+                dataset.attrs[key] = value
 
-        dataset = group.create_dataset(val_name, data=tensor.cpu().numpy())
+    def read_dataset(self, path: str) -> h5py.Dataset:
+        return self.fp[path]
 
-        h5_attribs = {"step": step_idx} | attributes
 
-        for k, v in h5_attribs.items():
-            dataset.attrs[k] = v
+class FeatureLogger(H5logger):
+    def _path(self, layer: str, t: int, name: str):
+        return f"features/{layer}/t_{t}/{name}"
 
-    def attr_keys(self, path: str):
-        group = self.fp[path]
-        datasets = list(group.keys())
+    def write(self, layer: str, t: int, name: str, tensor: Tensor):
+        attrs = {"t": t, "layer": layer}
+        self.write_dataset(self._path(layer, t, name), tensor, attrs)
 
-        keys = set()
-        for dataset in datasets:
-            attrs = dict(group[dataset].attrs)
-            dataset_keys = set(attrs.keys())
-            keys |= dataset_keys
-
-    def attr_values(self, path: str, key: str):
-        group = self.fp[path]
-        datasets = list(group.keys())
-
-        values = []
-        for dataset in datasets:
-            attrs = dict(group[dataset].attrs)
-            if key in attrs:
-                values.append(attrs[key])
-
-        return values
-
-    def read_datasets(self, path: str):
-        datasets = []
-        for key in self.fp[path].keys():
-            dataset = self.fp[path][key]
-            datasets.append(dataset)
-
-        return datasets
+    def read(self, layer: str, t: int, name: str) -> Tensor:
+        dset = self.read_dataset(self._path(layer, t, name))
+        return dset_to_pt(dset)

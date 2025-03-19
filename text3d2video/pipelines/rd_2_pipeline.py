@@ -1,4 +1,5 @@
 import torch
+import torchvision.transforms.functional as TF
 from attr import dataclass
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
@@ -15,15 +16,13 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
 )
 from text3d2video.rendering import (
     TextureShader,
-    make_mesh_renderer,
     make_repeated_uv_texture,
     precompute_rast_fragments,
     render_depth_map,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
-from text3d2video.util import dict_map
-from text3d2video.utilities.h5_util import dataset_to_tensor
-from text3d2video.utilities.tensor_writing import H5logger
+from text3d2video.util import dict_filter, dict_map
+from text3d2video.utilities.tensor_writing import FeatureLogger
 
 
 @dataclass
@@ -54,7 +53,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         faces_uvs: torch.Tensor,
         reposable_diffusion_config: ReposableDiffusionConfig,
         noise_initializer: NoiseInitializer,
-        logged_features: H5logger,
+        extracted_feats: FeatureLogger,
         generator=None,
     ):
         # setup configs for use throughout pipeline
@@ -88,6 +87,9 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         screen_resolutions = list(
             set([layer.layer_resolution(self.unet) for layer in layers])
         )
+
+        raster_resolutions = [10, 20, 32, 64]
+
         layer_resolution_indices = {
             layer.module_path(): screen_resolutions.index(
                 layer.layer_resolution(self.unet)
@@ -95,7 +97,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
             for layer in layers
         }
 
-        fragments = precompute_rast_fragments(tgt_cams, tgt_meshes, screen_resolutions)
+        fragments = precompute_rast_fragments(tgt_cams, tgt_meshes, raster_resolutions)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
@@ -105,57 +107,49 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
             tgt_meshes, tgt_cams, verts_uvs, faces_uvs, generator
         )
 
-        # READ FEATURES
-        kvs_cond_dsets = {}
-        kvs_uncond_dsets = {}
-        textures_cond_dsets = {}
-        textures_uncond_dsets = {}
-
-        for module in self.conf.module_paths:
-
-            def read_dsets(path):
-                dsets = logged_features.read_datasets(path)
-                return sorted(dsets, key=lambda dset: dset.attrs["t"])
-
-            read_dsets(f"kvs_cond/{module}")
-            kvs_cond_dsets[module] = read_dsets(f"kvs_cond/{module}")
-
-            kvs_uncond_dsets[module] = read_dsets(f"kvs_uncond/{module}")
-            textures_cond_dsets[module] = read_dsets(f"qrys_cond/{module}")
-            textures_uncond_dsets[module] = read_dsets(f"qrys_uncond/{module}")
+        t_weight = 0.8
+        max_t_i = self.conf.num_inference_steps * t_weight
 
         # denoising loop
-        for t in tqdm(self.scheduler.timesteps):
-            key = next(iter(kvs_cond_dsets.keys()))
-            dsets = kvs_cond_dsets[key]
-            dset_index = 0
-            for i, dset in enumerate(dsets):
-                if dset.attrs["t"] == t.item():
-                    dset_index = i
-
-            def read_dataset(dsets):
-                return dataset_to_tensor(dsets[dset_index]).to(latents)
-
-            def read_dset_kv(_, dsets):
-                return read_dataset(dsets)[0]
-
-            def read_dset_texture(_, dsets):
-                return read_dataset(dsets)
-
-            kvs_cond = dict_map(kvs_cond_dsets, read_dset_kv)
-            kvs_uncond = dict_map(kvs_uncond_dsets, read_dset_kv)
-            textures_cond = dict_map(textures_cond_dsets, read_dset_texture)
-            textures_uncond = dict_map(textures_uncond_dsets, read_dset_texture)
-
-            # set attn processor timestep
+        for t_i, t in enumerate(tqdm(self.scheduler.timesteps)):
             self.attn_processor.set_cur_timestep(t)
+
+            def read_features(t, name):
+                return {
+                    layer: extracted_feats.read(layer, int(t), name).to(
+                        device=self.device, dtype=self.dtype
+                    )
+                    for layer in self.conf.module_paths
+                }
+
+            kvs_cond = read_features(t, "kvs_cond")
+            kvs_uncond = read_features(t, "kvs_uncond")
+            textures_cond = read_features(t, "tex_cond")
+            textures_uncond = read_features(t, "tex_uncond")
+
+            if not self.conf.do_post_attn_injection:
+                textures_cond = {}
+                textures_uncond = {}
+
+            if not self.conf.do_pre_attn_injection:
+                kvs_cond = {}
+                kvs_uncond = {}
+
+            def filter(layer, _):
+                layers = self.conf.module_paths
+                layers_weight = 0.8
+                max_layer_index = int(len(layers) * layers_weight)
+                return layer in self.conf.module_paths[0:max_layer_index]
+
+            textures_cond = dict_filter(textures_cond, filter)
+            textures_uncond = dict_filter(textures_uncond, filter)
 
             # Denoise target frames in chunks with injection
             noise_preds = []
             for chunk_frame_indices in torch.split(frame_indices, self.conf.chunk_size):
-                shader = TextureShader()
 
                 def render_chunk_frames(layer, texture):
+                    shader = TextureShader()
                     tex = make_repeated_uv_texture(
                         texture,
                         faces_uvs,
@@ -164,6 +158,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                     )
 
                     res_idx = layer_resolution_indices[layer]
+                    resolution = screen_resolutions[res_idx]
 
                     renders = []
                     for frame_i in chunk_frame_indices.tolist():
@@ -171,12 +166,22 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                         frags = fragments[res_idx][frame_i]
                         mesh.textures = tex
                         render = shader(frags, mesh)[0]
+                        render = TF.resize(
+                            render,
+                            (resolution, resolution),
+                            interpolation=TF.InterpolationMode.NEAREST,
+                        )
+
                         renders.append(render)
                     renders = torch.stack(renders)
                     return renders
 
                 chunk_rendered_cond = dict_map(textures_cond, render_chunk_frames)
                 chunk_rendered_uncond = dict_map(textures_uncond, render_chunk_frames)
+
+                if t_i > max_t_i:
+                    chunk_rendered_cond = {}
+                    chunk_rendered_uncond = {}
 
                 chunk_noise = self.model_forward_injection(
                     latents[chunk_frame_indices],

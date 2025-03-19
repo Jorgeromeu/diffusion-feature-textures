@@ -27,7 +27,7 @@ from text3d2video.rendering import (
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
-from text3d2video.utilities.tensor_writing import H5logger
+from text3d2video.utilities.tensor_writing import FeatureLogger
 
 
 # pylint: disable=too-many-instance-attributes
@@ -178,9 +178,9 @@ class TexturingPipeline(BaseControlNetPipeline):
     ):
         self.conf = conf
 
-        features_logger = H5logger(Path("features.h5"))
-        features_logger.delete_data()
-        features_logger.open_write()
+        features_writer = FeatureLogger(Path("features.h5"))
+        features_writer.delete_data()
+        features_writer.open_write()
 
         # setup attn processor
         self.attn_processor = UnifiedAttnProcessor(
@@ -207,7 +207,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         screen_resolutions = list(
             set([layer.layer_resolution(self.unet) for layer in layers])
         )
-        uv_resolutions = [screen * 3 for screen in screen_resolutions]
+        uv_resolutions = [screen * 4 for screen in screen_resolutions]
 
         layer_resolution_indices = {
             layer.module_path(): screen_resolutions.index(
@@ -257,7 +257,6 @@ class TexturingPipeline(BaseControlNetPipeline):
             extracted_feats_cond = view_0_out.extracted_feats_cond
             extracted_feats_uncond = view_0_out.extracted_feats_uncond
 
-            layer_resolutions = dict_map(extracted_feats_cond, lambda _, x: x.shape[2])
             layer_dimensions = dict_map(extracted_feats_cond, lambda _, x: x.shape[1])
 
             # project initial queries to textures
@@ -344,10 +343,10 @@ class TexturingPipeline(BaseControlNetPipeline):
 
             # save features
             for l in extracted_feats_cond:
-                features_logger.log(f"qrys_cond/{l}", textures_cond[l], t=t)
-                features_logger.log(f"qrys_uncond/{l}", textures_uncond[l], t=t)
-                features_logger.log(f"kvs_cond/{l}", first_kvs_cond[l], t=t)
-                features_logger.log(f"kvs_uncond/{l}", first_kvs_uncond[l], t=t)
+                features_writer.write(l, t, "tex_cond", textures_cond[l])
+                features_writer.write(l, t, "tex_uncond", textures_uncond[l])
+                features_writer.write(l, t, "kvs_cond", first_kvs_cond[l][0])
+                features_writer.write(l, t, "kvs_uncond", first_kvs_uncond[l][0])
 
             # update latents
             all_noise_preds = [noise_pred_first] + noise_preds

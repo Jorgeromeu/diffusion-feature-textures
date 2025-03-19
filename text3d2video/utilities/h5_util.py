@@ -31,5 +31,18 @@ def read_tensor_from_dataset(h5_path: str, path: str) -> Tensor:
         return Tensor(dset)
 
 
-def dataset_to_tensor(dataset) -> Tensor:
+def dset_to_pt(dataset) -> Tensor:
     return torch.from_numpy(dataset[:])
+
+
+def find_all_attribute_values(file: h5py.Group, attr_name: str):
+    all_vals = set()
+
+    def visit(path, obj):
+        val = obj.attrs.get(attr_name)
+
+        if val is not None:
+            all_vals.add(val)
+
+    file.visititems(visit)
+    return list(all_vals)

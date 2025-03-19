@@ -141,3 +141,7 @@ def create_object_array(data: List, shape: Tuple) -> List:
 
 def dict_map(dict: Dict, callable: Callable) -> Dict:
     return {k: callable(k, v) for k, v in dict.items()}
+
+
+def dict_filter(dict: Dict, condition: Callable) -> Dict:
+    return {k: v for k, v in dict.items() if condition(k, v)}
