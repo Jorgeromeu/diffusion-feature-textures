@@ -1,6 +1,7 @@
 from typing import List, Tuple
 
 import torch
+from attr import dataclass
 from jaxtyping import Float
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
@@ -44,6 +45,12 @@ def project_visible_verts_to_camera(
     return visible_verts_xy, vert_indices
 
 
+@dataclass
+class TexelProjection:
+    xys: Tensor
+    uvs: Tensor
+
+
 def project_visible_texels_to_camera(
     mesh: Meshes,
     camera: CamerasBase,
@@ -76,17 +83,15 @@ def project_visible_texels_to_camera(
     rasterizer = MeshRasterizer(raster_settings=raster_settings)
     fragments = rasterizer(mesh, cameras=camera)
 
-    # get visible pixels mask
-    mask = fragments.zbuf[:, :, :, 0] > 0
-
-    # for each face, for each vert, uv coord
+    # get UV coordinates for each pixel
     faces_verts_uvs = verts_uvs[faces_uvs]
-
-    # interpolate uv coordinates, to get a uv at each pixel
     pixel_uvs = interpolate_face_attributes(
         fragments.pix_to_face, fragments.bary_coords, faces_verts_uvs
     )
     pixel_uvs = pixel_uvs[:, :, :, 0, :]
+
+    # get visible pixels mask
+    mask = fragments.zbuf[:, :, :, 0] > 0
 
     # 2D coordinate for each pixel, NDC space
     xs = torch.linspace(-1, 1, raster_res)
@@ -98,7 +103,7 @@ def project_visible_texels_to_camera(
     uvs = pixel_uvs[mask]
     xys = ndc_coords[mask[0]]
 
-    # convert continuous cartesian uv coords to pixel coords
+    # convert continuous uv coords to texel coords
     size = (texture_res, texture_res)
     uv_pix_coords = uvs.clone()
     uv_pix_coords[:, 0] = uv_pix_coords[:, 0] * size[0]
@@ -109,7 +114,7 @@ def project_visible_texels_to_camera(
     texel_coords, coord_pix_indices = unique_with_indices(uv_pix_coords, dim=0)
     texel_xy_coords = xys[coord_pix_indices, :]
 
-    return texel_xy_coords, texel_coords
+    return TexelProjection(xys=texel_xy_coords, uvs=texel_coords)
 
 
 # Aggregation

@@ -419,4 +419,20 @@ class UnifiedAttnProcessor(DefaultAttnProcessor):
             qrys_square = self._reshape_seq_to_2D(qry)
             self.extracted_spatial_qrys[self._cur_module_path] = qrys_square
 
-        return memory_efficient_attention(attn, key, qry, val, attention_mask)
+        y = memory_efficient_attention(attn, key, qry, val, attention_mask)
+
+        # read injected y features
+        injected_y = self.injected_post_attns.get(self._cur_module_path)
+        if injected_y is not None:
+            y_square = self._reshape_seq_to_2D(y)
+            blended = blend_features(
+                y_square, injected_y, self.feature_blend_alpha, channel_dim=1
+            )
+            y = self._reshape_2D_to_seq(blended)
+
+        # extract spatial post-attn features
+        if self._should_extract_post_attn():
+            y_square = self._reshape_seq_to_2D(y)
+            self.extracted_post_attns[self._cur_module_path] = y_square
+
+        return y

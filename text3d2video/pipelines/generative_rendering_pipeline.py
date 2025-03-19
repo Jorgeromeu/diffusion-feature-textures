@@ -26,7 +26,7 @@ from text3d2video.rendering import (
     make_repeated_vert_texture,
     render_depth_map,
 )
-from text3d2video.util import map_dict
+from text3d2video.util import dict_map
 from text3d2video.utilities.diffusion_data import (
     DiffusionDataLogger,
 )
@@ -349,7 +349,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             )
 
             # aggregate keyframe-features to textures
-
             kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
             kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
 
@@ -361,8 +360,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     kf_vert_indices,
                 )
 
-            textures_uncond = map_dict(kf_features.uncond_post_attn, aggr_kf_features)
-            textures_cond = map_dict(kf_features.cond_post_attn, aggr_kf_features)
+            textures_uncond = dict_map(kf_features.uncond_post_attn, aggr_kf_features)
+            textures_cond = dict_map(kf_features.cond_post_attn, aggr_kf_features)
 
             # denoising in chunks
             noise_preds = []
@@ -376,8 +375,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                         kf_features.layer_resolution(layer),
                     )
 
-                renders_uncond = map_dict(textures_uncond, render_chunk)
-                renders_cond = map_dict(textures_cond, render_chunk)
+                renders_uncond = dict_map(textures_uncond, render_chunk)
+                renders_cond = dict_map(textures_cond, render_chunk)
 
                 # Diffusion step with pre-and post-attn injection
                 noise_pred = self.model_forward_injection(

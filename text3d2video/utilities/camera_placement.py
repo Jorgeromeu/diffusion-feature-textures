@@ -96,23 +96,25 @@ def front_facing_extrinsics(degrees=0, xs=0, ys=0, zs=1.5):
 def turntable_extrinsics(
     dists=2,
     angles=0,
-    elev=0,
+    elevs=0,
     vertical=False,
 ) -> FoVPerspectiveCameras:
-    dists, angles = broadcast_inputs(dists, angles)
+    dists, angles, elevs = broadcast_inputs(dists, angles, elevs)
     n = len(angles)
 
     azim = angles
-    elevs = [elev] * n
 
     if vertical:
-        azim, elev = elev, azim
+        azim, elevs = elevs, azim
 
     R, T = look_at_view_transform(dists, elevs, azim)
     return R, T
 
 
-def cam_view_prompt(angle):
+def cam_view_prompt(angle, elev):
+    if elev > 60:
+        return "top"
+
     norm_angle = angle % 360
 
     if norm_angle >= 315 or norm_angle <= 45:

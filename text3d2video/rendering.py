@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import torch
 import torchvision.transforms.functional as TF
 from einops import rearrange
@@ -11,6 +13,8 @@ from pytorch3d.renderer import (
 )
 from pytorch3d.structures import Meshes
 from torch import Tensor, nn
+
+from text3d2video.backprojection import project_visible_texels_to_camera
 
 
 class TextureShader(nn.Module):
@@ -125,3 +129,42 @@ def make_repeated_uv_texture(
         extended_verts_uvs,
         sampling_mode=sampling_mode,
     )
+
+
+def precompute_rasterization(
+    cameras, meshes, vert_uvs, faces_uvs, render_resolutions, texture_resolutions
+):
+    projections = defaultdict(lambda: dict())
+    fragments = defaultdict(lambda: dict())
+
+    for frame_idx in range(len(cameras)):
+        cam = cameras[frame_idx]
+        mesh = meshes[frame_idx]
+
+        for res_i in range(len(render_resolutions)):
+            render_res = render_resolutions[res_i]
+            texture_res = texture_resolutions[res_i]
+
+            # project UVs to camera
+            projection = project_visible_texels_to_camera(
+                mesh,
+                cam,
+                vert_uvs,
+                faces_uvs,
+                raster_res=2000,
+                texture_res=texture_res,
+            )
+
+            # rasterize
+            rasterizer = make_mesh_rasterizer(
+                resolution=render_res,
+                faces_per_pixel=1,
+                blur_radius=0,
+                bin_size=0,
+            )
+            frame_fragments = rasterizer(mesh, cameras=cam)
+
+            fragments[frame_idx][res_i] = frame_fragments
+            projections[frame_idx][res_i] = projection
+
+    return projections, fragments

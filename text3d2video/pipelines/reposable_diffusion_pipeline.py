@@ -11,7 +11,6 @@ from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
 from text3d2video.backprojection import (
-    aggregate_views_vert_texture,
     project_visible_verts_to_camera,
 )
 from text3d2video.noise_initialization import NoiseInitializer
@@ -19,11 +18,9 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 from text3d2video.rendering import (
-    make_mesh_renderer,
-    make_repeated_vert_texture,
     render_depth_map,
 )
-from text3d2video.util import map_dict
+from text3d2video.util import dict_map
 
 
 @dataclass
@@ -139,16 +136,16 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                     src_vert_indices,
                 )
 
-            textures_uncond = map_dict(features.uncond_post_attn, aggr_src_features)
-            textures_cond = map_dict(features.cond_post_attn, aggr_src_features)
+            textures_uncond = dict_map(features.uncond_post_attn, aggr_src_features)
+            textures_cond = dict_map(features.cond_post_attn, aggr_src_features)
 
             def render_src_frames(layer, texture):
                 return self.render_texture(
                     texture, src_cams, src_meshes, features.layer_resolution(layer)
                 )
 
-            src_rendered_uncond = map_dict(textures_uncond, render_src_frames)
-            src_rendered_cond = map_dict(textures_cond, render_src_frames)
+            src_rendered_uncond = dict_map(textures_uncond, render_src_frames)
+            src_rendered_cond = dict_map(textures_cond, render_src_frames)
 
             # Denoising source frames with injection
             src_noise_preds = self.model_forward_injection(
@@ -177,8 +174,8 @@ class ReposableDiffusionPipeline(GenerativeRenderingPipeline):
                         features.layer_resolution(layer),
                     )
 
-                chunk_rendered_uncond = map_dict(textures_uncond, render_chunk_frames)
-                chunk_rendered_cond = map_dict(textures_cond, render_chunk_frames)
+                chunk_rendered_uncond = dict_map(textures_uncond, render_chunk_frames)
+                chunk_rendered_cond = dict_map(textures_cond, render_chunk_frames)
 
                 chunk_noise = self.model_forward_injection(
                     latents[chunk_frame_indices],

@@ -139,5 +139,5 @@ def create_object_array(data: List, shape: Tuple) -> List:
     return arr
 
 
-def map_dict(dict: Dict, callable: Callable):
+def dict_map(dict: Dict, callable: Callable) -> Dict:
     return {k: callable(k, v) for k, v in dict.items()}
