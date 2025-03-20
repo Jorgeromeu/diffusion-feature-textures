@@ -8,7 +8,9 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 from diffusers.image_processor import VaeImageProcessor
+from jaxtyping import Float
 from PIL import Image
+from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -59,20 +61,42 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         return image
 
-    def controlnet_forward(self, images, latents, t, embeddings, conditioning_scale):
-        processed_images = self.preprocess_controlnet_images(images)
+    def model_forward_cfg(
+        self,
+        latents: Float[Tensor, "b c h w"],
+        cond_embeddings: Float[Tensor, "b t d"],
+        uncond_embeddings: Float[Tensor, "b d"],
+        t: int,
+        depth_maps: List[Image.Image],
+        controlnet_conditioning_scale: float = 1.0,
+        guidance_scale: float = 7.5,
+    ) -> Tensor:
+        """
+        Forward pass through ControlNet and UNet
+        """
 
-        down_residuals, mid_residual = self.controlnet(
+        # ControlNet Pass
+        processed_ctrl_image = self.preprocess_controlnet_images(depth_maps)
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
             latents,
             t,
-            encoder_hidden_states=embeddings,
-            controlnet_cond=processed_images,
-            conditioning_scale=conditioning_scale,
+            encoder_hidden_states=cond_embeddings,
+            controlnet_cond=processed_ctrl_image,
+            conditioning_scale=controlnet_conditioning_scale,
             guess_mode=False,
             return_dict=False,
         )
 
-        return down_residuals, mid_residual
+        # UNet Pass
+        noise_pred = self.unet(
+            latents,
+            t,
+            mid_block_additional_residual=mid_block_res_sample,
+            down_block_additional_residuals=down_block_res_samples,
+            encoder_hidden_states=cond_embeddings,
+        ).sample
+
+        return noise_pred
 
     @torch.no_grad()
     def __call__(
@@ -81,8 +105,7 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         depth_maps: List[Image.Image],
         num_inference_steps=30,
         controlnet_conditioning_scale=1.0,
-        w_joint=1.0,
-        w_text=0.0,
+        guidance_scale=7.5,
         generator=None,
     ):
         # number of images being generated
@@ -101,67 +124,17 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         for t in tqdm(self.scheduler.timesteps):
             latents = self.scheduler.scale_model_input(latents, t)
 
-            # Do 4 passes through UNet:
-            # 0: no condition
-            # 1: text only
-            # 2: depth only
-            # 3: text and depth
-
-            # ControlNet pass with cond and uncond embeddings
-            down_residuals, mid_residual = self.controlnet_forward(
-                depth_maps * 2,
-                torch.cat([latents] * 2),
+            noise_pred = self.model_forward_cfg(
+                latents,
+                cond_embeddings,
+                uncond_embeddings,
                 t,
-                torch.cat([uncond_embeddings, cond_embeddings]),
+                depth_maps,
                 controlnet_conditioning_scale,
             )
 
-            empty_mid_residual = torch.zeros_like(mid_residual[0:batch_size, ...])
-            empty_down_residuals = [
-                torch.zeros_like(residual[0:batch_size, ...])
-                for residual in down_residuals
-            ]
-
-            mid_residual = torch.cat(
-                [empty_mid_residual, empty_mid_residual, mid_residual], dim=0
-            )
-            down_residuals = [
-                torch.cat([empty, empty, residual], dim=0)
-                for empty, residual in zip(empty_down_residuals, down_residuals)
-            ]
-
-            # UNet Pass
-            latents_input = torch.cat([latents] * 4, dim=0)
-            embeddings_input = torch.cat(
-                [
-                    uncond_embeddings,
-                    cond_embeddings,
-                    uncond_embeddings,
-                    cond_embeddings,
-                ],
-            )
-
-            noise_pred_all = self.unet(
-                latents_input,
-                t,
-                mid_block_additional_residual=mid_residual,
-                down_block_additional_residuals=down_residuals,
-                encoder_hidden_states=embeddings_input,
-            ).sample
-
-            # preform classifier free guidance
-            eps_uncond, eps_text, eps_depth, eps_text_depth = noise_pred_all.chunk(4)
-
-            # eps = eps_depth + 7.5 * (eps_text_depth - eps_depth)
-
-            eps = (
-                eps_uncond
-                + 7.5 * (eps_text - eps_uncond)
-                + 4.5 * (eps_text_depth - eps_uncond)
-            )
-
             # update latents
-            latents = self.scheduler.step(eps, t, latents).prev_sample
+            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         # decode latents
         return self.decode_latents(latents)

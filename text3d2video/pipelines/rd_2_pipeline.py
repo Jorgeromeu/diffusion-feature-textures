@@ -1,10 +1,15 @@
+from typing import Dict, List
+
 import torch
 import torchvision.transforms.functional as TF
 from attr import dataclass
+from jaxtyping import Float
+from PIL import Image
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
 )
 from pytorch3d.structures import Meshes
+from torch import Tensor
 from tqdm import tqdm
 
 from text3d2video.attn_processors.extraction_injection_attn import (
@@ -26,22 +31,102 @@ from text3d2video.utilities.tensor_writing import FeatureLogger
 
 
 @dataclass
-class ReposableDiffusionConfig:
+class FeatureInjectionConfig:
     do_pre_attn_injection: bool
     do_post_attn_injection: bool
     feature_blend_alpha: float
     attend_to_self_kv: bool
-    mean_features_weight: float
     chunk_size: int
     num_inference_steps: int
     guidance_scale: float
     controlnet_conditioning_scale: float
+    time_threshold: float
+    layer_threshold: float
     module_paths: list[str]
 
 
 class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
-    conf: ReposableDiffusionConfig
+    conf: FeatureInjectionConfig
     attn_processor: ExtractionInjectionAttn
+
+    def model_forward(
+        self,
+        latents: Float[Tensor, "b c h w"],
+        embeddings: Float[Tensor, "b t d"],
+        t: int,
+        depth_maps: List[Image.Image],
+    ) -> Tensor:
+        # ControlNet Pass
+        processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            latents,
+            t,
+            encoder_hidden_states=embeddings,
+            controlnet_cond=processed_ctrl_images,
+            conditioning_scale=self.conf.controlnet_conditioning_scale,
+            guess_mode=False,
+            return_dict=False,
+        )
+
+        # UNet Pass
+        noise_pred = self.unet(
+            latents,
+            t,
+            mid_block_additional_residual=mid_block_res_sample,
+            down_block_additional_residuals=down_block_res_samples,
+            encoder_hidden_states=embeddings,
+        ).sample
+
+        return noise_pred
+
+    def model_forward_injection(
+        self,
+        latents: Float[Tensor, "b c h w"],
+        cond_embeddings: Float[Tensor, "t d"],
+        uncond_embeddings: Float[Tensor, "t d"],
+        depth_maps: List[Image.Image],
+        t: int,
+        cond_kv_features: Dict[str, Float[Tensor, "b t d"]],
+        uncond_kv_features: Dict[str, Float[Tensor, "b t d"]],
+        cond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
+        uncond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
+    ) -> Tensor:
+        latents_duplicated = torch.cat([latents] * 2)
+        embeddings = torch.cat([uncond_embeddings, cond_embeddings])
+        depth_maps_duplicated = depth_maps * 2
+
+        # stack kv features
+        injected_kvs = {}
+        for layer in cond_kv_features.keys():
+            layer_kvs = torch.stack(
+                [uncond_kv_features[layer], cond_kv_features[layer]]
+            )
+            injected_kvs[layer] = layer_kvs
+
+        # stack rendered features
+        injected_post_attn = {}
+        for layer in cond_rendered_features.keys():
+            layer_post_attn = torch.stack(
+                [uncond_rendered_features[layer], cond_rendered_features[layer]]
+            )
+            injected_post_attn[layer] = layer_post_attn
+
+        # pass injected features
+        self.attn_processor.set_injection_mode(
+            pre_attn_features=injected_kvs, post_attn_features=injected_post_attn
+        )
+
+        noise_pred = self.model_forward(
+            latents_duplicated, embeddings, t, depth_maps_duplicated
+        )
+
+        # classifier-free guidance
+        noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
+        noise_pred_guided = noise_pred_uncond + self.conf.guidance_scale * (
+            noise_pred_cond - noise_pred_uncond
+        )
+
+        return noise_pred_guided
 
     @torch.no_grad()
     def __call__(
@@ -51,7 +136,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         tgt_cams: FoVPerspectiveCameras,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
-        reposable_diffusion_config: ReposableDiffusionConfig,
+        reposable_diffusion_config: FeatureInjectionConfig,
         noise_initializer: NoiseInitializer,
         extracted_feats: FeatureLogger,
         generator=None,
@@ -81,23 +166,21 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         # render all depth maps
         depth_maps = render_depth_map(tgt_meshes, tgt_cams, 512)
 
-        layers = [
-            AttnLayerId.parse_module_path(path) for path in self.conf.module_paths
-        ]
+        layers = [AttnLayerId.parse(path) for path in self.conf.module_paths]
         screen_resolutions = list(
-            set([layer.layer_resolution(self.unet) for layer in layers])
+            set([layer.resolution(self.unet) for layer in layers])
         )
 
-        raster_resolutions = [10, 20, 32, 64]
-
         layer_resolution_indices = {
-            layer.module_path(): screen_resolutions.index(
-                layer.layer_resolution(self.unet)
-            )
+            layer.module_path(): screen_resolutions.index(layer.resolution(self.unet))
             for layer in layers
         }
 
-        fragments = precompute_rast_fragments(tgt_cams, tgt_meshes, raster_resolutions)
+        # filter layers to perform injection on
+        max_layer_index = int(len(layers) * self.conf.layer_threshold)
+        injection_layers = self.conf.module_paths[0:max_layer_index]
+
+        fragments = precompute_rast_fragments(tgt_cams, tgt_meshes, screen_resolutions)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
@@ -107,8 +190,10 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
             tgt_meshes, tgt_cams, verts_uvs, faces_uvs, generator
         )
 
-        t_weight = 0.8
-        max_t_i = self.conf.num_inference_steps * t_weight
+        # compute maximum time at which we perform injection
+        denoising_times = self.scheduler.timesteps
+        max_t_idx = int(len(denoising_times) * self.conf.time_threshold)
+        max_t = denoising_times[max_t_idx]
 
         # denoising loop
         for t_i, t in enumerate(tqdm(self.scheduler.timesteps)):
@@ -136,10 +221,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                 kvs_uncond = {}
 
             def filter(layer, _):
-                layers = self.conf.module_paths
-                layers_weight = 0.8
-                max_layer_index = int(len(layers) * layers_weight)
-                return layer in self.conf.module_paths[0:max_layer_index]
+                return layer in injection_layers
 
             textures_cond = dict_filter(textures_cond, filter)
             textures_uncond = dict_filter(textures_uncond, filter)
@@ -179,7 +261,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                 chunk_rendered_cond = dict_map(textures_cond, render_chunk_frames)
                 chunk_rendered_uncond = dict_map(textures_uncond, render_chunk_frames)
 
-                if t_i > max_t_i:
+                if t < max_t:
                     chunk_rendered_cond = {}
                     chunk_rendered_uncond = {}
 

@@ -201,18 +201,14 @@ class TexturingPipeline(BaseControlNetPipeline):
         depth_maps = render_depth_map(meshes, cameras, 512)
 
         # precompute rasterization for all camera views and relevant resolutions
-        layers = [
-            AttnLayerId.parse_module_path(path) for path in self.conf.module_paths
-        ]
+        layers = [AttnLayerId.parse(path) for path in self.conf.module_paths]
         screen_resolutions = list(
-            set([layer.layer_resolution(self.unet) for layer in layers])
+            set([layer.resolution(self.unet) for layer in layers])
         )
         uv_resolutions = [screen * 4 for screen in screen_resolutions]
 
         layer_resolution_indices = {
-            layer.module_path(): screen_resolutions.index(
-                layer.layer_resolution(self.unet)
-            )
+            layer.module_path(): screen_resolutions.index(layer.resolution(self.unet))
             for layer in layers
         }
 

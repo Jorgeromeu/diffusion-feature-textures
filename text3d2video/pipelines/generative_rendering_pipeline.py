@@ -16,16 +16,18 @@ from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
 from text3d2video.backprojection import (
-    aggregate_views_vert_texture,
-    project_visible_verts_to_camera,
+    TexelProjection,
+    aggregate_views_uv_texture,
+    aggregate_views_uv_texture_mean,
 )
 from text3d2video.noise_initialization import NoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
-    make_mesh_renderer,
-    make_repeated_vert_texture,
+    TextureShader,
+    make_repeated_uv_texture,
     precompute_rasterization,
     render_depth_map,
+    shade_meshes,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
@@ -247,31 +249,37 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     def aggregate_features(
         self,
         feature_maps: Float[Tensor, "b c h w"],
-        n_verts: int,
-        vert_xys: List,
-        vert_indices: List,
-    ) -> Float[Tensor, "v c"]:
-        texture = aggregate_views_vert_texture(
+        uv_res: int,
+        projections: List[TexelProjection],
+    ) -> Float[Tensor, "h w c"]:
+        texel_xys = [proj.xys for proj in projections]
+        texel_uvs = [proj.uvs for proj in projections]
+
+        texture = aggregate_views_uv_texture(
             feature_maps,
-            n_verts,
-            vert_xys,
-            vert_indices,
-            mode="nearest",
-            aggregation_type="first",
+            uv_res,
+            texel_xys,
+            texel_uvs,
+            interpolation_mode="bilinear",
         ).to(torch.float32)
-        return texture
 
-    def render_texture(
-        self, texture: Float[Tensor, "v c"], cams, meshes, resolution: int
-    ):
-        tex = make_repeated_vert_texture(texture, len(cams))
-        tex.sampling_mode = "nearest"
+        w_mean = self.conf.mean_features_weight
+        w_inpaint = 1 - w_mean
 
-        renderer = make_mesh_renderer(cameras=cams, resolution=resolution)
+        if w_mean == 0:
+            return texture
 
-        render_meshes = meshes.clone()
-        render_meshes.textures = tex
-        return renderer(render_meshes)
+        texture_mean = aggregate_views_uv_texture_mean(
+            feature_maps,
+            uv_res,
+            texel_xys,
+            texel_uvs,
+            interpolation_mode="bilinear",
+        ).to(torch.float32)
+
+        w_mean = self.conf.mean_features_weight
+        w_inpaint = 1 - w_mean
+        return w_mean * texture_mean + w_inpaint * texture
 
     @torch.no_grad()
     def __call__(
@@ -295,18 +303,18 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         # configure scheduler
         self.scheduler.set_timesteps(self.conf.num_inference_steps)
 
-        # determine resolutions
-        layers = [
-            AttnLayerId.parse_module_path(path) for path in self.conf.module_paths
-        ]
-        layer_resolutions = set([layer.layer_resolution(self.unet) for layer in layers])
-        
+        # precompute rasterization and texel projection for various resolutions (for different layers)
+        layers = [AttnLayerId.parse(path) for path in self.conf.module_paths]
+        layer_resolutions = list(set([layer.resolution(self.unet) for layer in layers]))
+        uv_resolutions = [screen * 4 for screen in layer_resolutions]
 
-        render_resolutions = [3, 3, 3, 3]
-        uv_resolutions = [100, 100, 100, 100]
+        layer_resolution_indices = {
+            layer.module_path(): layer_resolutions.index(layer.resolution(self.unet))
+            for layer in layers
+        }
 
         projections, fragments = precompute_rasterization(
-            cameras, meshes, verts_uvs, faces_uvs, render_resolutions, uv_resolutions
+            cameras, meshes, verts_uvs, faces_uvs, layer_resolutions, uv_resolutions
         )
 
         # setup logger
@@ -341,14 +349,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         # render depth maps for frames
         depth_maps = render_depth_map(meshes, cameras, 512)
 
-        # precompute texture rasterization for efficient projection
-        vert_xys = []
-        vert_indices = []
-        for cam, mesh in zip(cameras, meshes):
-            xys, indices = project_visible_verts_to_camera(mesh, cam)
-            vert_xys.append(xys)
-            vert_indices.append(indices)
-
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
             self.attn_processor.cur_timestep = t
@@ -364,17 +364,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 t,
             )
 
-            # aggregate keyframe-features to textures
-            kf_vert_xys = [vert_xys[i] for i in kf_indices.tolist()]
-            kf_vert_indices = [vert_indices[i] for i in kf_indices.tolist()]
-
-            def aggr_kf_features(_, features):
-                return self.aggregate_features(
-                    features,
-                    meshes.num_verts_per_mesh()[0],
-                    kf_vert_xys,
-                    kf_vert_indices,
-                )
+            def aggr_kf_features(layer, features):
+                res_idx = layer_resolution_indices[layer]
+                uv_res = uv_resolutions[res_idx]
+                kf_projections = [projections[i][res_idx] for i in kf_indices.tolist()]
+                return self.aggregate_features(features, uv_res, kf_projections)
 
             textures_uncond = dict_map(kf_features.uncond_post_attn, aggr_kf_features)
             textures_cond = dict_map(kf_features.cond_post_attn, aggr_kf_features)
@@ -383,13 +377,19 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
                 # render chunk post-attn features
-                def render_chunk(layer, texture):
-                    return self.render_texture(
-                        texture,
-                        cameras[chunk_frame_indices],
-                        meshes[chunk_frame_indices],
-                        kf_features.layer_resolution(layer),
+                def render_chunk(layer, uv_map):
+                    chunk_meshes = meshes[chunk_frame_indices]
+                    res_idx = layer_resolution_indices[layer]
+                    chunk_frags = [
+                        fragments[i][res_idx] for i in chunk_frame_indices.tolist()
+                    ]
+
+                    texture = make_repeated_uv_texture(
+                        uv_map, faces_uvs, verts_uvs, sampling_mode="nearest"
                     )
+                    shader = TextureShader()
+
+                    return shade_meshes(shader, texture, chunk_meshes, chunk_frags)
 
                 renders_uncond = dict_map(textures_uncond, render_chunk)
                 renders_cond = dict_map(textures_cond, render_chunk)

@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import List
 
 import torch
 import torchvision.transforms.functional as TF
@@ -11,6 +12,7 @@ from pytorch3d.renderer import (
     TexturesUV,
     TexturesVertex,
 )
+from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor, nn
 
@@ -107,7 +109,9 @@ def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
     return all_depth_maps
 
 
-def make_repeated_vert_texture(vert_features: Float[Tensor, "n c"], N=1):
+def make_repeated_vert_texture(
+    vert_features: Float[Tensor, "n c"], N=1
+) -> TexturesVertex:
     extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
     return TexturesVertex(extended_vt_features)
 
@@ -151,7 +155,7 @@ def precompute_rasterization(
                 cam,
                 vert_uvs,
                 faces_uvs,
-                raster_res=2000,
+                raster_res=texture_res * 10,
                 texture_res=texture_res,
             )
 
@@ -184,3 +188,16 @@ def precompute_rast_fragments(cameras, meshes, raster_resolutions: list[int]):
             fragments[res_i][frame_i] = frags
 
     return fragments
+
+
+def shade_meshes(
+    shader, texture: TexturesUV, meshes: Meshes, fragments: List[Fragments]
+):
+    renders = []
+    for mesh, frags in zip(meshes, fragments):
+        mesh.textures = texture
+        render = shader(frags, mesh)[0]
+        renders.append(render)
+
+    renders = torch.stack(renders)
+    return renders

@@ -68,7 +68,6 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
 
         # initialize latents from standard normal
         noise_initializer = FixedNoiseInitializer()
-        noise_initializer = RandomNoiseInitializer()
         latents = noise_initializer.initial_noise(
             batch_size, device=self.device, dtype=self.dtype, generator=generator
         )
