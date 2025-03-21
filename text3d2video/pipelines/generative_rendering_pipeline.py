@@ -2,7 +2,6 @@ from typing import Dict, List
 
 import torch
 from attr import dataclass
-from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from jaxtyping import Float
 from PIL import Image
 from pytorch3d.renderer import (
@@ -31,9 +30,7 @@ from text3d2video.rendering import (
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
-from text3d2video.utilities.diffusion_data import (
-    DiffusionDataLogger,
-)
+from text3d2video.utilities.logging import GrLogger
 
 
 # pylint: disable=too-many-instance-attributes
@@ -67,31 +64,11 @@ class GrExtractedFeatures:
             return None
 
 
-class GenerativeRenderingLogger(DiffusionDataLogger):
-    def __init__(self, h5_file_path, enabled=True, n_save_frames=5, n_save_levels=8):
-        self.n_frames = n_save_frames
-        self.n_times = n_save_levels
-        super().__init__(
-            h5_file_path,
-            enabled,
-            [],
-            [],
-            [],
-        )
-
-    def setup_logger(
-        self, scheduler: SchedulerMixin, n_frames: int, modules: list[str]
-    ):
-        self.path_greenlist = modules
-        self.calc_evenly_spaced_frame_indices(n_frames, self.n_frames)
-        self.calc_evenly_spaced_noise_noise_levels(scheduler, self.n_times)
-
-
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
     attn_processor: ExtractionInjectionAttn
     conf: GenerativeRenderingConfig
     noise_initializer: NoiseInitializer
-    logger: GenerativeRenderingLogger
+    logger: GrLogger
 
     def prepare_latents(
         self,
@@ -306,7 +283,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         # precompute rasterization and texel projection for various resolutions (for different layers)
         layers = [AttnLayerId.parse(path) for path in self.conf.module_paths]
         layer_resolutions = list(set([layer.resolution(self.unet) for layer in layers]))
-        uv_resolutions = [screen * 4 for screen in layer_resolutions]
+        layer_resolutions = sorted(layer_resolutions)
+        raster_resolutions = layer_resolutions
+
+        uv_factor = 3
+        uv_resolutions = [int(screen * uv_factor) for screen in layer_resolutions]
 
         layer_resolution_indices = {
             layer.module_path(): layer_resolutions.index(layer.resolution(self.unet))
@@ -314,15 +295,13 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         }
 
         projections, fragments = precompute_rasterization(
-            cameras, meshes, verts_uvs, faces_uvs, layer_resolutions, uv_resolutions
+            cameras, meshes, verts_uvs, faces_uvs, raster_resolutions, uv_resolutions
         )
 
         # setup logger
         if logger is not None:
             self.logger = logger
-            self.logger.setup_logger(
-                self.scheduler, n_frames, generative_rendering_config.module_paths
-            )
+            self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
 
         # set up attn processor
         self.attn_processor = ExtractionInjectionAttn(
@@ -373,6 +352,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             textures_uncond = dict_map(kf_features.uncond_post_attn, aggr_kf_features)
             textures_cond = dict_map(kf_features.cond_post_attn, aggr_kf_features)
 
+            self.logger.write_feature_textures("textures_cond", textures_cond, t)
+            self.logger.write_feature_textures("textures_uncond", textures_uncond, t)
+
             # denoising in chunks
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
@@ -380,6 +362,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 def render_chunk(layer, uv_map):
                     chunk_meshes = meshes[chunk_frame_indices]
                     res_idx = layer_resolution_indices[layer]
+                    resolution = layer_resolutions[res_idx]
+
                     chunk_frags = [
                         fragments[i][res_idx] for i in chunk_frame_indices.tolist()
                     ]
@@ -389,10 +373,19 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     )
                     shader = TextureShader()
 
-                    return shade_meshes(shader, texture, chunk_meshes, chunk_frags)
+                    return shade_meshes(
+                        shader, texture, chunk_meshes, chunk_frags, resolution
+                    )
 
                 renders_uncond = dict_map(textures_uncond, render_chunk)
                 renders_cond = dict_map(textures_cond, render_chunk)
+
+                self.logger.write_rendered_features(
+                    "rendered_cond", renders_cond, t, chunk_frame_indices.tolist()
+                )
+                self.logger.write_rendered_features(
+                    "rendered_uncond", renders_uncond, t, chunk_frame_indices.tolist()
+                )
 
                 # Diffusion step with pre-and post-attn injection
                 noise_pred = self.model_forward_injection(

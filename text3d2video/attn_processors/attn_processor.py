@@ -9,7 +9,6 @@ from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.utilities.attention_utils import (
     memory_efficient_attention,
 )
-from text3d2video.utilities.diffusion_data import AttnFeaturesWriter
 
 
 class DefaultAttnProcessor:
@@ -26,67 +25,15 @@ class DefaultAttnProcessor:
     cur_timestep: int = None
 
     # optionally hold the attention writer and chunk frame indices for saving qkv
-    attn_writer: AttnFeaturesWriter = None
     chunk_frame_indices: Tensor = None
 
     # public
-
-    def set_attn_data_writer(self, attn_writer: AttnFeaturesWriter):
-        self.attn_writer = attn_writer
 
     def set_cur_timestep(self, cur_timestep: int):
         self.cur_timestep = cur_timestep
 
     def set_chunk_frame_indices(self, chunk_frame_indices: Tensor):
         self.chunk_frame_indices = chunk_frame_indices
-
-    # protected
-
-    def write_qkv(self, qry: Tensor, key: Tensor, val: Tensor):
-        if self.attn_writer is None:
-            return
-
-        unstacked_q = rearrange(qry, "(b f) t c -> b f t c", b=self.chunk_size)
-        unstacked_k = rearrange(key, "(b f) t c -> b f t c", b=self.chunk_size)
-        unstacked_v = rearrange(val, "(b f) t c -> b f t c", b=self.chunk_size)
-
-        timestep = self.cur_timestep
-        chunk_frame_indices = self.chunk_frame_indices
-
-        if timestep is None or chunk_frame_indices is None:
-            raise ValueError(
-                "Timestep and chunk_frame_indices must be set to write qkv"
-            )
-
-        self.attn_writer.write_qkv_batched(
-            timestep,
-            self._cur_module_path,
-            unstacked_q,
-            unstacked_k,
-            unstacked_v,
-            chunk_frame_indices=chunk_frame_indices,
-        )
-
-    def write_y(self, y: Tensor):
-        if self.attn_writer is None:
-            return
-
-        unstacked_y = rearrange(y, "(b f) t c -> b f t c", b=self.chunk_size)
-
-        timestep = self.cur_timestep
-        chunk_frame_indices = self.chunk_frame_indices
-
-        if timestep is None or chunk_frame_indices is None:
-            raise ValueError(
-                "Timestep and chunk_frame_indices must be set to write qkv"
-            )
-
-        self.attn_writer.write_attn_out_batched(
-            timestep,
-            self._cur_module_path,
-            unstacked_y,
-            chunk_frame_indices=chunk_frame_indices,
-        )
 
     def __init__(
         self,
@@ -121,10 +68,7 @@ class DefaultAttnProcessor:
         key = attn.to_k(kv_hidden_states)
         val = attn.to_v(kv_hidden_states)
 
-        self.write_qkv(qry, key, val)
-        y = memory_efficient_attention(attn, key, qry, val, attention_mask)
-        self.write_y(y)
-        return y
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
 
     def _call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
@@ -133,10 +77,7 @@ class DefaultAttnProcessor:
         val = attn.to_v(hidden_states)
         qry = attn.to_q(hidden_states)
 
-        self.write_qkv(qry, key, val)
-        y = memory_efficient_attention(attn, key, qry, val, attention_mask)
-        self.write_y(y)
-        return y
+        return memory_efficient_attention(attn, key, qry, val, attention_mask)
 
     def __call__(
         self,

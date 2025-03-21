@@ -1,7 +1,6 @@
 from typing import Dict, List
 
 import torch
-import torchvision.transforms.functional as TF
 from attr import dataclass
 from jaxtyping import Float
 from PIL import Image
@@ -9,25 +8,27 @@ from pytorch3d.renderer import (
     FoVPerspectiveCameras,
 )
 from pytorch3d.structures import Meshes
+from regex import B
 from torch import Tensor
 from tqdm import tqdm
 
 from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
-from text3d2video.noise_initialization import NoiseInitializer
+from text3d2video.noise_initialization import NoiseInitializer, UVNoiseInitializer
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 from text3d2video.rendering import (
     TextureShader,
+    make_mesh_renderer,
     make_repeated_uv_texture,
     precompute_rast_fragments,
     render_depth_map,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_filter, dict_map
-from text3d2video.utilities.tensor_writing import FeatureLogger
+from text3d2video.utilities.logging import GrLogger, H5Logger
 
 
 @dataclass
@@ -137,13 +138,12 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
         reposable_diffusion_config: FeatureInjectionConfig,
-        noise_initializer: NoiseInitializer,
-        extracted_feats: FeatureLogger,
+        extracted_feats: H5Logger,
         generator=None,
+        logger: GrLogger = None,
     ):
         # setup configs for use throughout pipeline
         self.conf = reposable_diffusion_config
-        self.noise_initializer = noise_initializer
 
         # setup attn processor
         self.attn_processor = ExtractionInjectionAttn(
@@ -182,18 +182,32 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
 
         fragments = precompute_rast_fragments(tgt_cams, tgt_meshes, screen_resolutions)
 
+        # setup logger
+        if logger is not None:
+            self.logger = logger
+            self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
+        else:
+            self.logger = GrLogger.create_disabled()
+
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
-
-        # initial noise
-        latents = self.prepare_latents(
-            tgt_meshes, tgt_cams, verts_uvs, faces_uvs, generator
-        )
 
         # compute maximum time at which we perform injection
         denoising_times = self.scheduler.timesteps
         max_t_idx = int(len(denoising_times) * self.conf.time_threshold)
+        max_t_idx = min(max_t_idx, len(denoising_times) - 1)
         max_t = denoising_times[max_t_idx]
+
+        uv_noise = extracted_feats.read("uv_noise", return_pt=True).to(cond_embeddings)
+        bg_noise = extracted_feats.read("bg_noise", return_pt=True).to(cond_embeddings)
+
+        noise_initializer = UVNoiseInitializer.init_from_textures(uv_noise, bg_noise)
+        latents = noise_initializer.initial_noise(
+            tgt_meshes,
+            tgt_cams,
+            verts_uvs,
+            faces_uvs,
+        )
 
         # denoising loop
         for t_i, t in enumerate(tqdm(self.scheduler.timesteps)):
@@ -201,9 +215,9 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
 
             def read_features(t, name):
                 return {
-                    layer: extracted_feats.read(layer, int(t), name).to(
-                        device=self.device, dtype=self.dtype
-                    )
+                    layer: extracted_feats.read(
+                        name, layer=layer, t=int(t), return_pt=True
+                    ).to(device=self.device, dtype=self.dtype)
                     for layer in self.conf.module_paths
                 }
 
@@ -240,7 +254,6 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                     )
 
                     res_idx = layer_resolution_indices[layer]
-                    resolution = screen_resolutions[res_idx]
 
                     renders = []
                     for frame_i in chunk_frame_indices.tolist():
@@ -248,11 +261,6 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                         frags = fragments[res_idx][frame_i]
                         mesh.textures = tex
                         render = shader(frags, mesh)[0]
-                        render = TF.resize(
-                            render,
-                            (resolution, resolution),
-                            interpolation=TF.InterpolationMode.NEAREST,
-                        )
 
                         renders.append(render)
                     renders = torch.stack(renders)
@@ -264,6 +272,13 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                 if t < max_t:
                     chunk_rendered_cond = {}
                     chunk_rendered_uncond = {}
+
+                self.logger.write_rendered_features(
+                    "rendered_cond",
+                    chunk_rendered_cond,
+                    t=t,
+                    frame_indices=chunk_frame_indices,
+                )
 
                 chunk_noise = self.model_forward_injection(
                     latents[chunk_frame_indices],

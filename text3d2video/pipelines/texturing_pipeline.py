@@ -18,16 +18,18 @@ from text3d2video.attn_processors.extraction_injection_attn import (
 from text3d2video.backprojection import (
     update_uv_texture,
 )
+from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
+    make_mesh_renderer,
     make_repeated_uv_texture,
     precompute_rasterization,
     render_depth_map,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
-from text3d2video.utilities.tensor_writing import FeatureLogger
+from text3d2video.utilities.logging import H5Logger
 
 
 # pylint: disable=too-many-instance-attributes
@@ -178,7 +180,7 @@ class TexturingPipeline(BaseControlNetPipeline):
     ):
         self.conf = conf
 
-        features_writer = FeatureLogger(Path("features.h5"))
+        features_writer = H5Logger(Path("features.h5"))
         features_writer.delete_data()
         features_writer.open_write()
 
@@ -228,7 +230,22 @@ class TexturingPipeline(BaseControlNetPipeline):
         self.scheduler.set_timesteps(conf.num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, generator=generator)
+        noise_initializer = UVNoiseInitializer(
+            noise_texture_res=64,
+            device=self.device,
+            dtype=self.dtype,
+            generator=generator,
+        )
+
+        features_writer.write("uv_noise", noise_initializer.uv_noise)
+        features_writer.write("bg_noise", noise_initializer.bg_noise)
+
+        latents = noise_initializer.initial_noise(
+            meshes,
+            cameras,
+            verts_uvs,
+            faces_uvs,
+        )
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
@@ -255,7 +272,7 @@ class TexturingPipeline(BaseControlNetPipeline):
 
             layer_dimensions = dict_map(extracted_feats_cond, lambda _, x: x.shape[1])
 
-            # project initial queries to textures
+            # project initial features to textures
             def initial_texture(layer, features):
                 dimension = layer_dimensions[layer]
                 res_idx = layer_resolution_indices[layer]
@@ -339,10 +356,12 @@ class TexturingPipeline(BaseControlNetPipeline):
 
             # save features
             for l in extracted_feats_cond:
-                features_writer.write(l, t, "tex_cond", textures_cond[l])
-                features_writer.write(l, t, "tex_uncond", textures_uncond[l])
-                features_writer.write(l, t, "kvs_cond", first_kvs_cond[l][0])
-                features_writer.write(l, t, "kvs_uncond", first_kvs_uncond[l][0])
+                features_writer.write("tex_cond", textures_cond[l], layer=l, t=t)
+                features_writer.write("tex_uncond", textures_uncond[l], layer=l, t=t)
+                features_writer.write("kvs_cond", first_kvs_cond[l][0], layer=l, t=t)
+                features_writer.write(
+                    "kvs_uncond", first_kvs_uncond[l][0], layer=l, t=t
+                )
 
             # update latents
             all_noise_preds = [noise_pred_first] + noise_preds

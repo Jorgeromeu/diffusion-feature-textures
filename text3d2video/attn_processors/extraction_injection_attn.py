@@ -232,8 +232,6 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         if injected_qrys is not None:
             qry = blend_feature_images(qry, injected_qrys)
 
-        # self.write_qkv(qry, key, val)
-
         attn_out = memory_efficient_attention(attn, key, qry, val, attention_mask)
 
         # inject post attn features
@@ -254,9 +252,6 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
         key = attn.to_k(kv_hidden_states)
         val = attn.to_v(kv_hidden_states)
-
-        if self.mode == AttnMode.FEATURE_INJECTION:
-            self.write_qkv(qry, key, val)
 
         return memory_efficient_attention(attn, key, qry, val, attention_mask)
 

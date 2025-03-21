@@ -72,11 +72,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
             key = attn.to_k(ext_hidden_states)
             val = attn.to_v(ext_hidden_states)
 
-        self.write_qkv(qry_self, key, val)
-        y = memory_efficient_attention(attn, key, qry_self, val, attention_mask)
-        self.write_y(y)
-
-        return y
+        return memory_efficient_attention(attn, key, qry_self, val, attention_mask)
 
     def _call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
@@ -88,9 +84,6 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         val_self = attn.to_v(hidden_states)
         qry_self = attn.to_q(hidden_states)
 
-        self.write_qkv(qry_self, key_self, val_self)
-        y = memory_efficient_attention(
+        return memory_efficient_attention(
             attn, key_self, qry_self, val_self, attention_mask
         )
-        self.write_y(y)
-        return y

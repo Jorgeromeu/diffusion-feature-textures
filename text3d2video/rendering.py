@@ -191,7 +191,11 @@ def precompute_rast_fragments(cameras, meshes, raster_resolutions: list[int]):
 
 
 def shade_meshes(
-    shader, texture: TexturesUV, meshes: Meshes, fragments: List[Fragments]
+    shader,
+    texture: TexturesUV,
+    meshes: Meshes,
+    fragments: List[Fragments],
+    resolution: int,
 ):
     renders = []
     for mesh, frags in zip(meshes, fragments):
@@ -200,4 +204,8 @@ def shade_meshes(
         renders.append(render)
 
     renders = torch.stack(renders)
+
+    if resolution != renders.shape[-1]:
+        renders = TF.resize(renders, (resolution, resolution))
+
     return renders
