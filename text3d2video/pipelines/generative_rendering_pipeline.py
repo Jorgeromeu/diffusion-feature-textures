@@ -302,6 +302,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         if logger is not None:
             self.logger = logger
             self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
+        else:
+            self.logger = GrLogger.create_disabled()
 
         # set up attn processor
         self.attn_processor = ExtractionInjectionAttn(
