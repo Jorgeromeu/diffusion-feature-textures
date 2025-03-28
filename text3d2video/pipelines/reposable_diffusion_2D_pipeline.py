@@ -161,7 +161,7 @@ class ReposableDiffusion2DPipeline(BaseControlNetPipeline):
                 qry_features=warped_unet_qrys,
                 post_attn_features=warped_unet_post_attn,
             )
-            unet_attn_processor.set_chunk_frame_indices(tgt_indices)
+            unet_attn_processor.set_frame_indices(tgt_indices)
             noise_preds_tgt = self.unet(
                 tgt_latents_batched,
                 t,

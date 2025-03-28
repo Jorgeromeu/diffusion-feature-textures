@@ -14,13 +14,18 @@ from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
+from text3d2video.attn_processors.attn_processor import BaseAttnProcessor
 from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
+from text3d2video.utilities.logging import GrLogger
 
 
 class BaseControlNetPipeline(BaseStableDiffusionPipeline):
     """
     Base Class for Stable Diffusion + ControlNet Pipelines
     """
+
+    logger: GrLogger
+    attn_processor: BaseAttnProcessor
 
     def __init__(
         self,
@@ -75,27 +80,36 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         Forward pass through ControlNet and UNet
         """
 
+        latents_duplicated = torch.cat([latents] * 2)
+        both_embeddings = torch.cat([cond_embeddings, uncond_embeddings])
+
         # ControlNet Pass
-        processed_ctrl_image = self.preprocess_controlnet_images(depth_maps)
+        processed_images = self.preprocess_controlnet_images(depth_maps)
+        processed_images = torch.cat([processed_images] * 2)
+
         down_block_res_samples, mid_block_res_sample = self.controlnet(
-            latents,
+            latents_duplicated,
             t,
-            encoder_hidden_states=cond_embeddings,
-            controlnet_cond=processed_ctrl_image,
+            encoder_hidden_states=both_embeddings,
+            controlnet_cond=processed_images,
             conditioning_scale=controlnet_conditioning_scale,
             guess_mode=False,
             return_dict=False,
         )
 
         # UNet Pass
+        self.attn_processor.set_cur_timestep(t)
         noise_pred = self.unet(
-            latents,
+            latents_duplicated,
             t,
+            encoder_hidden_states=both_embeddings,
             mid_block_additional_residual=mid_block_res_sample,
             down_block_additional_residuals=down_block_res_samples,
-            encoder_hidden_states=cond_embeddings,
         ).sample
 
+        noise_cond, noise_uncond = noise_pred.chunk(2)
+
+        noise_pred = noise_uncond + guidance_scale * (noise_cond - noise_uncond)
         return noise_pred
 
     @torch.no_grad()
@@ -106,6 +120,7 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         num_inference_steps=30,
         controlnet_conditioning_scale=1.0,
         guidance_scale=7.5,
+        logger=None,
         generator=None,
     ):
         # number of images being generated
@@ -116,6 +131,20 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
+
+        # setup logger
+        if logger is not None:
+            self.logger = logger
+            self.logger.setup_greenlists(
+                denoising_times=self.scheduler.timesteps.tolist(), n_frames=batch_size
+            )
+        else:
+            self.logger = GrLogger.create_disabled()
+
+        # setup attn processor
+        self.attn_processor = BaseAttnProcessor(model=self.unet, chunk_size=2)
+        self.unet.set_attn_processor(self.attn_processor)
+        self.attn_processor.attn_writer = self.logger.attn_writer
 
         # initialize latents from standard normal
         latents = self.prepare_latents(batch_size, generator=generator)
@@ -130,7 +159,8 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
                 uncond_embeddings,
                 t,
                 depth_maps,
-                controlnet_conditioning_scale,
+                controlnet_conditioning_scale=controlnet_conditioning_scale,
+                guidance_scale=guidance_scale,
             )
 
             # update latents

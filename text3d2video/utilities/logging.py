@@ -1,22 +1,29 @@
 from abc import ABC
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict
 
 import h5py
+import torch
+from einops import rearrange
+from jaxtyping import Float
 from rerun import Tensor
 
-from text3d2video.util import ordered_sample
+from text3d2video.util import dict_map, ordered_sample
 from text3d2video.utilities.h5_util import dset_to_pt
 
 
 class H5Logger(ABC):
     """
-    A utility class for reading/writing tensors over various time indices to hdf5
+    A utility class for reading and writing named values with keys to an hdf5 file
     """
 
+    # hdf5 file path and file pointer
     path: Path
     fp: h5py.File
-    keys_greenlists: dict[str, list]
+
+    # greenlists for various keys
+    key_greenlists: dict[str, list]
 
     @classmethod
     def create_disabled(cls):
@@ -27,7 +34,7 @@ class H5Logger(ABC):
         self.fp = None
         self.enabled = enabled
         if attr_greenlists is None:
-            self.keys_greenlists = {}
+            self.key_greenlists = {}
 
     def open_write(self):
         if not self.enabled:
@@ -65,21 +72,22 @@ class H5Logger(ABC):
 
         return f"{name}/{identifier}"
 
-    def write(self, name: str, tensor: Tensor, attrs: Dict = None, **keys):
+    def write(self, name: str, tensor: Tensor, **keys):
         if not self.enabled:
             return
 
         if keys is None:
             keys = {}
-        if attrs is None:
-            attrs = {}
 
         # check keys in greenlists
         for key, value in keys.items():
-            greenlist = self.keys_greenlists.get(key)
+            greenlist = self.key_greenlists.get(key)
+
+            # if no greenlist for key, skip
             if greenlist is None:
                 continue
 
+            # if value not in greenlist, dont write
             if value not in greenlist:
                 return
 
@@ -88,17 +96,28 @@ class H5Logger(ABC):
 
         # create dataset
         data = tensor.cpu().numpy()
-        dataset = self.fp.create_dataset(filename, data=data)
+
+        try:
+            dataset = self.fp.create_dataset(filename, data=data)
+        except ValueError as e:
+            keys_str = " ".join(f"{k}={v}" for k, v in keys.items())
+            raise ValueError(
+                f"Failed to write tensor with name {name} and keys {keys_str}"
+            ) from None
 
         # save all keys as attrs
         for key, value in keys.items():
             dataset.attrs[key] = value
 
-        # save all attrs additionally
-        for key, value in attrs.items():
-            dataset.attrs[key] = value
+    def read(self, name: str, return_pt=True, check_keys=False, **keys):
+        # assert keys contains all field keys
+        if check_keys:
+            field_keys = self.field_keys(name)
+            for field_key in field_keys:
+                assert (
+                    field_key in keys
+                ), f"Failed to specify key {field_key} for field {name}"
 
-    def read(self, name: str, return_pt=False, **keys):
         filename = self._get_filename(name, keys)
         dataset = self.fp[filename]
 
@@ -107,10 +126,10 @@ class H5Logger(ABC):
 
         return dataset
 
-    def value_names(self):
+    def fields(self):
         return list(self.fp.keys())
 
-    def get_keys(self, name: str):
+    def field_keys(self, name: str):
         group = self.fp[name]
 
         all_keys = set()
@@ -122,7 +141,7 @@ class H5Logger(ABC):
         group.visititems(visit)
         return list(all_keys)
 
-    def get_key_values(self, name: str, key: str):
+    def key_values(self, name: str, key: str):
         group = self.fp[name]
 
         all_vals = set()
@@ -135,6 +154,23 @@ class H5Logger(ABC):
 
         group.visititems(visit)
         return list(all_vals)
+
+    def field_keys_and_vals(self, name: str):
+        group = self.fp[name]
+
+        keys_and_vals = defaultdict(lambda: set())
+
+        def visit(path, obj):
+            attrs = dict(obj.attrs)
+
+            for k, v in attrs.items():
+                keys_and_vals[k].add(v)
+
+        group.visititems(visit)
+
+        result = dict_map(keys_and_vals, lambda _, v: list(v))
+
+        return result
 
 
 class Writer:
@@ -156,6 +192,80 @@ class LatentsWriter(Writer):
         return self.logger.read("latent", t=t, frame_i=frame_i)
 
 
+class AttnWriter(Writer):
+    def write_qkv(
+        self,
+        qry: Float[Tensor, "b t d"],
+        key: Float[Tensor, "b t d"],
+        val: Float[Tensor, "b t d"],
+        t: int,
+        layer: str,
+        n_chunks: int = 1,
+        frame_indices=None,
+        chunk_labels=None,
+    ):
+        batch_size = qry.shape[0]
+        n_frames = batch_size // n_chunks
+
+        if frame_indices is None:
+            frame_indices = torch.arange(n_frames)
+
+        if chunk_labels is None:
+            if n_chunks == 1:
+                chunk_labels = [""]
+            else:
+                chunk_labels = [f"chunk_{i}" for i in range(n_chunks)]
+
+        assert len(chunk_labels) == n_chunks, "chunk_labels must have length n_chunks"
+        assert len(frame_indices) == n_frames, "frame_indices must have length n_frames"
+        assert t is not None, "t must be provided"
+
+        qrys_stacked = rearrange(
+            qry, "(n_chunks b) t d -> n_chunks b t d", n_chunks=n_chunks
+        )
+        keys_stacked = rearrange(
+            key, "(n_chunks b) t d -> n_chunks b t d", n_chunks=n_chunks
+        )
+        vals_stacked = rearrange(
+            val, "(n_chunks b) t d -> n_chunks b t d", n_chunks=n_chunks
+        )
+
+        for chunk_i in range(n_chunks):
+            chunk_label = chunk_labels[chunk_i]
+            for frame_i in range(n_frames):
+                frame_index = frame_indices[frame_i]
+
+                q = qrys_stacked[chunk_i, frame_i]
+                self.logger.write(
+                    "qry",
+                    q,
+                    t=t,
+                    layer=layer,
+                    frame_i=frame_index,
+                    chunk=chunk_label,
+                )
+
+                k = keys_stacked[chunk_i, frame_i]
+                self.logger.write(
+                    "key",
+                    k,
+                    t=t,
+                    layer=layer,
+                    frame_i=frame_index,
+                    chunk=chunk_label,
+                )
+
+                v = vals_stacked[chunk_i, frame_i]
+                self.logger.write(
+                    "val",
+                    v,
+                    t=t,
+                    layer=layer,
+                    frame_i=frame_index,
+                    chunk=chunk_label,
+                )
+
+
 class GrLogger(H5Logger):
     def __init__(
         self, h5_file_path: Path, enabled=True, n_save_times=10, n_save_frames=10
@@ -164,16 +274,21 @@ class GrLogger(H5Logger):
         self.n_save_times = n_save_times
         self.n_save_frames = n_save_frames
         self.latents_writer = LatentsWriter(self)
+        self.attn_writer = AttnWriter(self)
 
     def setup_greenlists(self, denoising_times: list[int], n_frames: int):
         # setup time greenlist
-        all_noise_levels = denoising_times + [0]
-        self.keys_greenlists["t"] = ordered_sample(all_noise_levels, self.n_save_times)
+        if self.n_save_times is not None:
+            all_noise_levels = denoising_times + [0]
+            self.key_greenlists["t"] = ordered_sample(
+                all_noise_levels, self.n_save_times
+            )
 
         # setup frame greenlist
-        self.keys_greenlists["frame_i"] = ordered_sample(
-            range(n_frames), self.n_save_frames
-        )
+        if self.n_save_frames is not None:
+            self.key_greenlists["frame_i"] = ordered_sample(
+                range(n_frames), self.n_save_frames
+            )
 
     def write_feature_textures(
         self,
@@ -197,3 +312,9 @@ class GrLogger(H5Logger):
                 frame_i = frame_indices[i]
                 keys = keys_base | {"layer": layer, "frame_i": frame_i}
                 self.write(name, feature_map, **keys)
+
+
+class FeatureExtractionLogger(H5Logger):
+    def write_features_dict(self, name: str, features: Dict[str, Tensor], **keys):
+        for layer, x in features.items():
+            self.write(name, x, layer=layer, **keys)

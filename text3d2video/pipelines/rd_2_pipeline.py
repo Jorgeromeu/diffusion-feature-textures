@@ -8,20 +8,18 @@ from pytorch3d.renderer import (
     FoVPerspectiveCameras,
 )
 from pytorch3d.structures import Meshes
-from regex import B
 from torch import Tensor
 from tqdm import tqdm
 
 from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
-from text3d2video.noise_initialization import NoiseInitializer, UVNoiseInitializer
+from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingPipeline,
 )
 from text3d2video.rendering import (
     TextureShader,
-    make_mesh_renderer,
     make_repeated_uv_texture,
     precompute_rast_fragments,
     render_depth_map,
@@ -46,7 +44,7 @@ class FeatureInjectionConfig:
     module_paths: list[str]
 
 
-class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
+class FeatureInjectionPipeline(GenerativeRenderingPipeline):
     conf: FeatureInjectionConfig
     attn_processor: ExtractionInjectionAttn
 
@@ -186,6 +184,7 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         if logger is not None:
             self.logger = logger
             self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
+            self.attn_processor.attn_writer = self.logger.attn_writer
         else:
             self.logger = GrLogger.create_disabled()
 
@@ -213,18 +212,18 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
         for t_i, t in enumerate(tqdm(self.scheduler.timesteps)):
             self.attn_processor.set_cur_timestep(t)
 
-            def read_features(t, name):
+            def read_features(t, name, chunk):
                 return {
                     layer: extracted_feats.read(
-                        name, layer=layer, t=int(t), return_pt=True
+                        name, layer=layer, t=int(t), chunk=chunk, return_pt=True
                     ).to(device=self.device, dtype=self.dtype)
                     for layer in self.conf.module_paths
                 }
 
-            kvs_cond = read_features(t, "kvs_cond")
-            kvs_uncond = read_features(t, "kvs_uncond")
-            textures_cond = read_features(t, "tex_cond")
-            textures_uncond = read_features(t, "tex_uncond")
+            kvs_cond = read_features(t, "kvs", chunk="cond")
+            kvs_uncond = read_features(t, "kvs", chunk="uncond")
+            textures_cond = read_features(t, "tex", chunk="cond")
+            textures_uncond = read_features(t, "tex", chunk="uncond")
 
             if not self.conf.do_post_attn_injection:
                 textures_cond = {}
@@ -279,6 +278,9 @@ class ReposableDiffusion2Pipeline(GenerativeRenderingPipeline):
                     t=t,
                     frame_indices=chunk_frame_indices,
                 )
+
+                self.attn_processor.set_frame_indices(chunk_frame_indices)
+                self.attn_processor.set_cur_timestep(t)
 
                 chunk_noise = self.model_forward_injection(
                     latents[chunk_frame_indices],

@@ -22,14 +22,13 @@ from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
-    make_mesh_renderer,
     make_repeated_uv_texture,
     precompute_rasterization,
     render_depth_map,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
-from text3d2video.utilities.logging import H5Logger
+from text3d2video.utilities.logging import FeatureExtractionLogger
 
 
 # pylint: disable=too-many-instance-attributes
@@ -180,7 +179,7 @@ class TexturingPipeline(BaseControlNetPipeline):
     ):
         self.conf = conf
 
-        features_writer = H5Logger(Path("features.h5"))
+        features_writer = FeatureExtractionLogger(Path("features.h5"))
         features_writer.delete_data()
         features_writer.open_write()
 
@@ -231,11 +230,12 @@ class TexturingPipeline(BaseControlNetPipeline):
 
         # initialize latents from standard normal
         noise_initializer = UVNoiseInitializer(
-            noise_texture_res=64,
+            noise_texture_res=200,
             device=self.device,
             dtype=self.dtype,
-            generator=generator,
         )
+        noise_initializer.sample_noise_texture(generator)
+        noise_initializer.sample_background(generator)
 
         features_writer.write("uv_noise", noise_initializer.uv_noise)
         features_writer.write("bg_noise", noise_initializer.bg_noise)
@@ -247,58 +247,21 @@ class TexturingPipeline(BaseControlNetPipeline):
             faces_uvs,
         )
 
-        # denoising loop
+        def initial_texture(layer):
+            dimension = layer.layer_channels(self.unet)
+            res_idx = layer_resolution_indices[layer.module_path()]
+            uv_res = uv_resolutions[res_idx]
+            return torch.zeros(uv_res, uv_res, dimension).to(latents)
+
         for t in tqdm(self.scheduler.timesteps):
-            latents = self.scheduler.scale_model_input(latents, t)
+            textures_cond = {l.module_path(): initial_texture(l) for l in layers}
+            textures_uncond = {l.module_path(): initial_texture(l) for l in layers}
 
-            # denoise first view
-            view_0_out = self.model_forward_guided(
-                latents[[0]],
-                t,
-                cond_embeddings[[0]],
-                uncond_embeddings[[0]],
-                [depth_maps[0]],
-                extract_kvs=True,
-                extract_feats=True,
-            )
-
-            noise_pred_first = view_0_out.noise_preds[0]
-
-            # extract features
-            first_kvs_cond = view_0_out.extracted_kvs_cond
-            first_kvs_uncond = view_0_out.extracted_kvs_uncond
-            extracted_feats_cond = view_0_out.extracted_feats_cond
-            extracted_feats_uncond = view_0_out.extracted_feats_uncond
-
-            layer_dimensions = dict_map(extracted_feats_cond, lambda _, x: x.shape[1])
-
-            # project initial features to textures
-            def initial_texture(layer, features):
-                dimension = layer_dimensions[layer]
-                res_idx = layer_resolution_indices[layer]
-                uv_res = uv_resolutions[res_idx]
-                uv_map = torch.zeros(uv_res, uv_res, dimension).to(features)
-                feature_map = features[0]
-
-                projection = projections[0][res_idx]
-
-                update_uv_texture(
-                    uv_map,
-                    feature_map,
-                    projection.xys,
-                    projection.uvs,
-                    interpolation="bilinear",
-                )
-                return uv_map
-
-            textures_cond = dict_map(extracted_feats_cond, initial_texture)
-            textures_uncond = dict_map(extracted_feats_uncond, initial_texture)
-
-            # denoise remaining views, coniditioned on previous views
+            first_kvs_cond = None
+            first_kvs_uncond = None
             noise_preds = []
-            for i in range(1, len(cameras)):
-                view_mesh = meshes[i]
 
+            for i in range(len(cameras)):
                 # render feature textures
                 def render_texture(layer, uv_map):
                     res_idx = layer_resolution_indices[layer]
@@ -310,12 +273,13 @@ class TexturingPipeline(BaseControlNetPipeline):
 
                     shader = TextureShader()
 
-                    render_mesh = view_mesh.clone()
+                    render_mesh = meshes[i].clone()
                     render_mesh.textures = tex
                     return shader(frags, render_mesh).to(self.dtype)
 
-                rendered_feats_cond = dict_map(textures_cond, render_texture)
-                rendered_feats_uncond = dict_map(textures_uncond, render_texture)
+                # render current textures
+                rendered_cond = dict_map(textures_cond, render_texture)
+                rendered_uncond = dict_map(textures_uncond, render_texture)
 
                 model_out = self.model_forward_guided(
                     latents[[i]],
@@ -323,31 +287,42 @@ class TexturingPipeline(BaseControlNetPipeline):
                     cond_embeddings[[i]],
                     uncond_embeddings[[i]],
                     [depth_maps[i]],
+                    injected_feats_cond=rendered_cond,  # inject rendered qrys
+                    injected_feats_uncond=rendered_uncond,
                     injected_kvs_cond=first_kvs_cond,  # inject first-view kvs
                     injected_kvs_uncond=first_kvs_uncond,
-                    injected_feats_cond=rendered_feats_cond,  # inject rendered qrys
-                    injected_feats_uncond=rendered_feats_uncond,
                     extract_feats=True,
+                    extract_kvs=True,
                 )
 
                 noise_pred = model_out.noise_preds[0]
-                extracted_feats_cond = model_out.extracted_feats_cond
-                extracted_feats_uncond = model_out.extracted_feats_uncond
 
-                for l in extracted_feats_cond:
+                # update kvs
+                extracted_kvs_cond = model_out.extracted_kvs_cond
+                extracted_kvs_uncond = model_out.extracted_kvs_uncond
+
+                if i == 0:
+                    first_kvs_cond = extracted_kvs_cond
+                    first_kvs_uncond = extracted_kvs_uncond
+
+                # update feature textures
+                extracted_cond = model_out.extracted_feats_cond
+                extracted_uncond = model_out.extracted_feats_uncond
+
+                for l in extracted_cond:
                     res_idx = layer_resolution_indices[l]
                     projection = projections[i][res_idx]
 
                     update_uv_texture(
                         textures_cond[l],
-                        extracted_feats_cond[l][0],
+                        extracted_cond[l][0],
                         projection.xys,
                         projection.uvs,
                     )
 
                     update_uv_texture(
                         textures_uncond[l],
-                        extracted_feats_uncond[l][0],
+                        extracted_uncond[l][0],
                         projection.xys,
                         projection.uvs,
                     )
@@ -355,18 +330,22 @@ class TexturingPipeline(BaseControlNetPipeline):
                 noise_preds.append(noise_pred)
 
             # save features
-            for l in extracted_feats_cond:
-                features_writer.write("tex_cond", textures_cond[l], layer=l, t=t)
-                features_writer.write("tex_uncond", textures_uncond[l], layer=l, t=t)
-                features_writer.write("kvs_cond", first_kvs_cond[l][0], layer=l, t=t)
-                features_writer.write(
-                    "kvs_uncond", first_kvs_uncond[l][0], layer=l, t=t
-                )
+            features_writer.write_features_dict("tex", textures_cond, t=t, chunk="cond")
+            features_writer.write_features_dict(
+                "tex", textures_uncond, t=t, chunk="uncond"
+            )
 
-            # update latents
-            all_noise_preds = [noise_pred_first] + noise_preds
-            all_noise_preds = torch.stack(all_noise_preds)
-            latents = self.scheduler.step(all_noise_preds, t, latents).prev_sample
+            def unsqueeze(layer, kvs):
+                return kvs[0]
+
+            kvs_cond = dict_map(first_kvs_cond, unsqueeze)
+            kvs_uncond = dict_map(first_kvs_uncond, unsqueeze)
+
+            features_writer.write_features_dict("kvs", kvs_cond, t=t, chunk="cond")
+            features_writer.write_features_dict("kvs", kvs_uncond, t=t, chunk="uncond")
+
+            noise_preds = torch.stack(noise_preds)
+            latents = self.scheduler.step(noise_preds, t, latents).prev_sample
 
         # decode latents in chunks
         decoded_imgs = []

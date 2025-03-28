@@ -21,6 +21,7 @@ def display_ims_grid(
 ):
     images = images.copy()
 
+    # shape
     n_rows = len(images)
     n_cols = len(images[0])
 
@@ -30,10 +31,10 @@ def display_ims_grid(
     if col_titles is not None:
         assert len(col_titles) == n_cols
 
+    # make figure
     fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
     if not isinstance(axs, np.ndarray):
         axs = np.array([axs])
-
     axs = axs.reshape(n_rows, n_cols)
 
     for row_i in range(n_rows):
@@ -42,6 +43,7 @@ def display_ims_grid(
             ax.imshow(images[row_i][col_i])
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_frame_on(False)
 
             if row_i == 0 and col_titles is not None:
                 ax.set_title(col_titles[col_i])
@@ -53,7 +55,7 @@ def display_ims_grid(
         fig.suptitle(title)
 
     plt.tight_layout()
-    plt.show()
+    # plt.show()
 
 
 def display_ims(images: List[Image.Image], scale=2, titles=None):

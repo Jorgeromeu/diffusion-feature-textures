@@ -76,18 +76,18 @@ class UVNoiseInitializer(NoiseInitializer):
         noise_channels=4,
         noise_resolution=64,
         noise_texture_res=64,
+        include_background=True,
         device="cuda",
         dtype=torch.float16,
-        generator=None,
     ):
         super().__init__(noise_channels, noise_resolution)
         self.dtype = dtype
         self.device = device
         self.noise_texture_res = noise_texture_res
+        self.include_background = include_background
 
-        # initialize background and texture
-        self.sample_noise_texture(generator)
-        self.sample_background(generator)
+        self.uv_noise = None
+        self.bg_noise = None
 
     @classmethod
     def init_from_textures(cls, uv_noise: Tensor, bg_noise: Tensor):
@@ -132,8 +132,13 @@ class UVNoiseInitializer(NoiseInitializer):
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
         sampling_mode: str = "nearest",
+        generator=None,
         **kwargs,
     ):
+        # sample texture
+        if self.uv_noise is None:
+            self.sample_noise_texture(generator)
+
         # setup meshes
         n_frames = len(meshes)
         noise_texture = make_repeated_uv_texture(
@@ -158,6 +163,13 @@ class UVNoiseInitializer(NoiseInitializer):
         shader = TextureShader()
         noise_renders = shader(fragments, meshes)
         noise_renders = noise_renders.to(self.device, self.dtype)
+
+        if not self.include_background:
+            return noise_renders
+
+        # sample background noise
+        if self.bg_noise is None:
+            self.sample_background(generator)
 
         # background for each frame
         background_noise = self.bg_noise.expand(n_frames, -1, -1, -1)

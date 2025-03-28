@@ -8,7 +8,7 @@ from einops import rearrange
 from jaxtyping import Float
 from torch import Tensor
 
-from text3d2video.attn_processors.attn_processor import DefaultAttnProcessor
+from text3d2video.attn_processors.attn_processor import BaseAttnProcessor
 from text3d2video.util import blend_features
 from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
@@ -27,7 +27,7 @@ class AttnMode(Enum):
         return False
 
 
-class ExtractionInjectionAttn(DefaultAttnProcessor):
+class ExtractionInjectionAttn(BaseAttnProcessor):
     """
     General Purpose Attention processor that enables extracting and
     injecting features in attention layers
@@ -63,7 +63,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         mode=AttnMode.FEATURE_INJECTION,
         unet_chunk_size=2,
     ):
-        DefaultAttnProcessor.__init__(self, model, unet_chunk_size)
+        BaseAttnProcessor.__init__(self, model, unet_chunk_size)
         self.do_kv_extraction = do_kv_extraction
         self.do_spatial_qry_extraction = do_spatial_qry_extraction
         self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
@@ -127,10 +127,10 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         Perform extended attention, and extract features
         """
 
-        n_frames = hidden_states.shape[0] // self.chunk_size
+        n_frames = hidden_states.shape[0] // self.n_chunks
 
         ext_hidden_states = extended_attn_kv_hidden_states(
-            hidden_states, chunk_size=self.chunk_size
+            hidden_states, chunk_size=self.n_chunks
         )
 
         kv_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
@@ -183,7 +183,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
                 original_features_1D,
                 "(b f) (h w) d -> b f d h w",
                 h=height,
-                b=self.chunk_size,
+                b=self.n_chunks,
             )
 
             # blend rendered and original features
@@ -199,7 +199,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
             # blended_batched = adain_2D(blended_batched, blended_batched)
 
             blended = rearrange(
-                blended_batched, "(b f) d h w -> b f d h w", b=self.chunk_size
+                blended_batched, "(b f) d h w -> b f d h w", b=self.n_chunks
             )
 
             # reshape back to 2D
@@ -207,7 +207,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
 
             return blended_features_1D
 
-        n_frames = hidden_states.shape[0] // self.chunk_size
+        n_frames = hidden_states.shape[0] // self.n_chunks
 
         injected_kv_features = self.kv_features.get(self._cur_module_path)
 
@@ -231,6 +231,16 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         injected_qrys = self.spatial_qry_features.get(self._cur_module_path)
         if injected_qrys is not None:
             qry = blend_feature_images(qry, injected_qrys)
+
+        # self.attn_writer.write_qkv(
+        #     qry,
+        #     key,
+        #     val,
+        #     t=self.cur_timestep,
+        #     layer=self._cur_module_path,
+        #     n_chunks=self.n_chunks,
+        #     frame_indices=self.frame_indices,
+        # )
 
         attn_out = memory_efficient_attention(attn, key, qry, val, attention_mask)
 
@@ -264,7 +274,7 @@ class ExtractionInjectionAttn(DefaultAttnProcessor):
         return attn_out
 
 
-class UnifiedAttnProcessor(DefaultAttnProcessor):
+class UnifiedAttnProcessor(BaseAttnProcessor):
     """
     General Purpose Attention processor that enables extracting and
     injecting features in attention layers
@@ -300,7 +310,7 @@ class UnifiedAttnProcessor(DefaultAttnProcessor):
         also_attend_to_self: bool = False,
         feature_blend_alhpa: bool = 1.0,
     ):
-        DefaultAttnProcessor.__init__(self, model, 2)
+        BaseAttnProcessor.__init__(self, model, 2)
 
         # by default empty lists
         kv_extraction_paths = kv_extraction_paths or []

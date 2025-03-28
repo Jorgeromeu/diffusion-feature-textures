@@ -60,7 +60,7 @@ class StyleAlignedPipeline(BaseStableDiffusionPipeline):
             self.attn_processor.chunk_frame_indices = torch.arange(batch_size)
 
             # give data to attention processor for logging
-            self.attn_processor.set_chunk_frame_indices(torch.arange(batch_size))
+            self.attn_processor.set_frame_indices(torch.arange(batch_size))
 
             noise_pred = self.unet(
                 latent_model_input,

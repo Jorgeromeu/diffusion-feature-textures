@@ -268,7 +268,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         faces_uvs: torch.Tensor,
         generative_rendering_config: GenerativeRenderingConfig,
         noise_initializer: NoiseInitializer,
+        prompt_suffixes: List[str] = None,
         generator=None,
+        kf_generator=None,
         logger=None,
     ):
         n_frames = len(meshes)
@@ -286,7 +288,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         layer_resolutions = sorted(layer_resolutions)
         raster_resolutions = layer_resolutions
 
-        uv_factor = 3
+        uv_factor = 4
         uv_resolutions = [int(screen * uv_factor) for screen in layer_resolutions]
 
         layer_resolution_indices = {
@@ -297,13 +299,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         projections, fragments = precompute_rasterization(
             cameras, meshes, verts_uvs, faces_uvs, raster_resolutions, uv_resolutions
         )
-
-        # setup logger
-        if logger is not None:
-            self.logger = logger
-            self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
-        else:
-            self.logger = GrLogger.create_disabled()
 
         # set up attn processor
         self.attn_processor = ExtractionInjectionAttn(
@@ -318,8 +313,21 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         )
         self.unet.set_attn_processor(self.attn_processor)
 
+        # setup logger
+        if logger is not None:
+            self.logger = logger
+            self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
+            self.attn_processor.attn_writer = self.logger.attn_writer
+        else:
+            self.logger = GrLogger.create_disabled()
+
+        # augment prompts
+        prompts = [prompt] * n_frames
+        if prompt_suffixes is not None:
+            prompts = [p + s for p, s in zip(prompts, prompt_suffixes)]
+
         # Get prompt embeddings
-        cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
+        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
 
         # initial latent noise
         latents = self.prepare_latents(meshes, cameras, verts_uvs, faces_uvs, generator)
@@ -335,9 +343,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             self.attn_processor.cur_timestep = t
 
             # Feature Extraction on keyframes
-            kf_indices = self.sample_keyframe_indices(n_frames, generator)
+            kf_indices = self.sample_keyframe_indices(n_frames, kf_generator)
 
-            kf_features = self.model_forward_extraction(
+            kf_feats = self.model_forward_extraction(
                 latents[kf_indices],
                 cond_embeddings[kf_indices],
                 uncond_embeddings[kf_indices],
@@ -351,8 +359,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 kf_projections = [projections[i][res_idx] for i in kf_indices.tolist()]
                 return self.aggregate_features(features, uv_res, kf_projections)
 
-            textures_uncond = dict_map(kf_features.uncond_post_attn, aggr_kf_features)
-            textures_cond = dict_map(kf_features.cond_post_attn, aggr_kf_features)
+            textures_uncond = dict_map(kf_feats.uncond_post_attn, aggr_kf_features)
+            textures_cond = dict_map(kf_feats.cond_post_attn, aggr_kf_features)
 
             self.logger.write_feature_textures("textures_cond", textures_cond, t)
             self.logger.write_feature_textures("textures_uncond", textures_uncond, t)
@@ -396,8 +404,8 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     uncond_embeddings[chunk_frame_indices],
                     [depth_maps[i] for i in chunk_frame_indices.tolist()],
                     t,
-                    kf_features.cond_kv,
-                    kf_features.uncond_kv,
+                    kf_feats.cond_kv,
+                    kf_feats.uncond_kv,
                     renders_cond,
                     renders_uncond,
                 )

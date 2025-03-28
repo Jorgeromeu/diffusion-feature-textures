@@ -112,11 +112,11 @@ class TexFusionPipeline(BaseControlNetPipeline):
         # encode prompt
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_views)
 
-        uv_res = 250
+        uv_res = 100
         projections = []
-        for cam, mesh in zip(cameras, meshes):
+        for cam, view_mesh in zip(cameras, meshes):
             projection = project_visible_texels_to_camera(
-                mesh, cam, verts_uvs, faces_uvs, uv_res, raster_res=2000
+                view_mesh, cam, verts_uvs, faces_uvs, uv_res, raster_res=2000
             )
             projections.append(projection)
 
@@ -128,82 +128,17 @@ class TexFusionPipeline(BaseControlNetPipeline):
         )
         renderer = make_mesh_renderer(64)
 
-        # # Attempt 1: normal denoising
-        # latents = torch.randn(
-        #     n_views,
-        #     4,
-        #     64,
-        #     64,
-        #     generator=generator,
-        #     dtype=self.dtype,
-        #     device=self.device,
-        # )
-
-        # for t in tqdm(self.scheduler.timesteps):
-        #     noise_pred = self.model_forward_guided(
-        #         latents,
-        #         t,
-        #         cond_embeddings,
-        #         uncond_embeddings,
-        #         depth_maps,
-        #     )
-
-        #     latents = self.scheduler.step(noise_pred, t, latents).prev_sample
-        # return self.decode_latents(latents)
-
-        # # Attempt 2: denoise rendered latent
-        # latent_tex = torch.randn(
-        #     uv_res, uv_res, 4, generator=generator, dtype=self.dtype, device=self.device
-        # )
-
-        # cam = cameras[0]
-        # mesh = meshes[0]
-
-        # # render
-        # render_meshes = mesh.clone()
-        # render_meshes.textures = make_repeated_uv_texture(
-        #     latent_tex,
-        #     faces_uvs,
-        #     verts_uvs,
-        #     sampling_mode="nearest",
-        #     N=len(render_meshes),
-        # )
-        # rendered = renderer(render_meshes, cameras=cam)
-        # rendered = rendered.to(latent_tex)
-
-        # for t in tqdm(self.scheduler.timesteps):
-        #     noise_pred = self.model_forward_guided(
-        #         rendered,
-        #         t,
-        #         cond_embeddings[[0]],
-        #         uncond_embeddings[[0]],
-        #         [depth_maps[0]],
-        #     )
-
-        #     rendered = self.scheduler.step(
-        #         noise_pred, t, rendered, generator=generator
-        #     ).prev_sample
-
-        # return self.decode_latents(rendered)
-
-        # Attempt 3: SIMS
+        # SIMS
         for t in tqdm(self.scheduler.timesteps):
-            denoised_views = []
-
-            mask = torch.zeros(uv_res, uv_res, 1, device=self.device)
-
             for i in range(0, n_views):
                 view_cam = cameras[i]
-                mesh = meshes[i]
+                view_mesh = meshes[i]
 
-                # render latent texture
-                mesh.textures = make_repeated_uv_texture(
+                # render latent texture for view
+                view_mesh.textures = make_repeated_uv_texture(
                     latent_tex, faces_uvs, verts_uvs, sampling_mode="nearest"
                 )
-                render = renderer(mesh, cameras=view_cam).to(latent_tex)
-
-                # TODO
-                # add appropriate noise according to mask
+                render = renderer(view_mesh, cameras=view_cam).to(latent_tex)
 
                 # denoise view
                 noise_pred = self.model_forward_guided(
@@ -213,30 +148,30 @@ class TexFusionPipeline(BaseControlNetPipeline):
                     uncond_embeddings[[i]],
                     [depth_maps[i]],
                 )
-                rendered = self.scheduler.step(noise_pred, t, render).prev_sample[0]
-                denoised_views.append(rendered)
-
-                # update mask
-                projection = projections[i]
-                update_uv_texture(
-                    mask,
-                    torch.ones(1, uv_res, uv_res, device=self.device),
-                    projection.xys,
-                    projection.uvs,
-                    interpolation="nearest",
-                    update_empty_only=False,
-                )
+                denoised = self.scheduler.step(noise_pred, t, render).prev_sample[0]
 
                 # update latent texture
                 update_uv_texture(
                     latent_tex,
-                    rendered,
+                    denoised,
                     projection.xys,
                     projection.uvs,
                     interpolation="nearest",
                     update_empty_only=False,
                 )
 
-            latents = torch.stack(denoised_views)
+        # render final latent texture
+        texture = make_repeated_uv_texture(
+            latent_tex, faces_uvs, verts_uvs, sampling_mode="nearest"
+        )
 
-        return self.decode_latents(latents)
+        final_rendered_latents = []
+        for i in range(0, n_views):
+            view_cam = cameras[i]
+            view_mesh = meshes[i]
+            view_mesh.textures = texture
+            render = renderer(view_mesh, cameras=view_cam).to(latent_tex)[0]
+            final_rendered_latents.append(render)
+
+        renders = torch.stack(final_rendered_latents)
+        return self.decode_latents(renders)

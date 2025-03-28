@@ -145,3 +145,33 @@ def dict_map(dict: Dict, callable: Callable) -> Dict:
 
 def dict_filter(dict: Dict, condition: Callable) -> Dict:
     return {k: v for k, v in dict.items() if condition(k, v)}
+
+
+def object_array(list_of_lists: List):
+    # determine how many dimensions in LoL
+    n_dims = 0
+    lst = list_of_lists
+    while isinstance(lst, list):
+        lst = lst[0]
+        n_dims += 1
+
+    # determine shape of LoL
+    shape = []
+    lst = list_of_lists
+    for i in range(n_dims):
+        dim_len = len(lst)
+        shape.append(dim_len)
+        lst = lst[0]
+
+    # create empty
+    arr = np.empty(shape, dtype=object)
+
+    # populate
+    for idxs, _ in np.ndenumerate(arr):
+        value = list_of_lists
+        for i in idxs:
+            value = value[i]
+
+        arr[idxs] = value
+
+    return arr

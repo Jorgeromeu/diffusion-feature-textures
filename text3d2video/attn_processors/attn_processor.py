@@ -1,17 +1,17 @@
-from typing import Optional
+from typing import List, Optional
 
 import torch
 from diffusers.models.attention_processor import Attention
-from einops import rearrange
 from torch import Tensor
 
 from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.utilities.attention_utils import (
     memory_efficient_attention,
 )
+from text3d2video.utilities.logging import AttnWriter
 
 
-class DefaultAttnProcessor:
+class BaseAttnProcessor:
     """
     Base attention processor that we can easily override with custom behavior
     """
@@ -21,31 +21,31 @@ class DefaultAttnProcessor:
     _is_cross_attn: bool
     _is_self_attn: bool
 
-    # optionally hold the current timestep
+    # optionally hold information about what is being denoised:
     cur_timestep: int = None
+    frame_indices: Tensor = None
 
-    # optionally hold the attention writer and chunk frame indices for saving qkv
-    chunk_frame_indices: Tensor = None
-
-    # public
+    # treat batch dimension as chunks, (e.g for CFG)
+    n_chunks: int
+    chunk_labels: List[str] = []
 
     def set_cur_timestep(self, cur_timestep: int):
         self.cur_timestep = cur_timestep
 
-    def set_chunk_frame_indices(self, chunk_frame_indices: Tensor):
-        self.chunk_frame_indices = chunk_frame_indices
+    def set_frame_indices(self, frame_indices: Tensor):
+        self.frame_indices = frame_indices
+
+    def set_chunk_labels(self, chunk_labels: List[str]):
+        assert len(chunk_labels) == self.n_chunks
+        self.chunk_labels = chunk_labels
 
     def __init__(
         self,
         model,
-        chunk_size=2,
+        chunk_size: int = 1,
     ):
-        """
-        :param unet_chunk_size:
-            number of batches for each generated image, 2 for classifier free guidance
-        """
         self.model = model
-        self.chunk_size = chunk_size
+        self.n_chunks = chunk_size
 
     def _call_init(self, attn: Attention, encoder_hidden_states: Tensor):
         self._cur_module_path = get_module_path(self.model, attn)
