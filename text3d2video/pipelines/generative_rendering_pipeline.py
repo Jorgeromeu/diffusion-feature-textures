@@ -379,7 +379,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     ]
 
                     texture = make_repeated_uv_texture(
-                        uv_map, faces_uvs, verts_uvs, sampling_mode="nearest"
+                        uv_map, faces_uvs, verts_uvs, sampling_mode="nearest", N=1
                     )
                     shader = TextureShader()
 

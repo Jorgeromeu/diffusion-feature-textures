@@ -3,6 +3,7 @@ from typing import Callable, Dict, List, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from einops import rearrange
 from pytorch3d.io import load_obj
 from torch import Tensor
@@ -175,3 +176,7 @@ def object_array(list_of_lists: List):
         arr[idxs] = value
 
     return arr
+
+
+def pil_latent(latent: Tensor):
+    return TF.to_pil_image(latent[0:3].cpu())

@@ -72,14 +72,7 @@ class H5Logger(ABC):
 
         return f"{name}/{identifier}"
 
-    def write(self, name: str, tensor: Tensor, **keys):
-        if not self.enabled:
-            return
-
-        if keys is None:
-            keys = {}
-
-        # check keys in greenlists
+    def _keys_in_greenlists(self, keys):
         for key, value in keys.items():
             greenlist = self.key_greenlists.get(key)
 
@@ -89,21 +82,43 @@ class H5Logger(ABC):
 
             # if value not in greenlist, dont write
             if value not in greenlist:
-                return
+                return False
+
+        return True
+
+    def write(self, name: str, tensor: Tensor, override=True, **keys):
+        if not self.enabled:
+            return
+
+        if keys is None:
+            keys = {}
+
+        # check keys in greenlists
+        if not self._keys_in_greenlists(keys):
+            return
 
         # get filename from keys and name
         filename = self._get_filename(name, keys)
 
-        # create dataset
+        # create np data
         data = tensor.cpu().numpy()
 
-        try:
-            dataset = self.fp.create_dataset(filename, data=data)
-        except ValueError as e:
-            keys_str = " ".join(f"{k}={v}" for k, v in keys.items())
-            raise ValueError(
-                f"Failed to write tensor with name {name} and keys {keys_str}"
-            ) from None
+        # try creating dataset, if fails raise error
+        if not override:
+            try:
+                dataset = self.fp.create_dataset(filename, data=data)
+            except ValueError as e:
+                keys_str = " ".join(f"{k}={v}" for k, v in keys.items())
+                raise ValueError(
+                    f"Failed to write tensor with name {name} and keys {keys_str}"
+                ) from None
+
+        # if dataset exists delete it
+        if filename in self.fp:
+            del self.fp[filename]
+
+        # create dataset
+        dataset = self.fp.create_dataset(filename, data=data)
 
         # save all keys as attrs
         for key, value in keys.items():
@@ -184,12 +199,9 @@ class Writer:
 
 
 class LatentsWriter(Writer):
-    def write_latents(self, latents: Tensor, t: int):
+    def write_batched_latents(self, latents: Tensor, t: int):
         for i, latent in enumerate(latents):
             self.logger.write("latent", latent, t=t, frame_i=i)
-
-    def read_latent(self, t: int, frame_i: int):
-        return self.logger.read("latent", t=t, frame_i=frame_i)
 
 
 class AttnWriter(Writer):

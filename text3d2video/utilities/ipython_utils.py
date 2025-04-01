@@ -58,7 +58,7 @@ def display_ims_grid(
     # plt.show()
 
 
-def display_ims(images: List[Image.Image], scale=2, titles=None):
+def display_ims(images: List[Image.Image], scale=2, titles=None, title=None):
     if titles is not None:
         assert len(titles) == len(images)
 
@@ -81,6 +81,9 @@ def display_ims(images: List[Image.Image], scale=2, titles=None):
         if titles is not None:
             axs[i].set_title(titles[i])
 
+    if title is not None:
+        plt.suptitle(title)
+
     plt.tight_layout()
     plt.show()
 
@@ -96,14 +99,14 @@ def view_pointcloud_orthographic(
     ax.set_ylabel(dim_names[vertical_dim])
 
 
-def display_vid(clip: VideoClip, resolution=300):
+def display_vid(clip: VideoClip, width=300):
     clip.write_videofile(
         "__temp__.mp4",
         verbose=False,
         logger=None,
     )
 
-    return Video("__temp__.mp4", embed=True, width=resolution)
+    return Video("__temp__.mp4", embed=True, width=width)
 
 
 def display_vids(clips: List[VideoClip], prefix="../", width=300):
@@ -144,3 +147,19 @@ def to_pil_image(feature_map: torch.Tensor, clip=False):
     return Image.fromarray(
         (feature_map_in.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
     )
+
+
+def max_divisor(n):
+    if n <= 1:
+        return None  # No proper divisor for 1 or less
+    for i in range(n // 2, 0, -1):
+        if n % i == 0:
+            return i
+
+
+def reshape_lst_to_rect(lst: List, divisor=None):
+    if divisor is None:
+        divisor = max_divisor(len(lst))
+
+    chunked = [lst[i : i + divisor] for i in range(0, len(lst), divisor)]
+    return chunked

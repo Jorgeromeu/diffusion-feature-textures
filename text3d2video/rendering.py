@@ -209,3 +209,13 @@ def shade_meshes(
         renders = TF.resize(renders, (resolution, resolution))
 
     return renders
+
+
+def render_texture(meshes, cameras, uv_map, verts_uvs, faces_uvs):
+    n_frames = len(cameras)
+    texture = make_repeated_uv_texture(uv_map, faces_uvs, verts_uvs, N=n_frames)
+    renderer = make_mesh_renderer(cameras=cameras)
+    meshes_copy = meshes.clone()
+    meshes_copy.textures = texture
+    renders = renderer(meshes_copy, cameras=cameras)
+    return renders

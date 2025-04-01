@@ -390,15 +390,13 @@ class UnifiedAttnProcessor(BaseAttnProcessor):
         # read injected kv features
         injected_kv = self.injected_kvs.get(self._cur_module_path)
 
-        # no kvs provided: attend to self
+        # if no kvs provided: attend to self
         if injected_kv is None:
             kv_features = hidden_states
 
-        # kvs provided: attend to them
+        # if kvs provided: attend to them, optionally also self
         else:
             kv_features = injected_kv
-
-            # concatenate self-hidden states
             if self.also_attend_to_self:
                 kv_features = torch.cat([hidden_states, kv_features], dim=1)
 

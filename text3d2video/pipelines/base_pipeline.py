@@ -8,6 +8,7 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 from diffusers.image_processor import VaeImageProcessor
+from PIL.Image import Image
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -85,11 +86,14 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
             n_frames=batch_size,
         )
 
-    def decode_latents(self, latents: torch.FloatTensor, generator=None):
+    def decode_latents(
+        self, latents: torch.FloatTensor, generator=None, output_type="pil"
+    ):
         # scale latents
-        latents_scaled = latents / self.vae.config.scaling_factor
+        scaling_factor = self.vae.config.scaling_factor
+        latents_scaled = latents / scaling_factor
 
-        # decode latents
+        # decode
         images = self.vae.decode(
             latents_scaled,
             return_dict=False,
@@ -98,10 +102,25 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
 
         # postprocess images
         images = self.image_processor.postprocess(
-            images, output_type="pil", do_denormalize=[True] * len(latents)
+            images, output_type=output_type, do_denormalize=[True] * len(latents)
         )
 
         return images
+
+    def encode_images(self, images: List[Image], generator=None) -> torch.FloatTensor:
+        # preprocess image
+        image_processed = self.image_processor.preprocess(images).to(
+            device=self.device, dtype=self.dtype
+        )
+
+        # encode
+        encoded = self.vae.encode(image_processed).latent_dist.sample(
+            generator=generator
+        )
+
+        # scale latents
+        scaling_factor = self.vae.config.scaling_factor
+        return encoded * scaling_factor
 
     @torch.no_grad()
     def __call__(

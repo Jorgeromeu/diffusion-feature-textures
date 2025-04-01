@@ -187,7 +187,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         self.attn_processor = UnifiedAttnProcessor(
             self.unet,
             also_attend_to_self=True,
-            feature_blend_alhpa=0.8,
+            feature_blend_alhpa=1.0,
             do_kv_extraction=True,
             do_spatial_post_attn_extraction=True,
             kv_extraction_paths=conf.module_paths,
@@ -247,20 +247,22 @@ class TexturingPipeline(BaseControlNetPipeline):
             faces_uvs,
         )
 
-        def initial_texture(layer):
-            dimension = layer.layer_channels(self.unet)
-            res_idx = layer_resolution_indices[layer.module_path()]
-            uv_res = uv_resolutions[res_idx]
-            return torch.zeros(uv_res, uv_res, dimension).to(latents)
-
         for t in tqdm(self.scheduler.timesteps):
+            # initialize empty textures
+            def initial_texture(layer):
+                dimension = layer.layer_channels(self.unet)
+                res_idx = layer_resolution_indices[layer.module_path()]
+                uv_res = uv_resolutions[res_idx]
+                return torch.zeros(uv_res, uv_res, dimension).to(latents)
+
             textures_cond = {l.module_path(): initial_texture(l) for l in layers}
             textures_uncond = {l.module_path(): initial_texture(l) for l in layers}
 
-            first_kvs_cond = None
-            first_kvs_uncond = None
-            noise_preds = []
+            # initialize kvs
+            prev_kvs_cond = None
+            prev_kvs_uncond = None
 
+            noise_preds = []
             for i in range(len(cameras)):
                 # render feature textures
                 def render_texture(layer, uv_map):
@@ -287,10 +289,10 @@ class TexturingPipeline(BaseControlNetPipeline):
                     cond_embeddings[[i]],
                     uncond_embeddings[[i]],
                     [depth_maps[i]],
-                    injected_feats_cond=rendered_cond,  # inject rendered qrys
+                    injected_feats_cond=rendered_cond,  # inject rendered feats
                     injected_feats_uncond=rendered_uncond,
-                    injected_kvs_cond=first_kvs_cond,  # inject first-view kvs
-                    injected_kvs_uncond=first_kvs_uncond,
+                    injected_kvs_cond=prev_kvs_cond,  # inject first-view kvs
+                    injected_kvs_uncond=prev_kvs_uncond,
                     extract_feats=True,
                     extract_kvs=True,
                 )
@@ -301,9 +303,8 @@ class TexturingPipeline(BaseControlNetPipeline):
                 extracted_kvs_cond = model_out.extracted_kvs_cond
                 extracted_kvs_uncond = model_out.extracted_kvs_uncond
 
-                if i == 0:
-                    first_kvs_cond = extracted_kvs_cond
-                    first_kvs_uncond = extracted_kvs_uncond
+                prev_kvs_cond = extracted_kvs_cond
+                prev_kvs_uncond = extracted_kvs_uncond
 
                 # update feature textures
                 extracted_cond = model_out.extracted_feats_cond
@@ -313,6 +314,7 @@ class TexturingPipeline(BaseControlNetPipeline):
                     res_idx = layer_resolution_indices[l]
                     projection = projections[i][res_idx]
 
+                    textures_cond[l] = torch.zeros_like(textures_cond[l])
                     update_uv_texture(
                         textures_cond[l],
                         extracted_cond[l][0],
@@ -320,6 +322,7 @@ class TexturingPipeline(BaseControlNetPipeline):
                         projection.uvs,
                     )
 
+                    textures_uncond[l] = torch.zeros_like(textures_cond[l])
                     update_uv_texture(
                         textures_uncond[l],
                         extracted_uncond[l][0],
@@ -338,11 +341,10 @@ class TexturingPipeline(BaseControlNetPipeline):
             def unsqueeze(layer, kvs):
                 return kvs[0]
 
-            kvs_cond = dict_map(first_kvs_cond, unsqueeze)
-            kvs_uncond = dict_map(first_kvs_uncond, unsqueeze)
-
-            features_writer.write_features_dict("kvs", kvs_cond, t=t, chunk="cond")
-            features_writer.write_features_dict("kvs", kvs_uncond, t=t, chunk="uncond")
+            # kvs_cond = dict_map(first_kvs_cond, unsqueeze)
+            # kvs_uncond = dict_map(first_kvs_uncond, unsqueeze)
+            # features_writer.write_features_dict("kvs", kvs_cond, t=t, chunk="cond")
+            # features_writer.write_features_dict("kvs", kvs_uncond, t=t, chunk="uncond")
 
             noise_preds = torch.stack(noise_preds)
             latents = self.scheduler.step(noise_preds, t, latents).prev_sample

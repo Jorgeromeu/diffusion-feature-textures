@@ -2,7 +2,8 @@ from typing import Any
 
 import torch
 from attr import dataclass
-from diffusers import ControlNetModel, DPMSolverMultistepScheduler
+from diffusers import ControlNetModel
+from diffusers.schedulers import DDIMScheduler
 from hydra.utils import instantiate
 
 
@@ -32,7 +33,7 @@ def load_pipeline(
     controlnet_path=None,
     device="cuda",
     dtype=torch.float16,
-    scheduler_class=DPMSolverMultistepScheduler,
+    scheduler_class=DDIMScheduler,
 ):
     device = torch.device("cuda")
     dtype = torch.float16
