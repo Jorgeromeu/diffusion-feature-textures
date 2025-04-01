@@ -174,7 +174,7 @@ class TexGenPipeline(BaseControlNetPipeline):
         latents = self.prepare_latents(len(meshes), generator=generator)
 
         # TODO move constants
-        uv_res = 1000
+        uv_res = 512
         image_res = 512
 
         # precompute projections
@@ -293,7 +293,7 @@ class TexGenPipeline(BaseControlNetPipeline):
                     denoised_observation_rgb,
                     projection.xys,
                     projection.uvs,
-                    update_empty_only=False,
+                    update_empty_only=True,
                 )
 
                 logger.write("clean_tex", clean_tex, t=t, frame_i=i)
