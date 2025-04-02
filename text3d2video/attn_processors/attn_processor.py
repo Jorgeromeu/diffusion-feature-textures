@@ -8,7 +8,6 @@ from text3d2video.sd_feature_extraction import get_module_path
 from text3d2video.utilities.attention_utils import (
     memory_efficient_attention,
 )
-from text3d2video.utilities.logging import AttnWriter
 
 
 class BaseAttnProcessor:
@@ -26,7 +25,6 @@ class BaseAttnProcessor:
     frame_indices: Tensor = None
 
     # treat batch dimension as chunks, (e.g for CFG)
-    n_chunks: int
     chunk_labels: List[str] = []
 
     def set_cur_timestep(self, cur_timestep: int):
@@ -36,16 +34,13 @@ class BaseAttnProcessor:
         self.frame_indices = frame_indices
 
     def set_chunk_labels(self, chunk_labels: List[str]):
-        assert len(chunk_labels) == self.n_chunks
         self.chunk_labels = chunk_labels
 
     def __init__(
         self,
         model,
-        chunk_size: int = 1,
     ):
         self.model = model
-        self.n_chunks = chunk_size
 
     def _call_init(self, attn: Attention, encoder_hidden_states: Tensor):
         self._cur_module_path = get_module_path(self.model, attn)

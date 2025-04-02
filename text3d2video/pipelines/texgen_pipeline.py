@@ -15,6 +15,7 @@ from tqdm import tqdm
 from text3d2video.attn_processors.extraction_injection_attn import (
     UnifiedAttnProcessor,
 )
+from text3d2video.attn_processors.final_attn_processor import FinalAttnProcessor
 from text3d2video.backprojection import (
     project_visible_texels_to_camera,
     update_uv_texture,
@@ -24,6 +25,7 @@ from text3d2video.rendering import (
     render_depth_map,
     render_texture,
 )
+from text3d2video.util import chunk_dim
 from text3d2video.utilities.logging import GrLogger, H5Logger
 
 
@@ -44,7 +46,7 @@ class TexGenModelOutput:
 
 class TexGenPipeline(BaseControlNetPipeline):
     conf: TexGenConfig
-    attn_processor: UnifiedAttnProcessor
+    attn_processor: FinalAttnProcessor
     logger: GrLogger
 
     def model_forward(
@@ -92,15 +94,28 @@ class TexGenPipeline(BaseControlNetPipeline):
         both_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
         depth_maps_duplicated = depth_maps * 2
 
+        # set extraction flag
         self.attn_processor.do_kv_extraction = extract_kvs
 
-        # set extraction flag
-        extracted_kvs = self.attn_processor.extracted_kvs
+        # pass injected kvs
+        if injected_kvs_cond is None:
+            injected_kvs_cond = {}
+        if injected_kvs_uncond is None:
+            injected_kvs_uncond = {}
+        injected_kvs = {}
+        for key in injected_kvs_cond:
+            injected_kvs[key] = torch.cat(
+                [injected_kvs_uncond[key], injected_kvs_cond[key]]
+            )
+
+        self.attn_processor.injected_kvs = injected_kvs
 
         # do both unet passes
         noise_pred = self.model_forward(
             latents_duplicated, both_embeddings, t, depth_maps_duplicated
         )
+
+        extracted_kvs = self.attn_processor.extracted_kvs
 
         # combine predictions according to CFG
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
@@ -111,13 +126,15 @@ class TexGenPipeline(BaseControlNetPipeline):
         extracted_kvs_cond = {}
         extracted_kvs_uncond = {}
         for key in extracted_kvs:
-            extracted_kvs_uncond[key] = extracted_kvs[key][0]
-            extracted_kvs_cond[key] = extracted_kvs[key][1]
+            kvs = extracted_kvs[key]
+            kvs = chunk_dim(kvs, 2)
+            extracted_kvs_uncond[key] = kvs[0]
+            extracted_kvs_cond[key] = kvs[1]
 
         return TexGenModelOutput(
             noise_pred=noise_pred,
-            extracted_kvs_uncond={},
-            extracted_kvs_cond={},
+            extracted_kvs_uncond=extracted_kvs_cond,
+            extracted_kvs_cond=extracted_kvs_uncond,
         )
 
     @torch.no_grad()
@@ -151,10 +168,11 @@ class TexGenPipeline(BaseControlNetPipeline):
 
             # set up attn processor
 
-        self.attn_processor = UnifiedAttnProcessor(
+        self.attn_processor = FinalAttnProcessor(
             self.unet,
-            also_attend_to_self=True,
             do_kv_extraction=True,
+            also_attend_to_self=True,
+            attend_to_injected=True,
             kv_extraction_paths=self.conf.module_paths,
         )
         self.unet.set_attn_processor(self.attn_processor)

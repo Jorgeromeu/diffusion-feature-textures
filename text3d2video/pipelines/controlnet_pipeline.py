@@ -99,6 +99,7 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         # UNet Pass
         self.attn_processor.set_cur_timestep(t)
+        self.attn_processor.set_chunk_labels(["cond", "uncond"])
         noise_pred = self.unet(
             latents_duplicated,
             t,
@@ -142,7 +143,7 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
             self.logger = GrLogger.create_disabled()
 
         # setup attn processor
-        self.attn_processor = BaseAttnProcessor(model=self.unet, chunk_size=2)
+        self.attn_processor = BaseAttnProcessor(model=self.unet)
         self.unet.set_attn_processor(self.attn_processor)
         self.attn_processor.attn_writer = self.logger.attn_writer
 

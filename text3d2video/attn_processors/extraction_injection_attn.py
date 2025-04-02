@@ -298,6 +298,10 @@ class UnifiedAttnProcessor(BaseAttnProcessor):
     injected_qrys: Dict[str, Float[Tensor, "b c h w"]] = {}
     injected_post_attns: Dict[str, Float[Tensor, "b c h w"]] = {}
 
+    # injection settings
+    attend_to_self: bool
+    attend_to_all: bool
+
     def __init__(
         self,
         model,
@@ -347,21 +351,6 @@ class UnifiedAttnProcessor(BaseAttnProcessor):
         )
 
     # public facing mode-setting methods
-
-    def clear_injected_features(self):
-        self.injected_kvs = {}
-        self.injected_qrys = {}
-        self.injected_post_attns = {}
-
-    def clear_extracted_features(self):
-        self.extracted_kvs = {}
-        self.extracted_spatial_qrys = {}
-        self.extracted_post_attns = {}
-
-    def disable_all_extraction(self):
-        self.do_kv_extraction = False
-        self.do_spatial_qry_extraction = False
-        self.do_spatial_post_attn_extraction = False
 
     # functionality
 

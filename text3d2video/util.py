@@ -180,3 +180,15 @@ def object_array(list_of_lists: List):
 
 def pil_latent(latent: Tensor):
     return TF.to_pil_image(latent[0:3].cpu())
+
+
+def chunk_dim(x: Tensor, n_chunks: int, dim: int = 0):
+    """
+    Chunk a tensor along a dimension
+    """
+
+    size = x.size(dim)
+    assert size % n_chunks == 0, "dim length size must be divisible by n_chunks"
+    chunk_size = size // n_chunks
+    new_shape = list(x.shape[:dim]) + [n_chunks, chunk_size] + list(x.shape[dim + 1 :])
+    return x.view(*new_shape)
