@@ -58,13 +58,15 @@ def display_ims_grid(
     # plt.show()
 
 
-def display_ims(images: List[Image.Image], scale=2, titles=None, title=None):
+def display_ims(
+    images: List[Image.Image], scale=3, titles=None, title=None, vmin=None, vmax=None
+):
     if titles is not None:
         assert len(titles) == len(images)
 
     if len(images) == 1:
         _, ax = plt.subplots(1, 1, figsize=(scale, scale))
-        ax.imshow(images[0])
+        ax.imshow(images[0], vmin=vmin, vmax=vmax)
         ax.axis("off")
         if titles is not None:
             ax.set_title(titles[0])
@@ -76,7 +78,7 @@ def display_ims(images: List[Image.Image], scale=2, titles=None, title=None):
     _, axs = plt.subplots(1, len(images), figsize=(len(images) * scale, scale))
 
     for i, im in enumerate(images):
-        axs[i].imshow(im)
+        axs[i].imshow(im, vmin=vmin, vmax=vmax)
         axs[i].axis("off")
         if titles is not None:
             axs[i].set_title(titles[i])

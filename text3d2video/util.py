@@ -5,8 +5,10 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 from einops import rearrange
-from pytorch3d.io import load_obj
+from pytorch3d.io import load_obj, load_objs_as_meshes
 from torch import Tensor
+
+from text3d2video.utilities.mesh_processing import normalize_meshes
 
 
 def read_obj_uvs(obj_path: str, device="cuda"):
@@ -14,6 +16,16 @@ def read_obj_uvs(obj_path: str, device="cuda"):
     verts_uvs = aux.verts_uvs.to(device)
     faces_uvs = faces.textures_idx.to(device)
     return verts_uvs, faces_uvs
+
+
+def read_obj_with_uvs(obj_path: str, device="cuda", normalize=True):
+    _, faces, aux = load_obj(obj_path)
+    verts_uvs = aux.verts_uvs.to(device)
+    faces_uvs = faces.textures_idx.to(device)
+
+    mesh = load_objs_as_meshes([obj_path], device=device)
+    mesh = normalize_meshes(mesh)
+    return mesh, verts_uvs, faces_uvs
 
 
 def ordered_sample_indices(lst, n):

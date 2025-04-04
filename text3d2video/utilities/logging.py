@@ -40,7 +40,9 @@ class H5Logger(ABC):
         if not self.enabled:
             return
 
-        self.fp = h5py.File(self.path, "w")
+        self.fp = h5py.File(
+            self.path, "w", rdcc_nbytes=1024, rdcc_nslots=1_000_000, rdcc_w0=0.0
+        )
 
     def open_read(self):
         if not self.enabled:
@@ -53,6 +55,7 @@ class H5Logger(ABC):
             return
 
         if self.fp is not None:
+            self.fp.flush()
             self.fp.close()
 
     def delete_data(self):
@@ -123,6 +126,11 @@ class H5Logger(ABC):
         # save all keys as attrs
         for key, value in keys.items():
             dataset.attrs[key] = value
+
+        del data
+
+    def flush(self):
+        self.fp.flush()
 
     def read(self, name: str, return_pt=True, check_keys=False, **keys):
         # assert keys contains all field keys

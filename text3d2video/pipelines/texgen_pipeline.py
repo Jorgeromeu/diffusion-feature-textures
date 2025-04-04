@@ -12,9 +12,6 @@ from pytorch3d.structures import Meshes
 from torch import Tensor
 from tqdm import tqdm
 
-from text3d2video.attn_processors.extraction_injection_attn import (
-    UnifiedAttnProcessor,
-)
 from text3d2video.attn_processors.final_attn_processor import FinalAttnProcessor
 from text3d2video.backprojection import (
     project_visible_texels_to_camera,
@@ -22,8 +19,12 @@ from text3d2video.backprojection import (
 )
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
+    compute_newly_visible_masks,
+    downsample_masks,
+    make_mesh_rasterizer,
     render_depth_map,
     render_texture,
+    shade_mesh,
 )
 from text3d2video.util import chunk_dim
 from text3d2video.utilities.logging import GrLogger, H5Logger
@@ -161,8 +162,6 @@ class TexGenPipeline(BaseControlNetPipeline):
         # setup logger
         if logger is not None:
             self.logger = logger
-            # self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
-            # self.attn_processor.attn_writer = self.logger.attn_writer
         else:
             self.logger = H5Logger.create_disabled()
 
@@ -192,53 +191,43 @@ class TexGenPipeline(BaseControlNetPipeline):
         latents = self.prepare_latents(len(meshes), generator=generator)
 
         # TODO move constants
-        uv_res = 512
+        uv_res = 600
         image_res = 512
 
-        # precompute projections
-        projections = [
-            project_visible_texels_to_camera(
-                m, c, verts_uvs, faces_uvs, uv_res, raster_res=2000
-            )
-            for m, c in zip(meshes, cameras)
-        ]
+        # precompute rasterization and projections
+        projections = []
+        fragments = []
 
-        # precompute masks for each view
-        mask_tex = torch.ones(uv_res, uv_res, 1).cuda()
-        view_masks = []
+        rasterizer = make_mesh_rasterizer(resolution=image_res)
         for i in range(n_frames):
-            mesh = meshes[i]
             cam = cameras[i]
-            projection = projections[i]
+            mesh = meshes[i]
 
-            # render mask
-            mask_i = render_texture(mesh, cam, mask_tex, verts_uvs, faces_uvs)[0]
-            # downsample mask
-            mask_down = TF.resize(
-                mask_i.unsqueeze(0),
-                (64, 64),
-                interpolation=TF.InterpolationMode.NEAREST,
-            )[0]
-
-            self.logger.write("mask", mask_down, frame_i=i)
-            view_masks.append(mask_down.clone())
-
-            # update mask texture
-            feature_map = torch.zeros(1, image_res, image_res).cuda()
-            update_uv_texture(
-                mask_tex,
-                feature_map,
-                projection.xys,
-                projection.uvs,
-                update_empty_only=False,
+            # project UVs to camera
+            projection = project_visible_texels_to_camera(
+                mesh,
+                cam,
+                verts_uvs,
+                faces_uvs,
+                raster_res=image_res,
+                texture_res=uv_res,
             )
-        view_masks = torch.stack(view_masks, dim=0)
+            projections.append(projection)
+
+            # rasterize
+            frags = rasterizer(meshes[i], cameras=cameras[i])
+            fragments.append(frags)
+
+        # precompute newly-visible masks
+        newyly_visible_masks = compute_newly_visible_masks(
+            cameras, meshes, projections, uv_res, image_res, verts_uvs, faces_uvs
+        )
+        newly_visible_masks_down = downsample_masks(
+            newyly_visible_masks, (64, 64), thresh=0.1
+        ).cuda()
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
-            for i, latent in enumerate(latents):
-                self.logger.write("latent", latent, frame_i=i, t=t)
-
             # Stage 1: autoregressively denoise to get RGB texture of denoised observation at t
             ref_kvs_cond = None
             ref_kvs_uncond = None
@@ -247,30 +236,29 @@ class TexGenPipeline(BaseControlNetPipeline):
                 mesh = meshes[i]
                 cam = cameras[i]
                 projection = projections[i]
+                frags = fragments[i]
                 depth_map = depth_maps[i]
 
                 # newly visible pixels in view i
-                mask_i = view_masks[i]
+                mask_i = newly_visible_masks_down[i]
 
                 # render clean image texture
-                rendered_clean = render_texture(
-                    mesh, cam, clean_tex, verts_uvs, faces_uvs
-                )[0]
+                rendered_clean = shade_mesh(
+                    mesh, frags, clean_tex, verts_uvs, faces_uvs
+                )
+
                 logger.write("rendered_clean", rendered_clean, frame_i=i, t=t)
                 rendered_latent = self.encode_images([rendered_clean], generator)[0]
-                logger.write("rendered_latent", rendered_latent, frame_i=i, t=t)
 
                 # bring render to noise level
                 epsilon = torch.randn_like(rendered_latent)
                 rendered_noisy = self.scheduler.add_noise(rendered_latent, epsilon, t)
-                logger.write("rendered_noisy", rendered_noisy, frame_i=i, t=t)
 
                 # blend latent with rendered noisy
                 latent = latents[i]
 
                 blended_latent = latent * mask_i + rendered_noisy * (1 - mask_i)
                 blended_latent = blended_latent.to(latent)
-                logger.write("blended_latent", blended_latent, frame_i=i, t=t)
 
                 # predict denoised observation
                 model_out = self.model_forward_guided(
@@ -294,8 +282,6 @@ class TexGenPipeline(BaseControlNetPipeline):
                     t,
                     blended_latent,
                 ).pred_original_sample
-
-                logger.write("denoised", denoised_observation, frame_i=i, t=t)
 
                 # update clean image texture
                 denoised_observation_rgb = self.decode_latents(
@@ -344,6 +330,7 @@ class TexGenPipeline(BaseControlNetPipeline):
 
             # denoise latents
             latents = self.scheduler.step(noise_preds, t, latents).prev_sample
+            self.logger.flush()
 
         for i, latent in enumerate(latents):
             self.logger.write("latent", latent, frame_i=i, t=0)
