@@ -19,14 +19,16 @@ from text3d2video.backprojection import (
 )
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
+    compute_autoregressive_update_masks,
     compute_newly_visible_masks,
+    compute_uv_jacobian_map,
     downsample_masks,
     make_mesh_rasterizer,
     render_depth_map,
     render_texture,
     shade_mesh,
 )
-from text3d2video.util import chunk_dim
+from text3d2video.util import chunk_dim, sample_feature_map_ndc
 from text3d2video.utilities.logging import GrLogger, H5Logger
 
 
@@ -36,6 +38,7 @@ class TexGenConfig:
     guidance_scale: float
     controlnet_conditioning_scale: float
     module_paths: List[str]
+    quality_update_factor: float
 
 
 @dataclass
@@ -209,8 +212,8 @@ class TexGenPipeline(BaseControlNetPipeline):
                 cam,
                 verts_uvs,
                 faces_uvs,
-                raster_res=image_res,
                 texture_res=uv_res,
+                raster_res=10000,
             )
             projections.append(projection)
 
@@ -219,12 +222,30 @@ class TexGenPipeline(BaseControlNetPipeline):
             fragments.append(frags)
 
         # precompute newly-visible masks
-        newyly_visible_masks = compute_newly_visible_masks(
+        newly_visible_masks = compute_newly_visible_masks(
             cameras, meshes, projections, uv_res, image_res, verts_uvs, faces_uvs
         )
         newly_visible_masks_down = downsample_masks(
-            newyly_visible_masks, (64, 64), thresh=0.1
+            newly_visible_masks, (64, 64), thresh=0.1
         ).cuda()
+
+        # compute quality maps
+        quality_maps = [
+            compute_uv_jacobian_map(c, m, verts_uvs, faces_uvs)
+            for c, m in zip(cameras, meshes)
+        ]
+        quality_maps = torch.stack(quality_maps)
+
+        better_quality_masks = compute_autoregressive_update_masks(
+            cameras,
+            meshes,
+            projections,
+            quality_maps,
+            uv_res,
+            verts_uvs,
+            faces_uvs,
+            quality_factor=self.conf.quality_update_factor,
+        )
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
@@ -290,17 +311,19 @@ class TexGenPipeline(BaseControlNetPipeline):
 
                 logger.write("denoised_rgb", denoised_observation_rgb, frame_i=i, t=t)
 
-                # update texture
-                # TODO replace with system that updates based on image space coordinates
-                update_uv_texture(
-                    clean_tex,
-                    denoised_observation_rgb,
-                    projection.xys,
-                    projection.uvs,
-                    update_empty_only=True,
-                )
+                # update texture based on quality maps
+                update_mask = better_quality_masks[i]
 
-                logger.write("clean_tex", clean_tex, t=t, frame_i=i)
+                # filter out texels that lie in the outside the update mask
+                texels_in_mask = sample_feature_map_ndc(
+                    update_mask.unsqueeze(0).cuda(), projection.xys
+                )
+                uvs = projection.uvs[texels_in_mask[:, 0]]
+                xys = projection.xys[texels_in_mask[:, 0]]
+
+                # update texture
+                colors = sample_feature_map_ndc(denoised_observation_rgb, xys).float()
+                clean_tex[uvs[:, 1], uvs[:, 0]] = colors
 
             # Stage 2: obtain noise predictions
             noise_preds = []
@@ -330,10 +353,6 @@ class TexGenPipeline(BaseControlNetPipeline):
 
             # denoise latents
             latents = self.scheduler.step(noise_preds, t, latents).prev_sample
-            self.logger.flush()
-
-        for i, latent in enumerate(latents):
-            self.logger.write("latent", latent, frame_i=i, t=0)
 
         # decode latents in chunks
         decoded_imgs = []

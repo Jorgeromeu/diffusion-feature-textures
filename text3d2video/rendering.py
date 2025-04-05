@@ -272,7 +272,7 @@ def shade_mesh(
     return render[0]
 
 
-def compute_uv_negative_jacobian(cam, mesh, verts_uvs, faces_uvs, res=512):
+def compute_uv_jacobian_map(cam, mesh, verts_uvs, faces_uvs, res=512):
     rasterizer = make_mesh_rasterizer(resolution=res)
     frags = rasterizer(mesh, cameras=cam)
 
@@ -309,9 +309,9 @@ def compute_uv_negative_jacobian(cam, mesh, verts_uvs, faces_uvs, res=512):
     du_dy = F.conv2d(pixel_us, sobel_y, padding=1)[0, 0].cpu()
     dv_dy = F.conv2d(pixel_vs, sobel_y, padding=1)[0, 0].cpu()
 
-    negative_jacobian = torch.abs(du_dx * dv_dy - du_dy * dv_dx)
+    abs_jacobian = torch.abs(du_dx * dv_dy - du_dy * dv_dx)
 
-    return negative_jacobian
+    return abs_jacobian
 
 
 def compute_autoregressive_update_masks(
@@ -320,7 +320,6 @@ def compute_autoregressive_update_masks(
     projections,
     quality_maps,
     uv_res: int,
-    image_res: int,
     verts_uvs,
     faces_uvs,
     quality_factor=10,
