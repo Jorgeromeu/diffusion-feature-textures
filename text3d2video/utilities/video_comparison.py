@@ -10,6 +10,9 @@ from moviepy.editor import (
     clips_array,
 )
 
+from text3d2video.utilities.ipython_utils import display_vid
+from text3d2video.utilities.video_util import extend_clip_repeat
+
 
 @dataclass
 class VideoLabel:
@@ -123,11 +126,16 @@ def video_grid(
     y_labels: List[str] = None,
     col_gap_indices=None,
     col_gap_sizes=None,
+    pad_video_lengths: bool = True,
 ):
     """
     Arrange a grid of moviepy clips into a single clip as a grid, with optional x and y labels
     """
     clips = clips.copy()
+
+    if pad_video_lengths:
+        max_duration = np.vectorize(lambda v: v.duration)(clips).max()
+        clips = np.vectorize(lambda v: extend_clip_repeat(v, max_duration))(clips)
 
     if x_labels is not None:
         top_row = clips[0]
@@ -152,6 +160,18 @@ def video_grid(
     array_clip = clips_array(clips)
 
     return array_clip
+
+
+def display_vids(
+    clips: List[ImageSequenceClip], titles: List[str] = None, title=None, width=300
+):
+    videos = [clips]
+    clip = video_grid(videos, x_labels=titles, pad_video_lengths=True)
+
+    if title:
+        clip = add_title_to_clip(clip, title)
+
+    return display_vid(clip, width=width)
 
 
 def group_into_array(

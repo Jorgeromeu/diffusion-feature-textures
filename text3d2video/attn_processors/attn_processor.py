@@ -36,6 +36,12 @@ class BaseAttnProcessor:
     def set_chunk_labels(self, chunk_labels: List[str]):
         self.chunk_labels = chunk_labels
 
+    def n_chunks(self) -> int:
+        """
+        Return the number of chunks
+        """
+        return len(self.chunk_labels)
+
     def __init__(
         self,
         model,

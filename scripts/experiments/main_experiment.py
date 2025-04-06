@@ -25,7 +25,7 @@ from text3d2video.pipelines.reposable_diffusion_pipeline import ReposableDiffusi
 from text3d2video.rendering import render_depth_map
 from text3d2video.utilities.video_comparison import group_into_array, video_grid
 from text3d2video.utilities.video_util import (
-    extend_clip_to_match_duration,
+    extend_clip_repeat,
     pil_frames_to_clip,
 )
 from wandb_util.experiment_util import (
@@ -197,7 +197,7 @@ class MainExperiment(wbu.Experiment):
         videos = self.get_output_videos(per_frame, gr, rd)
 
         vids = [depth_video] + videos
-        vids = [extend_clip_to_match_duration(v, depth_video.duration) for v in vids]
+        vids = [extend_clip_repeat(v, depth_video.duration) for v in vids]
         return vids
 
     def vid_comparison(self, grouped_runs, with_labels=False):

@@ -14,7 +14,6 @@ from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from text3d2video.attn_processors.attn_processor import BaseAttnProcessor
 from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
 from text3d2video.utilities.logging import GrLogger
 
@@ -25,7 +24,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
     """
 
     logger: GrLogger
-    attn_processor: BaseAttnProcessor
 
     def __init__(
         self,
@@ -98,8 +96,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         )
 
         # UNet Pass
-        self.attn_processor.set_cur_timestep(t)
-        self.attn_processor.set_chunk_labels(["cond", "uncond"])
         noise_pred = self.unet(
             latents_duplicated,
             t,
@@ -141,11 +137,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
             )
         else:
             self.logger = GrLogger.create_disabled()
-
-        # setup attn processor
-        self.attn_processor = BaseAttnProcessor(model=self.unet)
-        self.unet.set_attn_processor(self.attn_processor)
-        self.attn_processor.attn_writer = self.logger.attn_writer
 
         # initialize latents from standard normal
         latents = self.prepare_latents(batch_size, generator=generator)

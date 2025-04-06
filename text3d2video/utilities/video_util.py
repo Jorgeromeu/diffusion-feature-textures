@@ -22,7 +22,7 @@ def pil_frames_to_clip(frames: List, fps=10, duration=None) -> ImageSequenceClip
     return clip
 
 
-def extend_clip_to_match_duration(clip, target_duration):
+def extend_clip_repeat(clip, target_duration):
     """
     Extends a MoviePy clip to match the duration of another video by repeating it.
 

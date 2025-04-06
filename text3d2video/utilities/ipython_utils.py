@@ -1,11 +1,9 @@
-import shutil
-from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from IPython.display import HTML, Video
+from IPython.display import Video
 from matplotlib.axes import Axes
 from moviepy.editor import VideoClip
 from PIL import Image
@@ -109,35 +107,6 @@ def display_vid(clip: VideoClip, width=300):
     )
 
     return Video("__temp__.mp4", embed=True, width=width)
-
-
-def display_vids(clips: List[VideoClip], prefix="../", width=300):
-    # initialize tempdir
-    temp_dir = Path("__temp__")
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
-    temp_dir.mkdir()
-
-    video_paths = []
-
-    for i, clip in enumerate(clips):
-        vid_path = str(temp_dir / f"vid_{i}.mp4")
-
-        clip.write_videofile(
-            vid_path,
-            verbose=False,
-            logger=None,
-        )
-        video_paths.append(vid_path)
-
-    video_paths = [prefix + vid_path for vid_path in video_paths]
-
-    video_tags = "".join(
-        f'<video width="{width}" controls><source src="{v}" type="video/mp4"></video>'
-        for v in video_paths
-    )
-
-    return HTML(f'<div style="display: flex; gap: 10px;">{video_tags}</div>')
 
 
 def to_pil_image(feature_map: torch.Tensor, clip=False):

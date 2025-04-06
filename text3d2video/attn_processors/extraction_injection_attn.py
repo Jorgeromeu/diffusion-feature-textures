@@ -61,9 +61,8 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
         spatial_qry_extraction_paths: List[str] = [],
         spatial_post_attn_extraction_paths: List[str] = [],
         mode=AttnMode.FEATURE_INJECTION,
-        unet_chunk_size=2,
     ):
-        BaseAttnProcessor.__init__(self, model, unet_chunk_size)
+        BaseAttnProcessor.__init__(self, model)
         self.do_kv_extraction = do_kv_extraction
         self.do_spatial_qry_extraction = do_spatial_qry_extraction
         self.do_spatial_post_attn_extraction = do_spatial_post_attn_extraction
@@ -127,10 +126,10 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
         Perform extended attention, and extract features
         """
 
-        n_frames = hidden_states.shape[0] // self.n_chunks
+        n_frames = hidden_states.shape[0] // self.n_chunks()
 
         ext_hidden_states = extended_attn_kv_hidden_states(
-            hidden_states, chunk_size=self.n_chunks
+            hidden_states, chunk_size=self.n_chunks()
         )
 
         kv_hidden_states = extend_across_frame_dim(ext_hidden_states, n_frames)
@@ -183,7 +182,7 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
                 original_features_1D,
                 "(b f) (h w) d -> b f d h w",
                 h=height,
-                b=self.n_chunks,
+                b=self.n_chunks(),
             )
 
             # blend rendered and original features
@@ -199,7 +198,7 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
             # blended_batched = adain_2D(blended_batched, blended_batched)
 
             blended = rearrange(
-                blended_batched, "(b f) d h w -> b f d h w", b=self.n_chunks
+                blended_batched, "(b f) d h w -> b f d h w", b=self.n_chunks()
             )
 
             # reshape back to 2D
@@ -207,7 +206,7 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
 
             return blended_features_1D
 
-        n_frames = hidden_states.shape[0] // self.n_chunks
+        n_frames = hidden_states.shape[0] // self.n_chunks()
 
         injected_kv_features = self.kv_features.get(self._cur_module_path)
 

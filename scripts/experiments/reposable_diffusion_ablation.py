@@ -18,7 +18,7 @@ from text3d2video.utilities.video_comparison import (
     group_into_array,
     video_grid,
 )
-from text3d2video.utilities.video_util import extend_clip_to_match_duration
+from text3d2video.utilities.video_util import extend_clip_repeat
 from wandb_util.experiment_util import (
     WandbExperiment,
     object_to_instantiate_config,
@@ -225,9 +225,7 @@ class ReposableDiffusionAblationExperiment(WandbExperiment):
 
         # extend clips to match duration
         for i, video in enumerate(aggr_vids):
-            aggr_vids[i] = extend_clip_to_match_duration(
-                video, videos_grid[0, 0].duration
-            )
+            aggr_vids[i] = extend_clip_repeat(video, videos_grid[0, 0].duration)
 
         all_vids = np.concatenate([aggr_vids[:, np.newaxis], videos_grid], axis=1)
 
