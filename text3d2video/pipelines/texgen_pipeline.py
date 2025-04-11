@@ -27,7 +27,7 @@ from text3d2video.rendering import (
     shade_mesh,
 )
 from text3d2video.util import chunk_dim, sample_feature_map_ndc
-from text3d2video.utilities.logging import GrLogger, H5Logger
+from text3d2video.utilities.logging import H5Logger
 
 
 @dataclass
@@ -358,7 +358,7 @@ class TexGenPipeline(BaseControlNetPipeline):
                 verts_uvs,
                 faces_uvs,
                 texture_res=texgen_config.uv_res,
-                raster_res=10000,
+                raster_res=2000,
             )
             projections.append(projection)
 

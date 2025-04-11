@@ -1,7 +1,0 @@
-# @package _global_
-
-run:
-  wandb: false
-
-generative_rendering:
-  num_inference_steps: 1

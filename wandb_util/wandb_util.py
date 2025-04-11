@@ -1,66 +1,84 @@
+import hashlib
+import json
 import logging
 import multiprocessing as mp
 import shutil
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional
 
-import torch
 from attr import dataclass
+from bidict import bidict
 from moviepy.editor import ImageSequenceClip
 from omegaconf import DictConfig, OmegaConf
-from torch import Tensor
 
 import wandb
 from wandb import Artifact
 from wandb.apis.public import Run
 
 
+def hash_config(cfg: DictConfig) -> str:
+    # convert to dict
+    config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    config_str = json.dumps(config_dict, sort_keys=True)
+    return hashlib.sha1(config_str.encode("utf-8")).hexdigest()
+
+
 @dataclass
 class RunConfig:
-    wandb: bool
-    instant_exit: bool
-    download_artifacts: bool
-    name: Optional[str]
-    group: Optional[str]
-    tags: list[str]
+    wandb: bool = True
+    download_artifacts: bool = False
+    name: Optional[str] = None
+    group: Optional[str] = None
+    tags: list[str] = None
+
+    def append_tags(self, tags: List[str]):
+        if self.tags is None:
+            self.tags = []
+
+        self.tags += tags
 
 
 # path to store local artifact data before logging to wandb
 ARTIFACTS_LOCAL_PATH = "/tmp/local_artifacts/"
 
 
-def setup_run(cfg: DictConfig, job_type: str) -> bool:
+def setup_run(cfg: DictConfig, run_config: RunConfig, job_type: str) -> bool:
     """
     Setup wandb run and log its config
     """
 
-    run_config = cfg.run
+    # get config dict
+    config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
 
+    # init wandb
     wandb_mode = "online" if run_config.wandb else "disabled"
+
+    # get tags
+    tags = run_config.tags
+    if tags is None:
+        tags = []
+
+    # add hash-tag
+    hash = hash_config(cfg)
+    hash_tag = f"hash:{hash}"
+    tags.append(hash_tag)
 
     wandb.init(
         project="diffusion-3d-features",
         job_type=job_type,
         mode=wandb_mode,
-        tags=run_config.tags,
+        tags=tags,
         group=run_config.group,
         name=run_config.name,
     )
 
-    # log run config
-    config = cfg.copy()
-    del config.run
-    config_dict = OmegaConf.to_container(config, resolve=True, throw_on_missing=True)
+    # add hash to summary
+    wandb.summary["hash"] = hash
+
+    # log config
     wandb.config.update(config_dict)
-
-    do_run = True
-    if run_config.instant_exit:
-        print("Instant exit enabled")
-        wandb.finish()
-        do_run = False
-
-    return do_run
 
 
 def api_artifact(artifact_tag: str) -> Artifact:
@@ -92,25 +110,6 @@ def get_artifact(artifact_tag: str):
         return wandb.use_artifact(artifact_tag)
 
     return api_artifact(artifact_tag)
-
-
-def first_logged_artifact_of_type(
-    run, artifact_type: str, name: str = None
-) -> Artifact:
-    for artifact in run.logged_artifacts():
-        if artifact.type == artifact_type:
-            if name is None or artifact.name.startswith(name):
-                return artifact
-
-            return artifact
-    return None
-
-
-def first_used_artifact_of_type(run, artifact_type: str) -> Artifact:
-    for artifact in run.used_artifacts():
-        if artifact.type == artifact_type:
-            return artifact
-    return None
 
 
 def logged_artifacts(run, type=None, name_startswith=None):
@@ -263,30 +262,13 @@ class ArtifactWrapper:
                 str(self.folder.absolute()),
             )
 
+    def log_standalone(self, aliases=None, delete_localfolder=False):
+        wandb.init(project="diffusion-3D-features", job_type="log_artifact_standalone")
+        self.log_if_enabled(aliases, delete_localfolder)
+        wandb.finish()
+
     def logged_by(self):
         return self.wandb_artifact.logged_by()
-
-
-class SimpleArtifact(ArtifactWrapper):
-    """
-    Minimal example for an artifact class
-    """
-
-    """
-    Specify the artifact type to classify in wandb
-    """
-
-    wandb_artifact_type = "simple"
-
-    """
-    Implement methods which read and write to self.folder
-    """
-
-    def write_tensor(self, data: Tensor):
-        torch.save(data, self.folder / "data.pt")
-
-    def read_tensor(self):
-        return torch.load(self.folder / "data.pt")
 
 
 class WandbRun:
@@ -298,126 +280,231 @@ class WandbRun:
     def _run(self, cfg: DictConfig):
         pass
 
-    def execute(self, cfg: DictConfig):
+    def execute(self, cfg: DictConfig, run_config: RunConfig):
         # init wandb
-        do_run = setup_run(cfg, self.job_type)
-        if not do_run:
-            return
-
+        setup_run(cfg, run_config, self.job_type)
+        # run
         self._run(cfg)
+        # finalize
         run = wandb.run
         wandb.finish()
         return run
 
 
-@dataclass
-class RunDescriptor:
+class RunSpecification:
     run_fun: WandbRun
     config: DictConfig
+    run_config: RunConfig
+    depends_on: List
 
-    def append_tags(self, tags: List[str]):
-        self.config.run.tags += tags
+    def __init__(
+        self,
+        name: str,
+        run_fun: WandbRun,
+        config: DictConfig,
+        run_config: RunConfig = None,
+        depends_on=None,
+    ):
+        self.run_fun = run_fun
+        self.config = config
+        self.run_config = run_config
+        self.depends_on = depends_on or []
+
+        if self.run_config is None:
+            self.run_config = RunConfig()
+
+        self.run_config.name = name
+
+    def __repr__(self):
+        return f"{self.run_config.name}({self.depends_on})"
 
     def as_process(self):
         return mp.Process(
             target=self.run_fun.execute,
-            args=(self.config,),
+            args=(self.config, self.run_config),
         )
 
 
-def spec_matches_run(spec: RunDescriptor, run: Run):
-    same_job_type = spec.run_fun.job_type == run.job_type
+def merge_queries_with_and(query1, query2):
+    if not query1:
+        return query2 or {}
+    if not query2:
+        return query1
 
-    if not same_job_type:
-        return False
+    # If both queries already use $and, merge their lists
+    if "$and" in query1 and "$and" in query2:
+        return {"$and": query1["$and"] + query2["$and"]}
 
-    spec_config = spec.config.copy()
-    del spec_config.run
-    spec_config_dict = OmegaConf.to_container(
-        spec_config, resolve=True, throw_on_missing=True
-    )
+    # If one query has $and, append the other query as a clause
+    if "$and" in query1:
+        return {"$and": query1["$and"] + [query2]}
+    if "$and" in query2:
+        return {"$and": [query1] + query2["$and"]}
 
-    return spec_config_dict == run.config
+    # Otherwise, wrap both in a new $and
+    return {"$and": [query1, query2]}
 
 
 class Experiment:
     experiment_name: str
     config: DictConfig
 
-    def specification(self) -> List[RunDescriptor]:
+    def __init__(
+        self,
+        group_name: str,
+    ):
+        self.group_name = group_name
+
+    def specification(self) -> List[RunSpecification]:
         """
         Return a list of run descriptors corresponding to the experiment
         """
         pass
 
-    def execute_runs(self, dry_run=False):
-        mp.set_start_method("spawn")
-        runs = self.specification()
+    def get_logged_runs(self) -> List[Run]:
+        """
+        Get all runs in the experiment
+        """
 
-        if dry_run:
-            print(f"would execute {len(runs)} runs")
-            return
+        # create query
+        query = {"$and": [{"tags": self.experiment_name}, {"group": self.group_name}]}
 
-        for run in runs:
-            run.append_tags([self.experiment_name])
+        api = wandb.Api()
+        project_name = "diffusion-3D-features"
+        runs = api.runs(project_name, filters=query)
+        runs = list(runs)
 
-        processes = [run.as_process() for run in runs]
+        return runs
+
+    def execute_runs(self, spec: List[RunSpecification]):
+        """
+        Execute a list of runs in the experiment
+        """
+
+        # add tags and group
+        for run in spec:
+            run.run_config.append_tags([self.experiment_name])
+            run.run_config.group = self.group_name
+
+        processes = [run.as_process() for run in spec]
 
         for p in processes:
             p.start()
             p.join()
 
-    def get_logged_runs(cls, filters=None) -> List[Run]:
-        """
-        Get all runs in the experiment
-        """
-
-        run_filters = {"tags": cls.experiment_name}
-        if filters is not None:
-            run_filters = {**run_filters, **filters}
-
-        api = wandb.Api()
-        project_name = "diffusion-3D-features"
-        runs = api.runs(project_name, filters=run_filters)
-        runs = list(runs)
-
-        return runs
-
-    def sync_experiment(self, dry_run=False):
+    def calc_sync_experiment(self, rerun_all=False):
         specification = self.specification()
         existing_runs = self.get_logged_runs()
 
-        # find runs remaining to run
+        if rerun_all:
+            return specification, existing_runs
+
+        # 1. establish bidirectional mapping between specs and runs
+        hash_to_spec = {hash_config(s.config): s for s in specification}
+        spec_to_run = bidict()
+        for r in existing_runs:
+            hash = r.summary.get("hash")
+            if hash in hash_to_spec:
+                spec_to_run[hash_to_spec[hash]] = r
+
+        # 2. find runs to run
+        # run if:
+        # - it has no corresponding existing run
+        # - it depends on a run that has no corresponding existing run
         to_run = []
         for spec in specification:
-            run_exists = any([spec_matches_run(spec, run) for run in existing_runs])
-            if not run_exists:
+            # if it has no corresponding existing run, run it
+            existing_run = spec_to_run.get(spec)
+            if existing_run is None:
                 to_run.append(spec)
 
-        # find runs to delete
-        to_del = []
-        for run in existing_runs:
-            in_spac = any([spec_matches_run(spec, run) for spec in specification])
-            if not in_spac:
-                to_del.append(run)
+            for dep in spec.depends_on:
+                # if it depends on a run that has no corresponding existing run, run it
+                existing_dep = spec_to_run.get(dep)
+                if existing_dep is None:
+                    to_run.append(spec)
+
+        # 3. find runs to delete
+        # delete a run if:
+        # - it has no corresponding spec
+        # - it has a corresponding spec, but it is in to_run
+        to_delete = []
+        for r in existing_runs:
+            spec = spec_to_run.inv.get(r)
+
+            # if no spec, delete it
+            if spec is None:
+                to_delete.append(r)
+
+            # if it has a spec, but the spec is in to_run, delete it
+            elif spec in to_run:
+                to_delete.append(r)
+
+        # finally toposort to_run
+        to_run = topo_sort(to_run)
+
+        return to_run, to_delete
+
+    def sync_experiment(self, dry_run=False, rerun_all=False, interactive=True):
+        to_run, to_del = self.calc_sync_experiment(rerun_all)
+
+        print(f"\nWould execute {len(to_run)} new runs:")
+        for run in to_run:
+            print(f"- {run.run_config.name}")
+
+        print(f"\nWould delete {len(to_del)} outdated runs:")
+        for run in to_del:
+            print(f"- {run.name:<30} ({run.id})")
+        print()
 
         if dry_run:
-            print(f"would execute {len(to_run)} runs")
-            print(f"would delete {len(to_del)} runs")
+            print("Dry run, not executing")
             return
+
+        if interactive:
+            print("Do you want to continue? (y/n)")
+            answer = input()
+            if answer.lower() != "y":
+                print("Aborting")
+                return
 
         print(f"Deleting {len(to_del)} runs")
         for run in to_del:
             run.delete()
 
         print(f"Executing {len(to_run)} runs")
-        mp.set_start_method("spawn")
 
-        for run in to_run:
-            run.append_tags([self.experiment_name])
+        self.execute_runs(to_run)
 
-        processes = [run.as_process() for run in to_run]
 
-        for p in processes:
-            p.start()
-            p.join()
+def topo_sort(spec: List[RunSpecification]) -> List[RunSpecification]:
+    """
+    Topological sort of the runs in the experiment
+    """
+
+    # create graph
+    graph = defaultdict(list)
+    indegree = defaultdict(int)
+
+    for run in spec:
+        indegree[run] = 0
+
+    for run in spec:
+        for dep in run.depends_on:
+            graph[dep].append(run)
+            indegree[run] += 1
+
+    # topological sort
+    queue = [run for run in spec if indegree[run] == 0]
+    sorted_spec = []
+
+    while queue:
+        run = queue.pop(0)
+        sorted_spec.append(run)
+
+        for dep in graph[run]:
+            indegree[dep] -= 1
+            if indegree[dep] == 0:
+                queue.append(dep)
+
+    return sorted_spec
