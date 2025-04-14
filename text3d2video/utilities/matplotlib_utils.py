@@ -3,6 +3,8 @@ from typing import List
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
+from matplotlib.transforms import Bbox
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from torch import Tensor
 
 
@@ -69,3 +71,41 @@ def add_pixel_marker(
     # create rect
     rect = Rectangle(coord_pix, height=pixel_w, width=pixel_w, color=color)
     return ax.add_patch(rect)
+
+
+def add_zoom_inset(ax: Axes, box: Bbox, width="40%", loc="lower right"):
+    # make inset
+    axins = inset_axes(ax, width=width, height=width, loc=loc)
+    axins.set_xticks([])
+    axins.set_yticks([])
+
+    # Recover image data, and add to new axes
+    img = ax.images[0]
+    data = img.get_array()
+    extent = img.get_extent()
+    cmap = img.get_cmap()
+    norm = img.norm
+    axins.imshow(
+        data,
+        extent=extent,
+        cmap=cmap,
+        norm=norm,
+    )
+
+    # zoom
+    axins.set_xlim(box.x0, box.x1)
+    axins.set_ylim(box.y1, box.y0)
+
+    for spine in axins.spines.values():
+        spine.set_edgecolor("red")
+        spine.set_linewidth(1)
+
+    rect = Rectangle(
+        (box.x0, box.y0),
+        box.width,
+        box.height,
+        edgecolor="red",
+        facecolor="none",
+        linewidth=1,
+    )
+    ax.add_patch(rect)

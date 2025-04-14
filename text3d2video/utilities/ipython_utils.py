@@ -16,6 +16,7 @@ def display_ims_grid(
     col_titles=None,
     row_titles=None,
     title=None,
+    show=True,
 ):
     images = images.copy()
 
@@ -30,10 +31,9 @@ def display_ims_grid(
         assert len(col_titles) == n_cols
 
     # make figure
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
-    if not isinstance(axs, np.ndarray):
-        axs = np.array([axs])
-    axs = axs.reshape(n_rows, n_cols)
+    fig, axs = plt.subplots(
+        n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale), squeeze=False
+    )
 
     for row_i in range(n_rows):
         for col_i in range(n_cols):
@@ -53,39 +53,22 @@ def display_ims_grid(
         fig.suptitle(title)
 
     plt.tight_layout()
-    # plt.show()
 
-
-def display_ims(
-    images: List[Image.Image], scale=3, titles=None, title=None, vmin=None, vmax=None
-):
-    if titles is not None:
-        assert len(titles) == len(images)
-
-    if len(images) == 1:
-        _, ax = plt.subplots(1, 1, figsize=(scale, scale))
-        ax.imshow(images[0], vmin=vmin, vmax=vmax)
-        ax.axis("off")
-        if titles is not None:
-            ax.set_title(titles[0])
+    if show:
         plt.show()
-        plt.tight_layout()
-        plt.show()
-        return
+    else:
+        return fig, axs
 
-    _, axs = plt.subplots(1, len(images), figsize=(len(images) * scale, scale))
 
-    for i, im in enumerate(images):
-        axs[i].imshow(im, vmin=vmin, vmax=vmax)
-        axs[i].axis("off")
-        if titles is not None:
-            axs[i].set_title(titles[i])
-
-    if title is not None:
-        plt.suptitle(title)
-
-    plt.tight_layout()
-    plt.show()
+def display_ims(images: List[Image.Image], scale=3, titles=None, title=None, show=True):
+    return display_ims_grid(
+        [images],
+        scale,
+        col_titles=titles,
+        row_titles=None,
+        title=title,
+        show=show,
+    )
 
 
 def view_pointcloud_orthographic(

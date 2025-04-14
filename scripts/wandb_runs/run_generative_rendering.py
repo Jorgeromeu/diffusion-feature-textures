@@ -23,7 +23,9 @@ class RunGenerativeRenderingConfig:
     animation_tag: str
     generative_rendering: GenerativeRenderingConfig
     model: ModelConfig
-    seed: int
+    seed: int = 0
+    kf_seed: int = 0
+    out_artifact: str = "video"
 
 
 class RunGenerativeRendering(wbu.WandbRun):
@@ -52,6 +54,10 @@ class RunGenerativeRendering(wbu.WandbRun):
         generator = torch.Generator(device=device)
         generator.manual_seed(cfg.seed)
 
+        # set kf seed
+        kf_generator = torch.Generator(device=device)
+        kf_generator.manual_seed(cfg.kf_seed)
+
         # inference
         video_frames = pipe(
             cfg.prompt,
@@ -62,6 +68,7 @@ class RunGenerativeRendering(wbu.WandbRun):
             conf=cfg.generative_rendering,
             noise_initializer=noise_initializer,
             generator=generator,
+            kf_generator=kf_generator,
         )
 
         # save video

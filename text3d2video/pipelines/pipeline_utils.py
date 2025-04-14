@@ -6,8 +6,8 @@ from diffusers.schedulers import DDIMScheduler
 
 @dataclass
 class ModelConfig:
-    sd_repo: str
-    controlnet_repo: str
+    sd_repo: str = "runwayml/stable-diffusion-v1-5"
+    controlnet_repo: str = "lllyasviel/control_v11f1p_sd15_depth"
 
 
 def load_pipeline(

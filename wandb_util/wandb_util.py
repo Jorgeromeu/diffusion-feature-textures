@@ -5,6 +5,7 @@ import multiprocessing as mp
 import shutil
 import tempfile
 from collections import defaultdict
+from functools import wraps
 from pathlib import Path
 from typing import List, Optional
 
@@ -19,7 +20,6 @@ from wandb.apis.public import Run
 
 
 def hash_config(cfg: DictConfig) -> str:
-    # convert to dict
     config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     config_str = json.dumps(config_dict, sort_keys=True)
     return hashlib.sha1(config_str.encode("utf-8")).hexdigest()
@@ -325,24 +325,10 @@ class RunSpecification:
         )
 
 
-def merge_queries_with_and(query1, query2):
-    if not query1:
-        return query2 or {}
-    if not query2:
-        return query1
-
-    # If both queries already use $and, merge their lists
-    if "$and" in query1 and "$and" in query2:
-        return {"$and": query1["$and"] + query2["$and"]}
-
-    # If one query has $and, append the other query as a clause
-    if "$and" in query1:
-        return {"$and": query1["$and"] + [query2]}
-    if "$and" in query2:
-        return {"$and": [query1] + query2["$and"]}
-
-    # Otherwise, wrap both in a new $and
-    return {"$and": [query1, query2]}
+@dataclass
+class ExperimentSyncAction:
+    to_delete: List[Run]
+    to_run: List[RunSpecification]
 
 
 class Experiment:
@@ -393,9 +379,14 @@ class Experiment:
             p.join()
 
     def calc_sync_experiment(self, rerun_all=False):
+        """
+        Obtain specification and logged runs and compute which runs in spec to execute, and which logged runs to delete so that the specification matches the logged runs
+        """
+
         specification = self.specification()
         existing_runs = self.get_logged_runs()
 
+        # if set, delete all existing, run all specified
         if rerun_all:
             return specification, existing_runs
 
@@ -404,7 +395,7 @@ class Experiment:
         spec_to_run = bidict()
         for r in existing_runs:
             hash = r.summary.get("hash")
-            if hash in hash_to_spec:
+            if hash in hash_to_spec and r.state == "finished":
                 spec_to_run[hash_to_spec[hash]] = r
 
         # 2. find runs to run
@@ -440,20 +431,27 @@ class Experiment:
             elif spec in to_run:
                 to_delete.append(r)
 
-        # finally toposort to_run
+        # finally, toposort to_run
         to_run = topo_sort(to_run)
 
-        return to_run, to_delete
+        return ExperimentSyncAction(
+            to_run=to_run,
+            to_delete=to_delete,
+        )
 
     def sync_experiment(self, dry_run=False, rerun_all=False, interactive=True):
-        to_run, to_del = self.calc_sync_experiment(rerun_all)
+        action = self.calc_sync_experiment(rerun_all)
 
-        print(f"\nWould execute {len(to_run)} new runs:")
-        for run in to_run:
+        if len(action.to_run) == 0 and len(action.to_delete) == 0:
+            print("Experiment up-to-date!")
+            return
+
+        print(f"\nWould execute {len(action.to_run)} new runs:")
+        for run in action.to_run:
             print(f"- {run.run_config.name}")
 
-        print(f"\nWould delete {len(to_del)} outdated runs:")
-        for run in to_del:
+        print(f"\nWould delete {len(action.to_delete)} outdated runs:")
+        for run in action.to_delete:
             print(f"- {run.name:<30} ({run.id})")
         print()
 
@@ -468,13 +466,16 @@ class Experiment:
                 print("Aborting")
                 return
 
-        print(f"Deleting {len(to_del)} runs")
-        for run in to_del:
+        print(f"Deleting {len(action.to_delete)} runs")
+        for run in action.to_delete:
             run.delete()
 
-        print(f"Executing {len(to_run)} runs")
+        print(f"Executing {len(action.to_run)} runs")
 
-        self.execute_runs(to_run)
+        self.execute_runs(action.to_run)
+
+    def url(self):
+        pass
 
 
 def topo_sort(spec: List[RunSpecification]) -> List[RunSpecification]:
@@ -508,3 +509,21 @@ def topo_sort(spec: List[RunSpecification]) -> List[RunSpecification]:
                 queue.append(dep)
 
     return sorted_spec
+
+
+def omegaconf_create_nested(d: dict):
+    dotlist = [f"{k}={v}" for k, v in d.items()]
+    return OmegaConf.from_dotlist(dotlist)
+
+
+def wandb_run(job_type: str):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            print("wandb init")
+            func(*args, **kwargs)
+            print("wandb finish")
+
+        return wrapper
+
+    return decorator

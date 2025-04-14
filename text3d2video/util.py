@@ -204,3 +204,29 @@ def chunk_dim(x: Tensor, n_chunks: int, dim: int = 0):
     chunk_size = size // n_chunks
     new_shape = list(x.shape[:dim]) + [n_chunks, chunk_size] + list(x.shape[dim + 1 :])
     return x.view(*new_shape)
+
+
+def hwc_to_chw(x: torch.Tensor) -> torch.Tensor:
+    """
+    Convert HWC (or NHWC) image format to CHW (or NCHW).
+    Supports single image (3D tensor) or batched images (4D tensor).
+    """
+    if x.ndim == 3:  # HWC
+        return x.permute(2, 0, 1)
+    elif x.ndim == 4:  # NHWC
+        return x.permute(0, 3, 1, 2)
+    else:
+        raise ValueError("Input tensor must be 3D (HWC) or 4D (NHWC)")
+
+
+def chw_to_hwc(x: torch.Tensor) -> torch.Tensor:
+    """
+    Convert CHW (or NCHW) image format to HWC (or NHWC).
+    Supports single image (3D tensor) or batched images (4D tensor).
+    """
+    if x.ndim == 3:  # CHW
+        return x.permute(1, 2, 0)
+    elif x.ndim == 4:  # NCHW
+        return x.permute(0, 2, 3, 1)
+    else:
+        raise ValueError("Input tensor must be 3D (CHW) or 4D (NCHW)")

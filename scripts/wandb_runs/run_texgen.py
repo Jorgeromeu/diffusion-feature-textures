@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 import torch
 
-import wandb
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
@@ -33,7 +32,7 @@ class RunTexGenConfig:
     seed: int
     model: ModelConfig
     texgen: TexGenConfig
-    out_art_name: str
+    out_artifact: str = "texture_frames"
 
 
 class RunTexGen(wbu.WandbRun):
@@ -71,7 +70,7 @@ class RunTexGen(wbu.WandbRun):
         )
 
         # save video
-        video_artifact = VideoArtifact.create_empty_artifact(cfg.out_art_name)
+        video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
         video_artifact.write_frames(images)
 
         # log video to run

@@ -12,7 +12,7 @@ from pytorch3d.renderer import (
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.util import sample_feature_map_ndc, unique_with_indices
+from text3d2video.util import hwc_to_chw, sample_feature_map_ndc, unique_with_indices
 
 
 def project_visible_verts_to_camera(
@@ -271,3 +271,21 @@ def update_uv_texture(
     uv_map[uvs[:, 1], uvs[:, 0]] = colors
 
     return uv_map
+
+
+def project_views_to_video_texture(
+    feature_maps: Float[Tensor, "n c h w"],
+    uv_resolution: int,
+    texel_xys: List[Float[Tensor, "v 3"]],
+    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
+    interpolation_mode="bilinear",
+):
+    texture_frames = []
+    for i in range(len(feature_maps)):
+        texture = torch.zeros(uv_resolution, uv_resolution, 3).to(feature_maps)
+        view = feature_maps[i]
+        update_uv_texture(texture, view, texel_xys[i], texel_uvs[i])
+        texture_frames.append(texture)
+    texture_frames = torch.stack(texture_frames, dim=0)
+    texture_frames = hwc_to_chw(texture_frames)
+    return texture_frames.cpu()

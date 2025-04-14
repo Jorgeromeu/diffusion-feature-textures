@@ -36,17 +36,17 @@ from text3d2video.utilities.logging import GrLogger
 # pylint: disable=too-many-instance-attributes
 @dataclass
 class GenerativeRenderingConfig:
-    do_pre_attn_injection: bool
-    do_post_attn_injection: bool
-    feature_blend_alpha: float
-    attend_to_self_kv: bool
-    mean_features_weight: float
-    chunk_size: int
-    num_keyframes: int
-    num_inference_steps: int
-    guidance_scale: float
-    controlnet_conditioning_scale: float
     module_paths: list[str]
+    do_pre_attn_injection: bool = True
+    do_post_attn_injection: bool = True
+    feature_blend_alpha: float = 0.8
+    attend_to_self_kv: bool = False
+    mean_features_weight: float = 0.5
+    chunk_size: int = 5
+    num_keyframes: int = 1
+    num_inference_steps: int = 10
+    guidance_scale: float = 7.5
+    controlnet_conditioning_scale: float = 1.0
 
 
 @dataclass
@@ -465,13 +465,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         # setup configs
         self.conf = conf
         self.noise_initializer = noise_initializer
-
-        # setup gr logic
-        gr_logic = GenerativeRenderingLogic(
-            self,
-            conf.controlnet_conditioning_scale,
-            conf.module_paths,
-        )
 
         # configure scheduler
         self.scheduler.set_timesteps(self.conf.num_inference_steps)
