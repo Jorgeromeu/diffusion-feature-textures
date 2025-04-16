@@ -90,54 +90,6 @@ def blend_features(
     return original_background + blended_masked
 
 
-def assert_valid_tensor_shape(shape: Tuple):
-    for expected_len in shape:
-        assert isinstance(
-            expected_len, (int, type(None), str)
-        ), f"Dimension length must be int, None or str, received {expected_len}"
-
-
-def assert_tensor_shape(
-    t: Tensor, shape: tuple[int, ...], named_dim_sizes: dict[str, int] = None
-):
-    error_str = f"Expected tensor of shape {shape}, got {t.shape}"
-
-    assert_valid_tensor_shape(shape)
-    assert t.ndim == len(shape), f"{error_str}, wrong number of dimensions"
-
-    if named_dim_sizes is None:
-        named_dim_sizes = {}
-
-    for dim_i, expected_len in enumerate(shape):
-        true_len = t.shape[dim_i]
-
-        # any len is allowed for None
-        if expected_len is None:
-            continue
-
-        # assert same length as other dims with same key
-        if isinstance(expected_len, str):
-            # if symbol length not saved, save it
-            if expected_len not in named_dim_sizes:
-                named_dim_sizes[expected_len] = true_len
-                continue
-
-            expected_named_dim_size = named_dim_sizes[expected_len]
-            assert (
-                named_dim_sizes[expected_len] == true_len
-            ), f"{error_str}, expected {expected_named_dim_size} for dimension {expected_len}, got {true_len}"
-
-    return named_dim_sizes
-
-
-def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
-    if named_dim_sizes is None:
-        named_dim_sizes = {}
-
-    for tensor, shape in tensors:
-        named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)
-
-
 def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     unique, inverse = torch.unique(tensor, sorted=True, return_inverse=True, dim=dim)
     perm = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
@@ -146,18 +98,8 @@ def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     return unique, unique_indices
 
 
-def create_object_array(data: List, shape: Tuple) -> List:
-    arr = np.empty(shape, dtype=object)
-    arr.fill(data)
-    return arr
-
-
 def dict_map(dict: Dict, callable: Callable) -> Dict:
     return {k: callable(k, v) for k, v in dict.items()}
-
-
-def dict_filter(dict: Dict, condition: Callable) -> Dict:
-    return {k: v for k, v in dict.items() if condition(k, v)}
 
 
 def object_array(list_of_lists: List):

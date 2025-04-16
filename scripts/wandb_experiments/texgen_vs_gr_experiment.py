@@ -9,12 +9,15 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 
 import wandb_util.wandb_util as wbu
-from scripts.wandb_runs.make_rgb_texture import MakeTexture, MakeTextureConfig
-from scripts.wandb_runs.run_generative_rendering import (
-    RunGenerativeRendering,
-    RunGenerativeRenderingConfig,
+from scripts.wandb_runs.make_rgb_texture import (
+    MakeTextureConfig,
+    make_rgb_texture,
 )
-from scripts.wandb_runs.run_texgen import RunTexGen, RunTexGenConfig
+from scripts.wandb_runs.run_generative_rendering import (
+    RunGenerativeRenderingConfig,
+    run_generative_rendering,
+)
+from scripts.wandb_runs.run_texgen import RunTexGenConfig, run_texgen
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
@@ -58,7 +61,7 @@ class TexGenVsGrExperiment(wbu.Experiment):
 
     def specification(self):
         subject = "Stormtrooper"
-        anim_tag = "ymca_20:latest"
+        anim_tag = "catwalk_180_20:latest"
         texturing_tag = "human_mv:latest"
         seed = 0
         gr_seed = 0
@@ -84,12 +87,12 @@ class TexGenVsGrExperiment(wbu.Experiment):
             do_post_attn_injection=True,
             feature_blend_alpha=1.0,
             attend_to_self_kv=True,
-            mean_features_weight=0.0,
+            mean_features_weight=0.5,
             chunk_size=5,
             guidance_scale=7.5,
             controlnet_conditioning_scale=1.0,
             module_paths=decoder_paths,
-            num_keyframes=1,
+            num_keyframes=6,
             num_inference_steps=10,
         )
 
@@ -121,12 +124,12 @@ class TexGenVsGrExperiment(wbu.Experiment):
             kf_seed=kf_seed,
         )
         run_gr_config = OmegaConf.structured(run_gr_config)
-        run_gr = wbu.RunSpecification("GR", RunGenerativeRendering(), run_gr_config)
+        run_gr = wbu.RunSpec("GR", run_generative_rendering, run_gr_config)
 
         # Create ControlNet Run
         run_controlnet_config = OmegaConf.merge(run_gr_config, controlnet_overrides)
-        run_controlnet = wbu.RunSpecification(
-            "ControlNet", RunGenerativeRendering(), run_controlnet_config
+        run_controlnet = wbu.RunSpec(
+            "ControlNet", run_generative_rendering, run_controlnet_config
         )
 
         # create TexGen Run
@@ -140,15 +143,18 @@ class TexGenVsGrExperiment(wbu.Experiment):
         )
 
         run_texgen_config = OmegaConf.structured(run_texgen_config)
-        run_texgen = wbu.RunSpecification("TexGen", RunTexGen(), run_texgen_config)
+        run_txgen = wbu.RunSpec("TexGen", run_texgen, run_texgen_config)
 
         # create Make Texture run
         create_texure_config = MakeTextureConfig(
             video_anim="texture_views:latest",
         )
         create_texure_config = OmegaConf.structured(create_texure_config)
-        create_texture = wbu.RunSpecification(
-            "make_texture", MakeTexture(), create_texure_config, depends_on=[run_texgen]
+        create_texture = wbu.RunSpec(
+            "make_texture",
+            make_rgb_texture,
+            create_texure_config,
+            depends_on=[run_txgen],
         )
 
         # create TexGen on anim frames run
@@ -162,15 +168,13 @@ class TexGenVsGrExperiment(wbu.Experiment):
         )
 
         run_texgen_anim_config = OmegaConf.structured(run_texgen_anim_config)
-        run_texgen_anim = wbu.RunSpecification(
-            "TexGen_anim", RunTexGen(), run_texgen_anim_config
-        )
+        run_texgen_anim = wbu.RunSpec("TexGen_anim", run_texgen, run_texgen_anim_config)
 
         return [
             run_gr,
             run_controlnet,
             run_texgen_anim,
-            run_texgen,
+            run_txgen,
             create_texture,
         ]
 

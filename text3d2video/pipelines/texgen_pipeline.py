@@ -32,12 +32,12 @@ from text3d2video.utilities.logging import H5Logger
 
 @dataclass
 class TexGenConfig:
-    num_inference_steps: int
-    guidance_scale: float
-    controlnet_conditioning_scale: float
     module_paths: List[str]
-    quality_update_factor: float
-    uv_res: int
+    num_inference_steps: int = 10
+    guidance_scale: float = 7.5
+    controlnet_conditioning_scale: float = 1.0
+    quality_update_factor: float = 1.5
+    uv_res: int = 600
 
 
 @dataclass

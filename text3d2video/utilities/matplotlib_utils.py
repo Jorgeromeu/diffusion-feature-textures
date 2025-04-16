@@ -109,3 +109,10 @@ def add_zoom_inset(ax: Axes, box: Bbox, width="40%", loc="lower right"):
         linewidth=1,
     )
     ax.add_patch(rect)
+
+
+def add_inset(ax: Axes, width="40%", loc="lower right"):
+    axins = inset_axes(ax, width=width, height=width, loc=loc)
+    axins.set_xticks([])
+    axins.set_yticks([])
+    return axins

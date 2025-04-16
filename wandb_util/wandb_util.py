@@ -4,13 +4,13 @@ import logging
 import multiprocessing as mp
 import shutil
 import tempfile
-from collections import defaultdict
+import time
 from functools import wraps
 from pathlib import Path
 from typing import List, Optional
 
+import networkx as nx
 from attr import dataclass
-from bidict import bidict
 from moviepy.editor import ImageSequenceClip
 from omegaconf import DictConfig, OmegaConf
 
@@ -19,7 +19,7 @@ from wandb import Artifact
 from wandb.apis.public import Run
 
 
-def hash_config(cfg: DictConfig) -> str:
+def hash_dictconfig(cfg: DictConfig) -> str:
     config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     config_str = json.dumps(config_dict, sort_keys=True)
     return hashlib.sha1(config_str.encode("utf-8")).hexdigest()
@@ -61,7 +61,7 @@ def setup_run(cfg: DictConfig, run_config: RunConfig, job_type: str) -> bool:
         tags = []
 
     # add hash-tag
-    hash = hash_config(cfg)
+    hash = hash_dictconfig(cfg)
     hash_tag = f"hash:{hash}"
     tags.append(hash_tag)
 
@@ -291,7 +291,7 @@ class WandbRun:
         return run
 
 
-class RunSpecification:
+class RunSpec:
     run_fun: WandbRun
     config: DictConfig
     run_config: RunConfig
@@ -305,6 +305,7 @@ class RunSpecification:
         run_config: RunConfig = None,
         depends_on=None,
     ):
+        self.name = name
         self.run_fun = run_fun
         self.config = config
         self.run_config = run_config
@@ -320,40 +321,59 @@ class RunSpecification:
 
     def as_process(self):
         return mp.Process(
-            target=self.run_fun.execute,
+            target=self.run_fun,
             args=(self.config, self.run_config),
         )
+
+    def launch(self):
+        p = self.as_process()
+        p.start()
 
 
 @dataclass
 class ExperimentSyncAction:
-    to_delete: List[Run]
-    to_run: List[RunSpecification]
+    to_delete: List
+    to_run: List
 
 
 class Experiment:
     experiment_name: str
     config: DictConfig
 
-    def __init__(
-        self,
-        group_name: str,
-    ):
+    def __init__(self, group_name: str, cfg: DictConfig):
         self.group_name = group_name
+        self.config = cfg
 
-    def specification(self) -> List[RunSpecification]:
+    def get_exp_config(self):
+        query = {
+            "group": self.group_name,
+            "tags": {"$in": ["exp_run"]},
+        }
+
+        api = wandb.Api()
+        project_name = "diffusion-3D-features"
+        runs = api.runs(project_name, filters=query)
+        runs = list(runs)
+        return OmegaConf.create(runs[0].config)
+
+    def specification(self) -> List[RunSpec]:
         """
         Return a list of run descriptors corresponding to the experiment
         """
         pass
 
-    def get_logged_runs(self) -> List[Run]:
+    def get_logged_runs(self, include_exp_run=False) -> List[Run]:
         """
         Get all runs in the experiment
         """
 
         # create query
-        query = {"$and": [{"tags": self.experiment_name}, {"group": self.group_name}]}
+        query = {
+            "group": self.group_name,
+        }
+
+        if not include_exp_run:
+            query["tags"] = {"$nin": ["exp_run"]}
 
         api = wandb.Api()
         project_name = "diffusion-3D-features"
@@ -362,7 +382,7 @@ class Experiment:
 
         return runs
 
-    def execute_runs(self, spec: List[RunSpecification]):
+    def execute_runs(self, spec: List[RunSpec]):
         """
         Execute a list of runs in the experiment
         """
@@ -383,61 +403,34 @@ class Experiment:
         Obtain specification and logged runs and compute which runs in spec to execute, and which logged runs to delete so that the specification matches the logged runs
         """
 
-        specification = self.specification()
-        existing_runs = self.get_logged_runs()
-
-        # if set, delete all existing, run all specified
-        if rerun_all:
-            return specification, existing_runs
-
-        # 1. establish bidirectional mapping between specs and runs
-        hash_to_spec = {hash_config(s.config): s for s in specification}
-        spec_to_run = bidict()
-        for r in existing_runs:
-            hash = r.summary.get("hash")
-            if hash in hash_to_spec and r.state == "finished":
-                spec_to_run[hash_to_spec[hash]] = r
-
-        # 2. find runs to run
-        # run if:
-        # - it has no corresponding existing run
-        # - it depends on a run that has no corresponding existing run
-        to_run = []
-        for spec in specification:
-            # if it has no corresponding existing run, run it
-            existing_run = spec_to_run.get(spec)
-            if existing_run is None:
-                to_run.append(spec)
-
-            for dep in spec.depends_on:
-                # if it depends on a run that has no corresponding existing run, run it
-                existing_dep = spec_to_run.get(dep)
-                if existing_dep is None:
-                    to_run.append(spec)
-
-        # 3. find runs to delete
-        # delete a run if:
-        # - it has no corresponding spec
-        # - it has a corresponding spec, but it is in to_run
-        to_delete = []
-        for r in existing_runs:
-            spec = spec_to_run.inv.get(r)
-
-            # if no spec, delete it
-            if spec is None:
-                to_delete.append(r)
-
-            # if it has a spec, but the spec is in to_run, delete it
-            elif spec in to_run:
-                to_delete.append(r)
-
-        # finally, toposort to_run
-        to_run = topo_sort(to_run)
-
-        return ExperimentSyncAction(
-            to_run=to_run,
-            to_delete=to_delete,
+        exp_run = RunSpec(
+            "exp", experiment_run, self.config, RunConfig(tags=["exp_run"])
         )
+
+        specification = self.specification() + [exp_run]
+        existing_runs = self.get_logged_runs(include_exp_run=True)
+
+        if rerun_all:
+            # rerun all runs
+            return ExperimentSyncAction(
+                to_run=specification,
+                to_delete=existing_runs,
+            )
+
+        def hash_run(run):
+            return run.summary.get("hash")
+
+        def hash_spec(spec):
+            return hash_dictconfig(spec.config)
+
+        # make specification graph
+        spec_graph = nx.DiGraph()
+        for run in specification:
+            spec_graph.add_node(run)
+            for dep in run.depends_on:
+                spec_graph.add_edge(dep, run)
+
+        return calc_sync_experiment(spec_graph, existing_runs, hash_spec, hash_run)
 
     def sync_experiment(self, dry_run=False, rerun_all=False, interactive=True):
         action = self.calc_sync_experiment(rerun_all)
@@ -460,6 +453,7 @@ class Experiment:
             return
 
         if interactive:
+            time.sleep(0.5)
             print("Do you want to continue? (y/n)")
             answer = input()
             if answer.lower() != "y":
@@ -474,42 +468,6 @@ class Experiment:
 
         self.execute_runs(action.to_run)
 
-    def url(self):
-        pass
-
-
-def topo_sort(spec: List[RunSpecification]) -> List[RunSpecification]:
-    """
-    Topological sort of the runs in the experiment
-    """
-
-    # create graph
-    graph = defaultdict(list)
-    indegree = defaultdict(int)
-
-    for run in spec:
-        indegree[run] = 0
-
-    for run in spec:
-        for dep in run.depends_on:
-            graph[dep].append(run)
-            indegree[run] += 1
-
-    # topological sort
-    queue = [run for run in spec if indegree[run] == 0]
-    sorted_spec = []
-
-    while queue:
-        run = queue.pop(0)
-        sorted_spec.append(run)
-
-        for dep in graph[run]:
-            indegree[dep] -= 1
-            if indegree[dep] == 0:
-                queue.append(dep)
-
-    return sorted_spec
-
 
 def omegaconf_create_nested(d: dict):
     dotlist = [f"{k}={v}" for k, v in d.items()]
@@ -519,11 +477,71 @@ def omegaconf_create_nested(d: dict):
 def wandb_run(job_type: str):
     def decorator(func):
         @wraps(func)
-        def wrapper(*args, **kwargs):
-            print("wandb init")
-            func(*args, **kwargs)
-            print("wandb finish")
+        def wrapper(cfg: DictConfig, run_config: RunConfig, *args, **kwargs):
+            # setup wandb run
+            setup_run(cfg, run_config, job_type)
+            # logic
+            result = func(cfg, run_config, *args, **kwargs)
+            # finalize wandb run
+            wandb.finish()
+            return result
 
         return wrapper
 
     return decorator
+
+
+@wandb_run("experiment_config")
+def experiment_run(cfg: DictConfig, run_config: RunConfig):
+    pass
+
+
+def calc_sync_experiment(
+    specification: nx.DiGraph, existing: List, hash_spec, hash_run
+):
+    run_hashes = set(hash_run(r) for r in existing)
+    spec_hashes = set(hash_spec(s) for s in specification.nodes)
+
+    # find specs that are not in existing
+    to_run = set()
+    for s in specification.nodes:
+        spec_hash = hash_spec(s)
+        if spec_hash not in run_hashes:
+            to_run.add(s)
+
+    # recursively find specs that depend on the ones we found
+    to_run_descendants = set()
+    for node in to_run:
+        descendants = nx.descendants(specification, node)
+        to_run_descendants |= descendants
+
+    to_run |= to_run_descendants
+
+    # toposort to_run
+    to_run_subgraph = specification.subgraph(to_run)
+    to_run_sorted = list(nx.topological_sort(to_run_subgraph))
+
+    # delete run if:
+    # - it is not in specification
+    # - it is in to_run
+    # - it is duplicate
+
+    to_run_hashes = set(hash_spec(s) for s in to_run)
+    observed_hashes = set()
+
+    to_del = set()
+    for e in existing:
+        hash = hash_run(e)
+
+        if hash in to_run_hashes:
+            to_del.add(e)
+
+        if hash not in spec_hashes:
+            to_del.add(e)
+
+        if hash in observed_hashes:
+            to_del.add(e)
+
+        observed_hashes.add(hash)
+
+    return ExperimentSyncAction(to_run=to_run_sorted, to_delete=to_del)

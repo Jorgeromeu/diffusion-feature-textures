@@ -1,109 +1,70 @@
-from typing import List
+from itertools import product
+from typing import Dict, List
 
 import numpy as np
-import torch
 from attr import dataclass
-from omegaconf import OmegaConf
-from PIL.Image import Image
+from omegaconf import DictConfig, OmegaConf
 
 import wandb_util.wandb_util as wbu
 from scripts.wandb_runs.run_generative_rendering import (
-    RunGenerativeRendering,
-    RunGenerativeRenderingConfig,
+    run_generative_rendering,
 )
-from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.pipelines.generative_rendering_pipeline import (
-    GenerativeRenderingConfig,
-)
-from text3d2video.pipelines.pipeline_utils import ModelConfig
-from text3d2video.utilities.video_comparison import video_grid
-from text3d2video.utilities.video_util import pil_frames_to_clip
+from text3d2video.utilities.omegaconf_util import matches_override
 
 
 @dataclass
-class LoggedData:
-    frames: List[Image]
-    config: RunGenerativeRendering
+class ComparisonExperimentConfig:
+    base_config: DictConfig
+    override_dims: List[List[Dict]]
+    override_dim_labels: List[List[str]]
 
 
-class GrComparison(wbu.Experiment):
+class ComparisonExperiment(wbu.Experiment):
     experiment_name = "gr_comparison"
+    config: ComparisonExperimentConfig
 
     def specification(self):
-        # overrides
+        # Generate all combinations of overrides
+        overrides_flat = []
+        for combo in product(*self.config.override_dims):
+            merged = {}
+            for d in combo:
+                merged.update(d)
+            overrides_flat.append(merged)
 
-        weights = list(np.linspace(0, 1, 5))
-
-        overrides = [{"generative_rendering.feature_blend_alpha": f} for f in weights]
-
-        # Base Config
-        prompt = "Stormtrooper"
-        anim_tag = "ymca_20:latest"
-        seed = 0
-
-        decoder_paths = [
-            "mid_block.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-            "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-            "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-            "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-            "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-            "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-        ]
-
-        base_gr_config = GenerativeRenderingConfig(
-            do_pre_attn_injection=True,
-            do_post_attn_injection=True,
-            module_paths=decoder_paths,
-        )
-
-        base_config = RunGenerativeRenderingConfig(
-            prompt=prompt,
-            animation_tag=anim_tag,
-            generative_rendering=base_gr_config,
-            model=ModelConfig(),
-            seed=seed,
-            kf_seed=0,
-        )
-        base_config = OmegaConf.structured(base_config)
-
-        override_dictconfigs = [wbu.omegaconf_create_nested(o) for o in overrides]
+        # create all overrides
+        override_dictconfigs = [wbu.omegaconf_create_nested(o) for o in overrides_flat]
         override_configs = [
-            OmegaConf.merge(base_config, o) for o in override_dictconfigs
+            OmegaConf.merge(self.config.base_config, o) for o in override_dictconfigs
         ]
 
         runs = [
-            wbu.RunSpecification(f"o_{i}", RunGenerativeRendering(), o)
+            wbu.RunSpec(f"o_{i}", run_generative_rendering, o)
             for i, o in enumerate(override_configs)
         ]
 
         return runs
 
-    def get_data(self):
-        runs = self.get_logged_runs()
+    def get_runs_grouped(self):
+        # get the overrides from the experiment run
+        exp_config = self.get_exp_config()
+        override_dims = exp_config.override_dims
 
-        def get_frames(run):
-            video = wbu.logged_artifacts(run, type="video")[0]
-            video = VideoArtifact.from_wandb_artifact(video)
-            return video.read_frames()
+        shape = [len(dim) for dim in override_dims]
+        grid = np.empty(shape, dtype=object)
 
-        return [
-            LoggedData(get_frames(run), OmegaConf.create(run.config)) for run in runs
-        ]
+        # for each run, check where it is in the grid
+        for run in self.get_logged_runs():
+            config = OmegaConf.create(run.config)
 
-    def comparison_vid(self, data=None):
-        if data is None:
-            data = self.get_data()
+            # for each dimension, get index where overrides match
+            index = []
+            for dim, overrides in enumerate(override_dims):
+                for i, o in enumerate(overrides):
+                    if matches_override(config, o):
+                        index.append(i)
 
-        videos = [pil_frames_to_clip(v.frames) for v in data]
+            # add the run to the grid
+            grid[tuple(index)] = run
 
-        def key(c: RunGenerativeRenderingConfig):
-            return f"kf_seed: {c.kf_seed}"
-
-        titles = [key(c.config) for c in data]
-
-        comparison_vid = video_grid([videos], x_labels=titles)
-        return comparison_vid
+        return grid

@@ -1,6 +1,7 @@
 from enum import Enum
+from typing import Dict, List
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 
 def enums_to_values(cfg: DictConfig):
@@ -73,3 +74,25 @@ def dictconfig_equivalence(cfg1: DictConfig, cfg2: DictConfig) -> bool:
     """
 
     return not dictconfig_diff(cfg1, cfg2)
+
+
+def get_nonequal_keys(configs: List[DictConfig]) -> List[str]:
+    values = {}
+    nonequal_keys = set()
+
+    for cfg in configs:
+        for key in dictconfig_flattened_keys(cfg):
+            value = OmegaConf.select(cfg, key)
+            if key not in values:
+                values[key] = value
+            if values[key] != value:
+                nonequal_keys.add(key)
+
+    return list(nonequal_keys)
+
+
+def matches_override(cfg: DictConfig, o: Dict):
+    for k, v in o.items():
+        if not OmegaConf.select(cfg, k) == v:
+            return False
+    return True

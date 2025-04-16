@@ -28,55 +28,55 @@ class RunGenerativeRenderingConfig:
     out_artifact: str = "video"
 
 
-class RunGenerativeRendering(wbu.WandbRun):
-    job_type = "run_generative_rendering"
+@wbu.wandb_run("run_generative_rendering")
+def run_generative_rendering(
+    cfg: RunGenerativeRenderingConfig, run_config: wbu.RunConfig
+):
+    # disable gradients
+    torch.set_grad_enabled(False)
 
-    def _run(self, cfg: RunGenerativeRenderingConfig):
-        # disable gradients
-        torch.set_grad_enabled(False)
+    # read animation
+    animation = AnimationArtifact.from_wandb_artifact_tag(
+        cfg.animation_tag, download=True
+    )
+    cam_frames, mesh_frames = animation.load_frames()
+    verts_uvs, faces_uvs = animation.uv_data()
 
-        # read animation
-        animation = AnimationArtifact.from_wandb_artifact_tag(
-            cfg.animation_tag, download=True
-        )
-        cam_frames, mesh_frames = animation.load_frames()
-        verts_uvs, faces_uvs = animation.uv_data()
+    # load pipeline
+    device = torch.device("cuda")
+    pipe = load_pipeline(
+        GenerativeRenderingPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo
+    )
 
-        # load pipeline
-        device = torch.device("cuda")
-        pipe = load_pipeline(
-            GenerativeRenderingPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo
-        )
+    noise_initializer = UVNoiseInitializer(noise_texture_res=120)
 
-        noise_initializer = UVNoiseInitializer(noise_texture_res=120)
+    # set seed
+    generator = torch.Generator(device=device)
+    generator.manual_seed(cfg.seed)
 
-        # set seed
-        generator = torch.Generator(device=device)
-        generator.manual_seed(cfg.seed)
+    # set kf seed
+    kf_generator = torch.Generator(device=device)
+    kf_generator.manual_seed(cfg.kf_seed)
 
-        # set kf seed
-        kf_generator = torch.Generator(device=device)
-        kf_generator.manual_seed(cfg.kf_seed)
+    # inference
+    video_frames = pipe(
+        cfg.prompt,
+        mesh_frames,
+        cam_frames,
+        verts_uvs,
+        faces_uvs,
+        conf=cfg.generative_rendering,
+        noise_initializer=noise_initializer,
+        generator=generator,
+        kf_generator=kf_generator,
+    )
 
-        # inference
-        video_frames = pipe(
-            cfg.prompt,
-            mesh_frames,
-            cam_frames,
-            verts_uvs,
-            faces_uvs,
-            conf=cfg.generative_rendering,
-            noise_initializer=noise_initializer,
-            generator=generator,
-            kf_generator=kf_generator,
-        )
+    # save video
+    video_artifact = VideoArtifact.create_empty_artifact("video")
+    video_artifact.write_frames(video_frames)
 
-        # save video
-        video_artifact = VideoArtifact.create_empty_artifact("video")
-        video_artifact.write_frames(video_frames)
+    # log video to run
+    wbu.log_moviepy_clip("video", pil_frames_to_clip(video_frames), fps=10)
 
-        # log video to run
-        wbu.log_moviepy_clip("video", pil_frames_to_clip(video_frames), fps=10)
-
-        # save video artifact
-        video_artifact.log_if_enabled()
+    # save video artifact
+    video_artifact.log_if_enabled()

@@ -17,15 +17,6 @@ from text3d2video.utilities.video_util import pil_frames_to_clip
 
 
 @dataclass
-class RunGenerativeRenderingConfig:
-    prompt: str
-    animation_tag: str
-    generative_rendering: GenerativeRenderingConfig
-    model: ModelConfig
-    seed: int
-
-
-@dataclass
 class RunTexGenConfig:
     prompt: str
     animation_tag: str
@@ -35,46 +26,42 @@ class RunTexGenConfig:
     out_artifact: str = "texture_frames"
 
 
-class RunTexGen(wbu.WandbRun):
-    job_type = "run_texgen"
+@wbu.wandb_run("run_texgen")
+def run_texgen(cfg: RunTexGenConfig, run_config: wbu.RunConfig):
+    # disable gradients
+    torch.set_grad_enabled(False)
 
-    def _run(self, cfg: RunTexGenConfig):
-        # disable gradients
-        torch.set_grad_enabled(False)
+    # read animation
+    animation = AnimationArtifact.from_wandb_artifact_tag(
+        cfg.animation_tag, download=True
+    )
+    cam_frames, mesh_frames = animation.load_frames()
+    verts_uvs, faces_uvs = animation.uv_data()
 
-        # read animation
-        animation = AnimationArtifact.from_wandb_artifact_tag(
-            cfg.animation_tag, download=True
-        )
-        cam_frames, mesh_frames = animation.load_frames()
-        verts_uvs, faces_uvs = animation.uv_data()
+    # load pipeline
+    device = torch.device("cuda")
+    pipe = load_pipeline(TexGenPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo)
 
-        # load pipeline
-        device = torch.device("cuda")
-        pipe = load_pipeline(
-            TexGenPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo
-        )
+    # set seed
+    generator = torch.Generator(device=device)
+    generator.manual_seed(cfg.seed)
 
-        # set seed
-        generator = torch.Generator(device=device)
-        generator.manual_seed(cfg.seed)
+    images = pipe(
+        cfg.prompt,
+        mesh_frames,
+        cam_frames,
+        verts_uvs,
+        faces_uvs,
+        texgen_config=cfg.texgen,
+        generator=generator,
+    )
 
-        images = pipe(
-            cfg.prompt,
-            mesh_frames,
-            cam_frames,
-            verts_uvs,
-            faces_uvs,
-            texgen_config=cfg.texgen,
-            generator=generator,
-        )
+    # save video
+    video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
+    video_artifact.write_frames(images)
 
-        # save video
-        video_artifact = VideoArtifact.create_empty_artifact(cfg.out_artifact)
-        video_artifact.write_frames(images)
+    # log video to run
+    wbu.log_moviepy_clip("video", pil_frames_to_clip(images), fps=10)
 
-        # log video to run
-        wbu.log_moviepy_clip("video", pil_frames_to_clip(images), fps=10)
-
-        # save video artifact
-        video_artifact.log_if_enabled()
+    # save video artifact
+    video_artifact.log_if_enabled()
