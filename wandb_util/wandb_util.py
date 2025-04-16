@@ -469,11 +469,6 @@ class Experiment:
         self.execute_runs(action.to_run)
 
 
-def omegaconf_create_nested(d: dict):
-    dotlist = [f"{k}={v}" for k, v in d.items()]
-    return OmegaConf.from_dotlist(dotlist)
-
-
 def wandb_run(job_type: str):
     def decorator(func):
         @wraps(func)

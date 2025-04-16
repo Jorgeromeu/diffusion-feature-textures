@@ -5,6 +5,7 @@ import numpy as np
 from attr import dataclass
 from omegaconf import DictConfig, OmegaConf
 
+import wandb_util.omegaconf_create_nested
 import wandb_util.wandb_util as wbu
 from scripts.wandb_runs.run_generative_rendering import (
     run_generative_rendering,
@@ -33,7 +34,10 @@ class ComparisonExperiment(wbu.Experiment):
             overrides_flat.append(merged)
 
         # create all overrides
-        override_dictconfigs = [wbu.omegaconf_create_nested(o) for o in overrides_flat]
+        override_dictconfigs = [
+            wandb_util.omegaconf_create_nested.omegaconf_create_nested(o)
+            for o in overrides_flat
+        ]
         override_configs = [
             OmegaConf.merge(self.config.base_config, o) for o in override_dictconfigs
         ]
