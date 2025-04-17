@@ -5,12 +5,14 @@ import numpy as np
 from attr import dataclass
 from omegaconf import DictConfig, OmegaConf
 
-import wandb_util.omegaconf_create_nested
 import wandb_util.wandb_util as wbu
 from scripts.wandb_runs.run_generative_rendering import (
     run_generative_rendering,
 )
-from text3d2video.utilities.omegaconf_util import matches_override
+from text3d2video.utilities.omegaconf_util import (
+    matches_override,
+    omegaconf_from_dotdict,
+)
 
 
 @dataclass
@@ -34,17 +36,14 @@ class ComparisonExperiment(wbu.Experiment):
             overrides_flat.append(merged)
 
         # create all overrides
-        override_dictconfigs = [
-            wandb_util.omegaconf_create_nested.omegaconf_create_nested(o)
-            for o in overrides_flat
-        ]
-        override_configs = [
+        override_dictconfigs = [omegaconf_from_dotdict(o) for o in overrides_flat]
+        overriden_configs = [
             OmegaConf.merge(self.config.base_config, o) for o in override_dictconfigs
         ]
 
         runs = [
             wbu.RunSpec(f"o_{i}", run_generative_rendering, o)
-            for i, o in enumerate(override_configs)
+            for i, o in enumerate(overriden_configs)
         ]
 
         return runs

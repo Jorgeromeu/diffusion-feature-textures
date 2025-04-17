@@ -8,7 +8,6 @@ from PIL.Image import Image
 from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 
-import wandb_util.omegaconf_create_nested
 import wandb_util.wandb_util as wbu
 from scripts.wandb_runs.make_rgb_texture import (
     MakeTextureConfig,
@@ -28,6 +27,7 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
 from text3d2video.pipelines.pipeline_utils import ModelConfig
 from text3d2video.pipelines.texgen_pipeline import TexGenConfig
 from text3d2video.rendering import render_rgb_uv_map, render_texture
+from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
 from text3d2video.utilities.video_comparison import video_grid
 from text3d2video.utilities.video_util import pil_frames_to_clip
 
@@ -97,13 +97,11 @@ class TexGenVsGrExperiment(wbu.Experiment):
             num_inference_steps=10,
         )
 
-        controlnet_overrides = (
-            wandb_util.omegaconf_create_nested.omegaconf_create_nested(
-                {
-                    "generative_rendering.do_pre_attn_injection": False,
-                    "generative_rendering.do_post_attn_injection": False,
-                }
-            )
+        controlnet_overrides = omegaconf_from_dotdict(
+            {
+                "generative_rendering.do_pre_attn_injection": False,
+                "generative_rendering.do_post_attn_injection": False,
+            }
         )
 
         texgen_config = TexGenConfig(
