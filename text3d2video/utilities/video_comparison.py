@@ -10,6 +10,9 @@ from moviepy.editor import (
     clips_array,
 )
 
+from text3d2video.utilities.ipython_utils import display_vid
+from text3d2video.utilities.video_util import extend_clip_repeat
+
 
 @dataclass
 class VideoLabel:
@@ -123,11 +126,16 @@ def video_grid(
     y_labels: List[str] = None,
     col_gap_indices=None,
     col_gap_sizes=None,
+    pad_video_lengths: bool = True,
 ):
     """
     Arrange a grid of moviepy clips into a single clip as a grid, with optional x and y labels
     """
     clips = clips.copy()
+
+    if pad_video_lengths:
+        max_duration = np.vectorize(lambda v: v.duration)(clips).max()
+        clips = np.vectorize(lambda v: extend_clip_repeat(v, max_duration))(clips)
 
     if x_labels is not None:
         top_row = clips[0]
@@ -154,48 +162,13 @@ def video_grid(
     return array_clip
 
 
-def group_into_array(
-    entries: List,
-    dim_key_fns: List[Callable],
-    return_keys: bool = False,
+def display_vids(
+    clips: List[ImageSequenceClip], titles: List[str] = None, title=None, width=300
 ):
-    """
-    Group a list of entries into a multi-dimensional array, where each dimension is defined by a key function.
-    Requires that the entries and key-functions define a grid
-    """
+    videos = [clips]
+    clip = video_grid(videos, x_labels=titles, pad_video_lengths=True)
 
-    # find all unique keys for each dimension
-    all_keys = [set() for _ in dim_key_fns]
-    for entry in entries:
-        # for each dimension, obtain the entry value
-        for dim, key_fun in enumerate(dim_key_fns):
-            key = key_fun(entry)
-            all_keys[dim].add(key)
+    if title:
+        clip = add_title_to_clip(clip, title)
 
-    # sort each set of keys to a sorted list, to assign an index to each key
-    all_keys = [sorted(list(vals)) for vals in all_keys]
-
-    # create empty array
-    dim_sizes = [len(vals) for vals in all_keys]
-    array = np.empty(shape=dim_sizes, dtype=object)
-
-    # assign each entry to the correct index in the array
-    for entry in entries:
-        keys = [key_fun(entry) for key_fun in dim_key_fns]
-        indices = [all_keys[dim].index(key) for dim, key in enumerate(keys)]
-
-        if array[tuple(indices)] is not None:
-            raise ValueError(f"Duplicate entry at {keys}")
-
-        array[tuple(indices)] = entry
-
-    if return_keys:
-        return array, all_keys
-
-    return array
-
-
-def array_labels(array: np.ndarray, row_fun: Callable, col_fun: Callable):
-    row_labels = [row_fun(row[0]) for row in array]
-    col_labels = [col_fun(array[0][i]) for i in range(array.shape[1])]
-    return row_labels, col_labels
+    return display_vid(clip, width=width)

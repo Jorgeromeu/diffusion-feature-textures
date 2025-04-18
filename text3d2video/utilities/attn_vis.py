@@ -52,6 +52,7 @@ def compute_attn_weights(
     keys: Float[Tensor, "b t d"],
     temperature=1,
     device="cuda",
+    with_softmax=True,
 ) -> Float[Tensor, "b t_q t_kv"]:
     """
     Compute attention weights for key/qry pair
@@ -66,27 +67,34 @@ def compute_attn_weights(
         attn_scores = einsum(
             qrys.to(device), keys.to(device), "b tq d, b tk d -> b tq tk"
         )
+
+        if not with_softmax:
+            return attn_scores.cpu()
+
         attn_weights = F.softmax(
             attn_scores / (temperature * sqrt(qrys.shape[-1])), dim=2
         )
         return attn_weights.cpu()
 
 
-def calc_attn_weights_per_head(qry, key, head_idx=0):
-    qrys_mh = split_into_heads(qry.unsqueeze(0))
-    keys_mh = split_into_heads(key.unsqueeze(0))
+def calc_attn_weights_per_head(qry, key, head_idx=0, n_heads=8, with_softmax=True):
+    qrys_mh = split_into_heads(qry.unsqueeze(0), n_heads)
+    keys_mh = split_into_heads(key.unsqueeze(0), n_heads)
 
     # index out head
     qrys_head = qrys_mh[:, :, head_idx, :]
     keys_head = keys_mh[:, :, head_idx, :]
 
     # sdp attention
-    weights = compute_attn_weights(qrys_head, keys_head)[0]
+    weights = compute_attn_weights(qrys_head, keys_head, with_softmax=with_softmax)[0]
     return weights
 
 
-def calc_attn_weights_all_heads(qry, key):
-    weights_head = [calc_attn_weights_per_head(qry, key, head_idx=i) for i in range(8)]
+def calc_attn_weights_all_heads(qry, key, n_heads=8, with_softmax=True):
+    weights_head = [
+        calc_attn_weights_per_head(qry, key, head_idx=i, with_softmax=with_softmax)
+        for i in range(n_heads)
+    ]
     weights_head = torch.stack(weights_head)
     weights_avg = weights_head.mean(dim=0)
 

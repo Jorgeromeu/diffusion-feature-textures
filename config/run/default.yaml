@@ -1,7 +1,0 @@
-job_type: null
-name: null
-group: ~
-wandb: true
-instant_exit: false
-download_artifacts: false
-tags: []

@@ -4,7 +4,7 @@ from einops import rearrange
 from torch import Tensor
 
 from text3d2video.adain import adain_1D
-from text3d2video.attn_processors.attn_processor import DefaultAttnProcessor
+from text3d2video.attn_processors.attn_processor import BaseAttnProcessor
 from text3d2video.utilities.attention_utils import (
     extend_across_frame_dim,
     extended_attn_kv_hidden_states,
@@ -12,7 +12,7 @@ from text3d2video.utilities.attention_utils import (
 )
 
 
-class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
+class StyleAlignedAttentionProcessor(BaseAttnProcessor):
     chunk_frame_indices: Tensor
 
     def __init__(
@@ -24,7 +24,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         adain_self_features: bool = False,
         chunk_size=2,
     ):
-        DefaultAttnProcessor.__init__(self, model, chunk_size)
+        BaseAttnProcessor.__init__(self, model, chunk_size)
         """
         :param unet_chunk_size:
             number of batches for each generated image, 2 for classifier free guidance
@@ -38,7 +38,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
     ):
         # get reference features
-        n_frames = hidden_states.shape[0] // self.chunk_size
+        n_frames = hidden_states.shape[0] // self.n_chunks
         unstacked_x = rearrange(hidden_states, "(b f) t c -> b f t c", f=n_frames)
         x_ref = unstacked_x[:, self.ref_index, ...]
         x_ref = extend_across_frame_dim(x_ref, n_frames)
@@ -72,11 +72,7 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
             key = attn.to_k(ext_hidden_states)
             val = attn.to_v(ext_hidden_states)
 
-        self.write_qkv(qry_self, key, val)
-        y = memory_efficient_attention(attn, key, qry_self, val, attention_mask)
-        self.write_y(y)
-
-        return y
+        return memory_efficient_attention(attn, key, qry_self, val, attention_mask)
 
     def _call_self_attn(
         self, attn: Attention, hidden_states: Tensor, attention_mask: Tensor
@@ -88,9 +84,6 @@ class StyleAlignedAttentionProcessor(DefaultAttnProcessor):
         val_self = attn.to_v(hidden_states)
         qry_self = attn.to_q(hidden_states)
 
-        self.write_qkv(qry_self, key_self, val_self)
-        y = memory_efficient_attention(
+        return memory_efficient_attention(
             attn, key_self, qry_self, val_self, attention_mask
         )
-        self.write_y(y)
-        return y

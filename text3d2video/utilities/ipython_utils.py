@@ -1,11 +1,9 @@
-import shutil
-from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from IPython.display import HTML, Video
+from IPython.display import Video
 from matplotlib.axes import Axes
 from moviepy.editor import VideoClip
 from PIL import Image
@@ -18,9 +16,13 @@ def display_ims_grid(
     col_titles=None,
     row_titles=None,
     title=None,
+    show=True,
+    vmin=None,
+    vmax=None,
 ):
     images = images.copy()
 
+    # shape
     n_rows = len(images)
     n_cols = len(images[0])
 
@@ -30,18 +32,18 @@ def display_ims_grid(
     if col_titles is not None:
         assert len(col_titles) == n_cols
 
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale))
-    if not isinstance(axs, np.ndarray):
-        axs = np.array([axs])
-
-    axs = axs.reshape(n_rows, n_cols)
+    # make figure
+    fig, axs = plt.subplots(
+        n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale), squeeze=False
+    )
 
     for row_i in range(n_rows):
         for col_i in range(n_cols):
             ax = axs[row_i, col_i]
-            ax.imshow(images[row_i][col_i])
+            ax.imshow(images[row_i][col_i], vmin=vmin, vmax=vmax)
             ax.set_xticks([])
             ax.set_yticks([])
+            ax.set_frame_on(False)
 
             if row_i == 0 and col_titles is not None:
                 ax.set_title(col_titles[col_i])
@@ -53,34 +55,38 @@ def display_ims_grid(
         fig.suptitle(title)
 
     plt.tight_layout()
-    plt.show()
 
-
-def display_ims(images: List[Image.Image], scale=2, titles=None):
-    if titles is not None:
-        assert len(titles) == len(images)
-
-    if len(images) == 1:
-        _, ax = plt.subplots(1, 1, figsize=(scale, scale))
-        ax.imshow(images[0])
-        ax.axis("off")
-        if titles is not None:
-            ax.set_title(titles[0])
+    if show:
         plt.show()
-        plt.tight_layout()
-        plt.show()
-        return
+    else:
+        return fig, axs
 
-    _, axs = plt.subplots(1, len(images), figsize=(len(images) * scale, scale))
 
-    for i, im in enumerate(images):
-        axs[i].imshow(im)
-        axs[i].axis("off")
-        if titles is not None:
-            axs[i].set_title(titles[i])
+def display_ims(
+    images: List[Image.Image],
+    scale=3,
+    titles=None,
+    title=None,
+    show=True,
+    vmin=None,
+    vmax=None,
+):
+    result = display_ims_grid(
+        [images],
+        scale,
+        col_titles=titles,
+        row_titles=None,
+        title=title,
+        show=show,
+        vmin=vmin,
+        vmax=vmax,
+    )
 
-    plt.tight_layout()
-    plt.show()
+    if not show:
+        fig, axs = result
+        return fig, axs[0]
+
+    return result
 
 
 def view_pointcloud_orthographic(
@@ -94,43 +100,14 @@ def view_pointcloud_orthographic(
     ax.set_ylabel(dim_names[vertical_dim])
 
 
-def display_vid(clip: VideoClip, resolution=300):
+def display_vid(clip: VideoClip, width=300):
     clip.write_videofile(
         "__temp__.mp4",
         verbose=False,
         logger=None,
     )
 
-    return Video("__temp__.mp4", embed=True, width=resolution)
-
-
-def display_vids(clips: List[VideoClip], prefix="../", width=300):
-    # initialize tempdir
-    temp_dir = Path("__temp__")
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
-    temp_dir.mkdir()
-
-    video_paths = []
-
-    for i, clip in enumerate(clips):
-        vid_path = str(temp_dir / f"vid_{i}.mp4")
-
-        clip.write_videofile(
-            vid_path,
-            verbose=False,
-            logger=None,
-        )
-        video_paths.append(vid_path)
-
-    video_paths = [prefix + vid_path for vid_path in video_paths]
-
-    video_tags = "".join(
-        f'<video width="{width}" controls><source src="{v}" type="video/mp4"></video>'
-        for v in video_paths
-    )
-
-    return HTML(f'<div style="display: flex; gap: 10px;">{video_tags}</div>')
+    return Video("__temp__.mp4", embed=True, width=width)
 
 
 def to_pil_image(feature_map: torch.Tensor, clip=False):
@@ -142,3 +119,19 @@ def to_pil_image(feature_map: torch.Tensor, clip=False):
     return Image.fromarray(
         (feature_map_in.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
     )
+
+
+def max_divisor(n):
+    if n <= 1:
+        return None  # No proper divisor for 1 or less
+    for i in range(n // 2, 0, -1):
+        if n % i == 0:
+            return i
+
+
+def reshape_lst_to_rect(lst: List, divisor=None):
+    if divisor is None:
+        divisor = max_divisor(len(lst))
+
+    chunked = [lst[i : i + divisor] for i in range(0, len(lst), divisor)]
+    return chunked

@@ -1,11 +1,16 @@
+import array
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from einops import rearrange
-from pytorch3d.io import load_obj
+from pytorch3d.io import load_obj, load_objs_as_meshes
 from torch import Tensor
+from tqdm import tqdm
+
+from text3d2video.utilities.mesh_processing import normalize_meshes
 
 
 def read_obj_uvs(obj_path: str, device="cuda"):
@@ -13,6 +18,16 @@ def read_obj_uvs(obj_path: str, device="cuda"):
     verts_uvs = aux.verts_uvs.to(device)
     faces_uvs = faces.textures_idx.to(device)
     return verts_uvs, faces_uvs
+
+
+def read_obj_with_uvs(obj_path: str, device="cuda", normalize=True):
+    _, faces, aux = load_obj(obj_path)
+    verts_uvs = aux.verts_uvs.to(device)
+    faces_uvs = faces.textures_idx.to(device)
+
+    mesh = load_objs_as_meshes([obj_path], device=device)
+    mesh = normalize_meshes(mesh)
+    return mesh, verts_uvs, faces_uvs
 
 
 def ordered_sample_indices(lst, n):
@@ -77,54 +92,6 @@ def blend_features(
     return original_background + blended_masked
 
 
-def assert_valid_tensor_shape(shape: Tuple):
-    for expected_len in shape:
-        assert isinstance(
-            expected_len, (int, type(None), str)
-        ), f"Dimension length must be int, None or str, received {expected_len}"
-
-
-def assert_tensor_shape(
-    t: Tensor, shape: tuple[int, ...], named_dim_sizes: dict[str, int] = None
-):
-    error_str = f"Expected tensor of shape {shape}, got {t.shape}"
-
-    assert_valid_tensor_shape(shape)
-    assert t.ndim == len(shape), f"{error_str}, wrong number of dimensions"
-
-    if named_dim_sizes is None:
-        named_dim_sizes = {}
-
-    for dim_i, expected_len in enumerate(shape):
-        true_len = t.shape[dim_i]
-
-        # any len is allowed for None
-        if expected_len is None:
-            continue
-
-        # assert same length as other dims with same key
-        if isinstance(expected_len, str):
-            # if symbol length not saved, save it
-            if expected_len not in named_dim_sizes:
-                named_dim_sizes[expected_len] = true_len
-                continue
-
-            expected_named_dim_size = named_dim_sizes[expected_len]
-            assert (
-                named_dim_sizes[expected_len] == true_len
-            ), f"{error_str}, expected {expected_named_dim_size} for dimension {expected_len}, got {true_len}"
-
-    return named_dim_sizes
-
-
-def assert_tensor_shapes(tensors, named_dim_sizes: Dict[str, int] = None):
-    if named_dim_sizes is None:
-        named_dim_sizes = {}
-
-    for tensor, shape in tensors:
-        named_dim_sizes = assert_tensor_shape(tensor, shape, named_dim_sizes)
-
-
 def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     unique, inverse = torch.unique(tensor, sorted=True, return_inverse=True, dim=dim)
     perm = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
@@ -133,11 +100,87 @@ def unique_with_indices(tensor: Tensor, dim: int = 0) -> Tuple[Tensor, Tensor]:
     return unique, unique_indices
 
 
-def create_object_array(data: List, shape: Tuple) -> List:
+def dict_map(dict: Dict, callable: Callable) -> Dict:
+    return {k: callable(k, v) for k, v in dict.items()}
+
+
+def object_array(list_of_lists: List):
+    # determine how many dimensions in LoL
+    n_dims = 0
+    lst = list_of_lists
+    while isinstance(lst, list):
+        lst = lst[0]
+        n_dims += 1
+
+    # determine shape of LoL
+    shape = []
+    lst = list_of_lists
+    for i in range(n_dims):
+        dim_len = len(lst)
+        shape.append(dim_len)
+        lst = lst[0]
+
+    # create empty
     arr = np.empty(shape, dtype=object)
-    arr.fill(data)
+
+    # populate
+    for idxs, _ in np.ndenumerate(arr):
+        value = list_of_lists
+        for i in idxs:
+            value = value[i]
+
+        arr[idxs] = value
+
     return arr
 
 
-def map_dict(dict: Dict, callable: Callable):
-    return {k: callable(k, v) for k, v in dict.items()}
+def pil_latent(latent: Tensor):
+    return TF.to_pil_image(latent[0:3].cpu())
+
+
+def chunk_dim(x: Tensor, n_chunks: int, dim: int = 0):
+    """
+    Chunk a tensor along a dimension
+    """
+
+    size = x.size(dim)
+    assert size % n_chunks == 0, "dim length size must be divisible by n_chunks"
+    chunk_size = size // n_chunks
+    new_shape = list(x.shape[:dim]) + [n_chunks, chunk_size] + list(x.shape[dim + 1 :])
+    return x.view(*new_shape)
+
+
+def hwc_to_chw(x: torch.Tensor) -> torch.Tensor:
+    """
+    Convert HWC (or NHWC) image format to CHW (or NCHW).
+    Supports single image (3D tensor) or batched images (4D tensor).
+    """
+    if x.ndim == 3:  # HWC
+        return x.permute(2, 0, 1)
+    elif x.ndim == 4:  # NHWC
+        return x.permute(0, 3, 1, 2)
+    else:
+        raise ValueError("Input tensor must be 3D (HWC) or 4D (NHWC)")
+
+
+def chw_to_hwc(x: torch.Tensor) -> torch.Tensor:
+    """
+    Convert CHW (or NCHW) image format to HWC (or NHWC).
+    Supports single image (3D tensor) or batched images (4D tensor).
+    """
+    if x.ndim == 3:  # CHW
+        return x.permute(1, 2, 0)
+    elif x.ndim == 4:  # NCHW
+        return x.permute(0, 2, 3, 1)
+    else:
+        raise ValueError("Input tensor must be 3D (CHW) or 4D (NCHW)")
+
+
+def map_array(arr: np.ndarray, map_func: Callable, pbar=False) -> np.ndarray:
+    if pbar:
+        arr_flat = arr.flatten()
+        B_flat = np.array([map_func(x) for x in tqdm(arr_flat)])
+        B = B_flat.reshape(arr.shape)
+        return B
+
+    return np.vectorize(map_func)(arr)

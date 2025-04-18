@@ -84,7 +84,7 @@ class AttnLayerId:
     attention_index: int
 
     @classmethod
-    def parse_module_path(cls, module: str):
+    def parse(cls, module: str):
         components = module.split(".")
 
         # check if up/down/mid block
@@ -144,7 +144,7 @@ class AttnLayerId:
     def layer_channels(self, unet: UNet2DConditionModel):
         return unet.block_out_channels[self.level_idx(unet)]
 
-    def layer_resolution(self, unet: UNet2DConditionModel, input_res=64):
+    def resolution(self, unet: UNet2DConditionModel, input_res=64):
         """
         Gives the resolution the attn layer operates at
         """
@@ -193,7 +193,7 @@ class AttnLayerId:
 def read_layer_paths(
     modules: list[str],
 ) -> Tuple[list[AttnLayerId], list[AttnLayerId], list[AttnLayerId]]:
-    parsed = [AttnLayerId.parse_module_path(module) for module in modules]
+    parsed = [AttnLayerId.parse(module) for module in modules]
     parsed = sorted(parsed, key=lambda x: x.unet_absolute_index())
     enc_layers = [layer for layer in parsed if layer.block_type == BlockType.DOWN]
     dec_layers = [layer for layer in parsed if layer.block_type == BlockType.UP]
@@ -220,14 +220,14 @@ def find_attn_layers(
     modules = find_attn_modules(module)
 
     # parse
-    layers = [AttnLayerId.parse_module_path(m) for m in modules]
+    layers = [AttnLayerId.parse(m) for m in modules]
 
     # sort by order
     layers = sorted(layers, key=lambda x: x.unet_absolute_index())
 
     results = []
     for layer in layers:
-        resolution = layer.layer_resolution(module)
+        resolution = layer.resolution(module)
 
         if (
             layer.attn_type in layer_types
