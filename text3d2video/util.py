@@ -1,3 +1,4 @@
+import array
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
@@ -7,6 +8,7 @@ import torchvision.transforms.functional as TF
 from einops import rearrange
 from pytorch3d.io import load_obj, load_objs_as_meshes
 from torch import Tensor
+from tqdm import tqdm
 
 from text3d2video.utilities.mesh_processing import normalize_meshes
 
@@ -172,3 +174,13 @@ def chw_to_hwc(x: torch.Tensor) -> torch.Tensor:
         return x.permute(0, 2, 3, 1)
     else:
         raise ValueError("Input tensor must be 3D (CHW) or 4D (NCHW)")
+
+
+def map_array(arr: np.ndarray, map_func: Callable, pbar=False) -> np.ndarray:
+    if pbar:
+        arr_flat = arr.flatten()
+        B_flat = np.array([map_func(x) for x in tqdm(arr_flat)])
+        B = B_flat.reshape(arr.shape)
+        return B
+
+    return np.vectorize(map_func)(arr)

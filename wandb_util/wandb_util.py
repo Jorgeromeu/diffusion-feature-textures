@@ -7,7 +7,7 @@ import tempfile
 import time
 from functools import wraps
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, Dict, List, Optional
 
 import networkx as nx
 from attr import dataclass
@@ -42,6 +42,11 @@ class RunConfig:
 
 # path to store local artifact data before logging to wandb
 ARTIFACTS_LOCAL_PATH = "/tmp/local_artifacts/"
+PROJECT_NAME = "diffusion-3D-features"
+
+
+def wandb_is_enabled():
+    return wandb.run is not None and not wandb.run.disabled
 
 
 def setup_run(cfg: DictConfig, run_config: RunConfig, job_type: str) -> bool:
@@ -66,7 +71,7 @@ def setup_run(cfg: DictConfig, run_config: RunConfig, job_type: str) -> bool:
     tags.append(hash_tag)
 
     wandb.init(
-        project="diffusion-3d-features",
+        project=PROJECT_NAME,
         job_type=job_type,
         mode=wandb_mode,
         tags=tags,
@@ -87,11 +92,14 @@ def api_artifact(artifact_tag: str) -> Artifact:
     """
 
     api = wandb.Api()
-    return api.artifact(f"romeu/diffusion-3D-features/{artifact_tag}")
+    return api.artifact(f"romeu/{PROJECT_NAME}/{artifact_tag}")
 
 
-def wandb_is_enabled():
-    return wandb.run is not None and not wandb.run.disabled
+def api_runs(query: Dict):
+    api = wandb.Api()
+    runs = api.runs(PROJECT_NAME, filters=query)
+    runs = list(runs)
+    return runs
 
 
 def resolve_artifact_tag(artifact_tag: str):
@@ -263,7 +271,7 @@ class ArtifactWrapper:
             )
 
     def log_standalone(self, aliases=None, delete_localfolder=False):
-        wandb.init(project="diffusion-3D-features", job_type="log_artifact_standalone")
+        wandb.init(project=PROJECT_NAME, job_type="log_artifact_standalone")
         self.log_if_enabled(aliases, delete_localfolder)
         wandb.finish()
 
@@ -271,28 +279,8 @@ class ArtifactWrapper:
         return self.wandb_artifact.logged_by()
 
 
-class WandbRun:
-    job_type: str
-
-    def __init__(self):
-        pass
-
-    def _run(self, cfg: DictConfig):
-        pass
-
-    def execute(self, cfg: DictConfig, run_config: RunConfig):
-        # init wandb
-        setup_run(cfg, run_config, self.job_type)
-        # run
-        self._run(cfg)
-        # finalize
-        run = wandb.run
-        wandb.finish()
-        return run
-
-
 class RunSpec:
-    run_fun: WandbRun
+    run_fun: Callable
     config: DictConfig
     run_config: RunConfig
     depends_on: List
@@ -300,7 +288,7 @@ class RunSpec:
     def __init__(
         self,
         name: str,
-        run_fun: WandbRun,
+        run_fun: Callable,
         config: DictConfig,
         run_config: RunConfig = None,
         depends_on=None,
@@ -336,139 +324,6 @@ class ExperimentSyncAction:
     to_run: List
 
 
-class Experiment:
-    experiment_name: str
-    config: DictConfig
-
-    def __init__(self, group_name: str, cfg: DictConfig):
-        self.group_name = group_name
-        self.config = cfg
-
-    def get_exp_config(self):
-        query = {
-            "group": self.group_name,
-            "tags": {"$in": ["exp_run"]},
-        }
-
-        api = wandb.Api()
-        project_name = "diffusion-3D-features"
-        runs = api.runs(project_name, filters=query)
-        runs = list(runs)
-        return OmegaConf.create(runs[0].config)
-
-    def specification(self) -> List[RunSpec]:
-        """
-        Return a list of run descriptors corresponding to the experiment
-        """
-        pass
-
-    def get_logged_runs(self, include_exp_run=False) -> List[Run]:
-        """
-        Get all runs in the experiment
-        """
-
-        # create query
-        query = {
-            "group": self.group_name,
-        }
-
-        if not include_exp_run:
-            query["tags"] = {"$nin": ["exp_run"]}
-
-        api = wandb.Api()
-        project_name = "diffusion-3D-features"
-        runs = api.runs(project_name, filters=query)
-        runs = list(runs)
-
-        return runs
-
-    def execute_runs(self, spec: List[RunSpec]):
-        """
-        Execute a list of runs in the experiment
-        """
-
-        # add tags and group
-        for run in spec:
-            run.run_config.append_tags([self.experiment_name])
-            run.run_config.group = self.group_name
-
-        processes = [run.as_process() for run in spec]
-
-        for p in processes:
-            p.start()
-            p.join()
-
-    def calc_sync_experiment(self, rerun_all=False):
-        """
-        Obtain specification and logged runs and compute which runs in spec to execute, and which logged runs to delete so that the specification matches the logged runs
-        """
-
-        exp_run = RunSpec(
-            "exp", experiment_run, self.config, RunConfig(tags=["exp_run"])
-        )
-
-        specification = self.specification() + [exp_run]
-        existing_runs = self.get_logged_runs(include_exp_run=True)
-
-        if rerun_all:
-            # rerun all runs
-            return ExperimentSyncAction(
-                to_run=specification,
-                to_delete=existing_runs,
-            )
-
-        def hash_run(run):
-            return run.summary.get("hash")
-
-        def hash_spec(spec):
-            return hash_dictconfig(spec.config)
-
-        # make specification graph
-        spec_graph = nx.DiGraph()
-        for run in specification:
-            spec_graph.add_node(run)
-            for dep in run.depends_on:
-                spec_graph.add_edge(dep, run)
-
-        return calc_sync_experiment(spec_graph, existing_runs, hash_spec, hash_run)
-
-    def sync_experiment(self, dry_run=False, rerun_all=False, interactive=True):
-        action = self.calc_sync_experiment(rerun_all)
-
-        if len(action.to_run) == 0 and len(action.to_delete) == 0:
-            print("Experiment up-to-date!")
-            return
-
-        print(f"\nWould execute {len(action.to_run)} new runs:")
-        for run in action.to_run:
-            print(f"- {run.run_config.name}")
-
-        print(f"\nWould delete {len(action.to_delete)} outdated runs:")
-        for run in action.to_delete:
-            print(f"- {run.name:<30} ({run.id})")
-        print()
-
-        if dry_run:
-            print("Dry run, not executing")
-            return
-
-        if interactive:
-            time.sleep(0.5)
-            print("Do you want to continue? (y/n)")
-            answer = input()
-            if answer.lower() != "y":
-                print("Aborting")
-                return
-
-        print(f"Deleting {len(action.to_delete)} runs")
-        for run in action.to_delete:
-            run.delete()
-
-        print(f"Executing {len(action.to_run)} runs")
-
-        self.execute_runs(action.to_run)
-
-
 def wandb_run(job_type: str):
     def decorator(func):
         @wraps(func)
@@ -491,7 +346,7 @@ def experiment_run(cfg: DictConfig, run_config: RunConfig):
     pass
 
 
-def calc_sync_experiment(
+def calc_sync_experiment_algo(
     specification: nx.DiGraph, existing: List, hash_spec, hash_run
 ):
     run_hashes = set(hash_run(r) for r in existing)
@@ -540,3 +395,101 @@ def calc_sync_experiment(
         observed_hashes.add(hash)
 
     return ExperimentSyncAction(to_run=to_run_sorted, to_delete=to_del)
+
+
+def get_logged_runs(name: str, include_exp_run=False):
+    # create query
+    query = {"group": name}
+
+    if not include_exp_run:
+        query["tags"] = {"$nin": ["exp_run"]}
+
+    return api_runs(query)
+
+
+def calc_sync_experiment(
+    exp_spec: Callable, exp_cfg: DictConfig, name: str, rerun_all=False
+):
+    exp_run = RunSpec("exp", experiment_run, exp_cfg, RunConfig(tags=["exp_run"]))
+    specification = exp_spec(exp_cfg) + [exp_run]
+    existing_runs = get_logged_runs(name, include_exp_run=True)
+
+    if rerun_all:
+        # rerun all runs
+        return ExperimentSyncAction(
+            to_run=specification,
+            to_delete=existing_runs,
+        )
+
+    def hash_run(run):
+        return run.summary.get("hash")
+
+    def hash_spec(spec):
+        return hash_dictconfig(spec.config)
+
+    # make specification graph
+    spec_graph = nx.DiGraph()
+    for run in specification:
+        spec_graph.add_node(run)
+        for dep in run.depends_on:
+            spec_graph.add_edge(dep, run)
+
+    return calc_sync_experiment_algo(spec_graph, existing_runs, hash_spec, hash_run)
+
+
+def sync_experiment(
+    exp_fun, config, name, dry_run=False, rerun_all=False, interactive=True
+):
+    action = calc_sync_experiment(exp_fun, config, name, rerun_all)
+
+    if len(action.to_run) == 0 and len(action.to_delete) == 0:
+        print("Experiment up-to-date!")
+        return
+
+    print(f"\nWould execute {len(action.to_run)} new runs:")
+    for run in action.to_run:
+        print(f"- {run.run_config.name}")
+
+    print(f"\nWould delete {len(action.to_delete)} outdated runs:")
+    for run in action.to_delete:
+        print(f"- {run.name:<30} ({run.id})")
+    print()
+
+    if dry_run:
+        print("Dry run, not executing")
+        return
+
+    if interactive:
+        time.sleep(0.5)
+        print("Do you want to continue? (y/n)")
+        answer = input()
+        if answer.lower() != "y":
+            print("Aborting")
+            return
+
+    print(f"Deleting {len(action.to_delete)} runs")
+    for run in action.to_delete:
+        run.delete()
+
+    print(f"Executing {len(action.to_run)} runs")
+
+    # execute the runs
+    # add tags and group
+    for run in action.to_run:
+        run.run_config.group = name
+
+    processes = [run.as_process() for run in action.to_run]
+
+    for p in processes:
+        p.start()
+        p.join()
+
+
+def get_exp_config(name):
+    query = {
+        "group": name,
+        "tags": {"$in": ["exp_run"]},
+    }
+    exp_run = api_runs(query)[0]
+    exp_config = OmegaConf.create(exp_run.config)
+    return exp_config

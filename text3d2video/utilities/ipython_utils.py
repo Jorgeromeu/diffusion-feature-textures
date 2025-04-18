@@ -17,6 +17,8 @@ def display_ims_grid(
     row_titles=None,
     title=None,
     show=True,
+    vmin=None,
+    vmax=None,
 ):
     images = images.copy()
 
@@ -38,7 +40,7 @@ def display_ims_grid(
     for row_i in range(n_rows):
         for col_i in range(n_cols):
             ax = axs[row_i, col_i]
-            ax.imshow(images[row_i][col_i])
+            ax.imshow(images[row_i][col_i], vmin=vmin, vmax=vmax)
             ax.set_xticks([])
             ax.set_yticks([])
             ax.set_frame_on(False)
@@ -60,15 +62,31 @@ def display_ims_grid(
         return fig, axs
 
 
-def display_ims(images: List[Image.Image], scale=3, titles=None, title=None, show=True):
-    return display_ims_grid(
+def display_ims(
+    images: List[Image.Image],
+    scale=3,
+    titles=None,
+    title=None,
+    show=True,
+    vmin=None,
+    vmax=None,
+):
+    result = display_ims_grid(
         [images],
         scale,
         col_titles=titles,
         row_titles=None,
         title=title,
         show=show,
+        vmin=vmin,
+        vmax=vmax,
     )
+
+    if not show:
+        fig, axs = result
+        return fig, axs[0]
+
+    return result
 
 
 def view_pointcloud_orthographic(
