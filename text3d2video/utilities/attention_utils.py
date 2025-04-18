@@ -83,3 +83,19 @@ def extend_across_frame_dim(
 
     expanded = x.unsqueeze(1).expand(-1, n_frames, -1, -1)
     return rearrange(expanded, "b f t d -> (b f) t d")
+
+
+def reshape_kvs_2D(x: Float[Tensor, "b t d"], res: int) -> Float[Tensor, "b t d"]:
+    """
+    Given KV features, and the resolution of original sequence reshape to 2D grid
+    """
+
+    # return rearrange(x, "b (h w) c -> b c h w", w=res)
+    return rearrange(x, "b (n h w) c -> b c h (n w)", w=res, h=res)
+
+
+def expand_singleton_dim(x: Tensor, n: int, dim=0) -> Tensor:
+    shape = list(x.shape)
+    assert shape[dim] == 1, f"Dimension {dim} is not singleton"
+    shape[dim] = n
+    return x.expand(*shape)

@@ -1,58 +1,14 @@
-import math
-
 import torch
 from pytorch3d.renderer import (
     FoVPerspectiveCameras,
     look_at_view_transform,
 )
-from pytorch3d.structures import Meshes
 from scipy.spatial.transform import Rotation
 
 from text3d2video.utilities.coord_utils import (
     assemble_transform_srt,
     decompose_transform_srt,
 )
-
-
-def multiview_cameras(
-    mesh: Meshes,
-    num_views: int,
-    add_angle_ele=0,
-    add_angle_azi=0,
-    scaling_factor=0.65,
-    device="cpu",
-) -> FoVPerspectiveCameras:
-    """
-    Generate cameras that envelope a mesh
-    """
-
-    # get bbox around mesh
-    bbox = mesh.get_bounding_boxes()
-    bbox_min = bbox.min(dim=-1).values[0]
-    bbox_max = bbox.max(dim=-1).values[0]
-
-    bb_diff = bbox_max - bbox_min
-    bbox_center = (bbox_min + bbox_max) / 2.0
-    distance = torch.sqrt((bb_diff * bb_diff).sum())
-    distance *= scaling_factor
-
-    steps = int(math.sqrt(num_views))
-    end = 360 - 360 / steps
-    elevation = (
-        torch.linspace(start=0, end=end, steps=steps).repeat(steps) + add_angle_ele
-    )
-    azimuth = torch.linspace(start=0, end=end, steps=steps)
-    azimuth = torch.repeat_interleave(azimuth, steps) + add_angle_azi
-    bbox_center = bbox_center.unsqueeze(0)
-    rotation, translation = look_at_view_transform(
-        dist=distance, azim=azimuth, elev=elevation, device=device, at=bbox_center
-    )
-
-    cameras = FoVPerspectiveCameras(
-        R=rotation, T=translation, device=device, znear=0.1, zfar=100
-    )
-
-    return cameras
 
 
 def broadcast_inputs(*args):
@@ -96,16 +52,30 @@ def front_facing_extrinsics(degrees=0, xs=0, ys=0, zs=1.5):
 def turntable_extrinsics(
     dists=2,
     angles=0,
+    elevs=0,
     vertical=False,
 ) -> FoVPerspectiveCameras:
-    dists, angles = broadcast_inputs(dists, angles)
+    dists, angles, elevs = broadcast_inputs(dists, angles, elevs)
     n = len(angles)
 
     azim = angles
-    elev = [0] * n
 
     if vertical:
-        azim, elev = elev, azim
+        azim, elevs = elevs, azim
 
-    R, T = look_at_view_transform(dists, elev, azim)
+    R, T = look_at_view_transform(dists, elevs, azim)
     return R, T
+
+
+def cam_view_prompt(angle, elev):
+    if elev > 60:
+        return "top"
+
+    norm_angle = angle % 360
+
+    if norm_angle >= 315 or norm_angle <= 45:
+        return "front"
+    elif norm_angle >= 135 and norm_angle <= 225:
+        return "back"
+    else:
+        return "side"

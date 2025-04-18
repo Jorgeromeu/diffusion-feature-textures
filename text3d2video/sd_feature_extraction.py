@@ -84,7 +84,7 @@ class AttnLayerId:
     attention_index: int
 
     @classmethod
-    def parse_module_path(cls, module: str):
+    def parse(cls, module: str):
         components = module.split(".")
 
         # check if up/down/mid block
@@ -144,7 +144,7 @@ class AttnLayerId:
     def layer_channels(self, unet: UNet2DConditionModel):
         return unet.block_out_channels[self.level_idx(unet)]
 
-    def layer_resolution(self, unet: UNet2DConditionModel, input_res=64):
+    def resolution(self, unet: UNet2DConditionModel, input_res=64):
         """
         Gives the resolution the attn layer operates at
         """
@@ -193,54 +193,12 @@ class AttnLayerId:
 def read_layer_paths(
     modules: list[str],
 ) -> Tuple[list[AttnLayerId], list[AttnLayerId], list[AttnLayerId]]:
-    parsed = [AttnLayerId.parse_module_path(module) for module in modules]
+    parsed = [AttnLayerId.parse(module) for module in modules]
     parsed = sorted(parsed, key=lambda x: x.unet_absolute_index())
     enc_layers = [layer for layer in parsed if layer.block_type == BlockType.DOWN]
     dec_layers = [layer for layer in parsed if layer.block_type == BlockType.UP]
     mid_layers = [layer for layer in parsed if layer.block_type == BlockType.MID]
     return enc_layers, mid_layers, dec_layers
-
-
-class HookManager:
-    """
-    Utility class to manage hooks for a model
-    """
-
-    # keep track of named hooks
-    _named_handles: Dict[str, torch.utils.hooks.RemovableHandle]
-
-    def __init__(self) -> None:
-        self._named_handles = {}
-
-    def named_hooks(self) -> Set[str]:
-        return set(self._named_handles.keys())
-
-    def add_named_hook(
-        self,
-        name: str,
-        module: nn.Module,
-        hook: Callable[[nn.Module, Tensor, Tensor], Tensor],
-    ):
-        """
-        Create a named hook
-        """
-
-        # remove existing hook
-        self.clear_named_hook(name)
-
-        # register and save hook
-        handle = module.register_forward_hook(hook)
-        self._named_handles[name] = handle
-
-    def clear_named_hook(self, name: str):
-        if self._named_handles.get(name):
-            self._named_handles[name].remove()
-            del self._named_handles[name]
-
-    def clear_all_hooks(self):
-        for handle in self._named_handles.values():
-            handle.remove()
-        self._named_handles = {}
 
 
 def find_attn_layers(
@@ -262,23 +220,23 @@ def find_attn_layers(
     modules = find_attn_modules(module)
 
     # parse
-    layers = [AttnLayerId.parse_module_path(m) for m in modules]
+    layers = [AttnLayerId.parse(m) for m in modules]
 
     # sort by order
     layers = sorted(layers, key=lambda x: x.unet_absolute_index())
 
     results = []
-    for l in layers:
-        resolution = l.layer_resolution(module)
+    for layer in layers:
+        resolution = layer.resolution(module)
 
         if (
-            l.attn_type in layer_types
+            layer.attn_type in layer_types
             and resolution in resolutions
-            and l.block_type in block_types
+            and layer.block_type in block_types
         ):
             if return_as_string:
-                results.append(l.module_path())
+                results.append(layer.module_path())
             else:
-                results.append(l)
+                results.append(layer)
 
     return results

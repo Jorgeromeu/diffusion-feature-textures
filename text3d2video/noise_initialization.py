@@ -1,10 +1,14 @@
 import torch
 from einops import rearrange
-from pytorch3d.renderer import CamerasBase, TexturesUV
+from pytorch3d.renderer import (
+    CamerasBase,
+    MeshRasterizer,
+    RasterizationSettings,
+)
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import make_feature_renderer
+from text3d2video.rendering import TextureShader, make_repeated_uv_texture
 
 
 class NoiseInitializer:
@@ -64,10 +68,62 @@ class FixedNoiseInitializer(NoiseInitializer):
 
 class UVNoiseInitializer(NoiseInitializer):
     noise_texture_res: int
+    uv_noise: Tensor
+    bg_noise: Tensor
 
-    def __init__(self, noise_channels=4, noise_resolution=64, noise_texture_res=64):
+    def __init__(
+        self,
+        noise_channels=4,
+        noise_resolution=64,
+        noise_texture_res=64,
+        include_background=True,
+        device="cuda",
+        dtype=torch.float16,
+    ):
         super().__init__(noise_channels, noise_resolution)
+        self.dtype = dtype
+        self.device = device
         self.noise_texture_res = noise_texture_res
+        self.include_background = include_background
+
+        self.uv_noise = None
+        self.bg_noise = None
+
+    @classmethod
+    def init_from_textures(cls, uv_noise: Tensor, bg_noise: Tensor):
+        noise_texture_res, _, noise_channels = uv_noise.shape
+        noise_resolution = bg_noise.shape[-1]
+        device = uv_noise.device
+        dtype = uv_noise.dtype
+        instance = cls(
+            noise_channels=noise_channels,
+            noise_resolution=noise_resolution,
+            noise_texture_res=noise_texture_res,
+            device=device,
+            dtype=dtype,
+        )
+        instance.uv_noise = uv_noise
+        instance.bg_noise = bg_noise
+        return instance
+
+    def sample_noise_texture(self, generator=None):
+        self.uv_noise = torch.randn(
+            self.noise_texture_res,
+            self.noise_texture_res,
+            self.noise_channels,
+            device=self.device,
+            generator=generator,
+        )
+
+    def sample_background(self, generator=None):
+        self.bg_noise = torch.randn(
+            self.noise_channels,
+            self.noise_resolution,
+            self.noise_resolution,
+            generator=generator,
+            device=self.device,
+            dtype=self.dtype,
+        )
 
     def initial_noise(
         self,
@@ -75,52 +131,50 @@ class UVNoiseInitializer(NoiseInitializer):
         cameras: CamerasBase,
         verts_uvs: torch.Tensor,
         faces_uvs: torch.Tensor,
-        generator=None,
-        noise_resolution=64,
         sampling_mode: str = "nearest",
-        device="cuda",
-        dtype=torch.float16,
+        generator=None,
         **kwargs,
     ):
-        # setup noise texture
-        noise_texture_map = torch.randn(
-            self.noise_texture_res,
-            self.noise_texture_res,
-            self.noise_channels,
-            device=device,
-            generator=generator,
-        )
+        # sample texture
+        if self.uv_noise is None:
+            self.sample_noise_texture(generator)
 
-        # create noise texture for meshes
+        # setup meshes
         n_frames = len(meshes)
-        noise_texture = TexturesUV(
-            verts_uvs=verts_uvs.expand(n_frames, -1, -1).to(device),
-            faces_uvs=faces_uvs.expand(n_frames, -1, -1).to(device),
-            maps=noise_texture_map.expand(n_frames, -1, -1, -1).to(device),
+        noise_texture = make_repeated_uv_texture(
+            self.uv_noise,
+            faces_uvs,
+            verts_uvs,
+            n_frames,
+            sampling_mode=sampling_mode,
         )
-        noise_texture.sampling_mode = sampling_mode
         meshes.textures = noise_texture
 
-        # render noise texture for each frame
-        renderer = make_feature_renderer(cameras, noise_resolution)
-        noise_renders = renderer(meshes).to(dtype)
+        # rasterize
+        raster_settings = RasterizationSettings(
+            image_size=self.noise_resolution,
+            faces_per_pixel=1,
+            bin_size=0,
+        )
+        rasterizer = MeshRasterizer(raster_settings=raster_settings)
+        fragments = rasterizer(meshes, cameras=cameras)
 
-        noise_renders = rearrange(noise_renders, "b h w c -> b c h w")
-        noise_renders = noise_renders.to(device=device, dtype=dtype)
+        # shade
+        shader = TextureShader()
+        noise_renders = shader(fragments, meshes)
+        noise_renders = noise_renders.to(self.device, self.dtype)
 
-        # create consistent noise for background
-        background_noise = torch.randn(
-            self.noise_channels,
-            noise_resolution,
-            noise_resolution,
-            generator=generator,
-            device=device,
-        ).expand(n_frames, -1, -1, -1)
-        background_noise = background_noise.to(device, dtype=dtype)
+        if not self.include_background:
+            return noise_renders
 
-        latents_mask = (noise_renders == 0).float()
-        latents = noise_renders + background_noise * latents_mask
+        # sample background noise
+        if self.bg_noise is None:
+            self.sample_background(generator)
 
-        latents = latents.to(device, dtype=dtype)
+        # background for each frame
+        background_noise = self.bg_noise.expand(n_frames, -1, -1, -1)
 
-        return latents
+        masks = fragments.pix_to_face > 0
+        masks = rearrange(masks, "N H W 1 -> N 1 H W")
+
+        return ~masks * background_noise + noise_renders

@@ -1,23 +1,18 @@
-from typing import Callable, Dict, List, Tuple
+from typing import List, Tuple
 
 import torch
-from einops import rearrange
+from attr import dataclass
 from jaxtyping import Float
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     CamerasBase,
     MeshRasterizer,
     RasterizationSettings,
-    TexturesVertex,
 )
-from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import FeatureShader
-from text3d2video.util import sample_feature_map_ndc, unique_with_indices
-
-# Inverse Rendering
+from text3d2video.util import hwc_to_chw, sample_feature_map_ndc, unique_with_indices
 
 
 def project_visible_verts_to_camera(
@@ -48,6 +43,12 @@ def project_visible_verts_to_camera(
     vert_indices = visible_vert_indices
 
     return visible_verts_xy, vert_indices
+
+
+@dataclass
+class TexelProjection:
+    xys: Tensor
+    uvs: Tensor
 
 
 def project_visible_texels_to_camera(
@@ -82,17 +83,15 @@ def project_visible_texels_to_camera(
     rasterizer = MeshRasterizer(raster_settings=raster_settings)
     fragments = rasterizer(mesh, cameras=camera)
 
-    # get visible pixels mask
-    mask = fragments.zbuf[:, :, :, 0] > 0
-
-    # for each face, for each vert, uv coord
+    # get UV coordinates for each pixel
     faces_verts_uvs = verts_uvs[faces_uvs]
-
-    # interpolate uv coordinates, to get a uv at each pixel
     pixel_uvs = interpolate_face_attributes(
         fragments.pix_to_face, fragments.bary_coords, faces_verts_uvs
     )
     pixel_uvs = pixel_uvs[:, :, :, 0, :]
+
+    # get visible pixels mask
+    mask = fragments.zbuf[:, :, :, 0] > 0
 
     # 2D coordinate for each pixel, NDC space
     xs = torch.linspace(-1, 1, raster_res)
@@ -104,7 +103,7 @@ def project_visible_texels_to_camera(
     uvs = pixel_uvs[mask]
     xys = ndc_coords[mask[0]]
 
-    # convert continuous cartesian uv coords to pixel coords
+    # convert continuous uv coords to texel coords
     size = (texture_res, texture_res)
     uv_pix_coords = uvs.clone()
     uv_pix_coords[:, 0] = uv_pix_coords[:, 0] * size[0]
@@ -115,13 +114,13 @@ def project_visible_texels_to_camera(
     texel_coords, coord_pix_indices = unique_with_indices(uv_pix_coords, dim=0)
     texel_xy_coords = xys[coord_pix_indices, :]
 
-    return texel_xy_coords, texel_coords
+    return TexelProjection(xys=texel_xy_coords, uvs=texel_coords)
 
 
 # Aggregation
 
 
-def aggregate_feature_maps_to_vert_texture(
+def aggregate_views_vert_texture(
     feature_maps: Float[Tensor, "n c h w"],
     n_verts: int,
     vertex_positions: List[Float[Tensor, "v 3"]],
@@ -131,8 +130,8 @@ def aggregate_feature_maps_to_vert_texture(
 ):
     # initialize empty vertex features
     feature_dim = feature_maps.shape[1]
-    vert_features = torch.zeros(n_verts, feature_dim).cuda()
-    vert_features_cnt = torch.zeros(n_verts).cuda()
+    vert_features = torch.zeros(n_verts, feature_dim).to(feature_maps)
+    vert_features_cnt = torch.zeros(n_verts).to(feature_maps)
 
     for i, feature_map in enumerate(feature_maps):
         # get features for each vertex, for given view
@@ -166,11 +165,11 @@ def aggregate_feature_maps_to_vert_texture(
     return vert_features
 
 
-def aggregate_feature_maps_to_uv_texture(
+def aggregate_views_uv_texture(
     feature_maps: Float[Tensor, "n c h w"],
     uv_resolution: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
+    texel_xys: List[Float[Tensor, "v 3"]],
+    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
     interpolation_mode="bilinear",
 ):
     # initialize empty uv map
@@ -178,8 +177,47 @@ def aggregate_feature_maps_to_uv_texture(
     uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
 
     for i, feature_map in enumerate(feature_maps):
-        xy_coords = vertex_positions[i]
-        uv_pix_coords = vertex_indices[i]
+        xys = texel_xys[i]
+        uvs = texel_uvs[i]
+
+        # mask of unfilled texels
+        mask = uv_map.sum(dim=-1) > 0
+        mask = ~mask
+
+        unfilled_indices = mask[uvs[:, 1], uvs[:, 0]]
+        empty_uvs = uvs[unfilled_indices]
+        empty_xys = xys[unfilled_indices]
+
+        # sample features
+        colors = sample_feature_map_ndc(
+            feature_map,
+            empty_xys,
+            mode=interpolation_mode,
+        ).to(uv_map)
+
+        # update uv map
+        uv_map[empty_uvs[:, 1], empty_uvs[:, 0]] = colors
+
+    # average features
+    return uv_map
+
+
+def aggregate_views_uv_texture_mean(
+    feature_maps: Float[Tensor, "n c h w"],
+    uv_resolution: int,
+    texel_xys: List[Float[Tensor, "v 3"]],
+    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
+    interpolation_mode="bilinear",
+):
+    # initialize empty uv map
+    feature_dim = feature_maps.shape[1]
+
+    uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
+    counts = torch.zeros(uv_resolution, uv_resolution).to(feature_maps.device)
+
+    for i, feature_map in enumerate(feature_maps):
+        xy_coords = texel_xys[i]
+        uv_pix_coords = texel_uvs[i]
 
         # sample features
         colors = sample_feature_map_ndc(
@@ -190,119 +228,64 @@ def aggregate_feature_maps_to_uv_texture(
 
         # update uv map
         uv_map[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] = colors
+        counts[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] += 1
 
     # average features
+
+    # clamp so lowest count is 1
+    counts_prime = torch.clamp(counts, min=1)
+    uv_map /= counts_prime.unsqueeze(-1)
+
     return uv_map
 
 
-def aggregate_spatial_features(
+def update_uv_texture(
+    uv_map: Tensor,
+    feature_map: Tensor,
+    texel_xys: Tensor,
+    texel_uvs: Tensor,
+    interpolation="bilinear",
+    update_empty_only=True,
+):
+    # mask of unfilled texels
+
+    if update_empty_only:
+        mask = uv_map.sum(dim=-1) > 0
+        mask = ~mask
+
+        unfilled_indices = mask[texel_uvs[:, 1], texel_uvs[:, 0]]
+        uvs = texel_uvs[unfilled_indices]
+        xys = texel_xys[unfilled_indices]
+    else:
+        uvs = texel_uvs
+        xys = texel_xys
+
+    # sample features
+    colors = sample_feature_map_ndc(
+        feature_map,
+        xys,
+        mode=interpolation,
+    ).to(uv_map)
+
+    # update uv map
+    uv_map[uvs[:, 1], uvs[:, 0]] = colors
+
+    return uv_map
+
+
+def project_views_to_video_texture(
     feature_maps: Float[Tensor, "n c h w"],
-    n_verts: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
+    uv_resolution: int,
+    texel_xys: List[Float[Tensor, "v 3"]],
+    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
+    interpolation_mode="bilinear",
 ):
-    vert_ft_mean = aggregate_feature_maps_to_vert_texture(
-        feature_maps,
-        n_verts,
-        vertex_positions,
-        vertex_indices,
-        mode="bilinear",
-        aggregation_type="mean",
-    )
-
-    vert_ft_first = aggregate_feature_maps_to_vert_texture(
-        feature_maps,
-        n_verts,
-        vertex_positions,
-        vertex_indices,
-        mode="bilinear",
-        aggregation_type="first",
-    )
-
-    w_mean = 0.5
-    w_inpainted = 1 - w_mean
-    vert_features = w_mean * vert_ft_mean + w_inpainted * vert_ft_first
-
-    return vert_features
-
-
-# Rendering
-
-
-def render_vert_features(vert_features: Tensor, meshes: Meshes, fragments: Fragments):
-    vert_features = vert_features.unsqueeze(0).expand(len(meshes), -1, -1)
-    texture = TexturesVertex(vert_features)
-    render_meshes = meshes.clone()
-    render_meshes.textures = texture
-    shader = FeatureShader("cuda")
-    render = shader(fragments, render_meshes)
-    render = rearrange(render, "b h w c -> b c h w")
-
-    return render
-
-
-def rasterize_and_render_vt_features(
-    vert_features: Tensor, meshes: Meshes, cams: CamerasBase, resolution: int
-):
-    raster_settings = RasterizationSettings(
-        image_size=resolution, faces_per_pixel=1, bin_size=0
-    )
-    rasterizer = MeshRasterizer(cameras=cams, raster_settings=raster_settings)
-
-    fragments = rasterizer(meshes, cameras=cams)
-    render = render_vert_features(vert_features, meshes, fragments)
-
-    return render
-
-
-# all operate on dicts
-
-
-def diffusion_dict_map(
-    all_features: Dict[str, Tensor], f: Callable
-) -> Dict[str, Tensor]:
-    all_out_features = {}
-
-    """
-    Utility for applying a per-element function to a dictionary of features for each frame
-    """
-
-    # iterate over modules
-    for module, module_features in all_features.items():
-        stacked_out_features = []
-        # iterate over batches
-        for batch_features in module_features:
-            # apply function to batch of features
-            out_features = f(batch_features, module)
-            stacked_out_features.append(out_features)
-        stacked_out_features = torch.stack(stacked_out_features)
-        all_out_features[module] = stacked_out_features
-    return all_out_features
-
-
-def aggregate_spatial_features_dict(
-    spatial_diffusion_features: Dict[str, Float[Tensor, "n c h w"]],
-    n_vertices: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-) -> Dict[str, Float[Tensor, "b v c"]]:
-    return diffusion_dict_map(
-        spatial_diffusion_features,
-        lambda feature_maps, _: aggregate_spatial_features(
-            feature_maps, n_vertices, vertex_positions, vertex_indices
-        ),
-    )
-
-
-def rasterize_and_render_vert_features_dict(
-    aggregated_features: Dict[str, Float[Tensor, "b v c"]],
-    meshes: Meshes,
-    cams: CamerasBase,
-    resolutions: Dict[str, int] = None,
-):
-    return diffusion_dict_map(
-        aggregated_features,
-        lambda vt_ft, module: rasterize_and_render_vt_features(
-            vt_ft, meshes, cams, resolution=resolutions[module]
-        ),
-    )
+    texture_frames = []
+    for i in range(len(feature_maps)):
+        texture = torch.zeros(uv_resolution, uv_resolution, 3).to(feature_maps)
+        view = feature_maps[i]
+        update_uv_texture(texture, view, texel_xys[i], texel_uvs[i])
+        texture_frames.append(texture)
+    texture_frames = torch.stack(texture_frames, dim=0)
+    texture_frames = hwc_to_chw(texture_frames)
+    return texture_frames.cpu()
