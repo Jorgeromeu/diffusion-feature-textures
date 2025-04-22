@@ -16,7 +16,6 @@ from omegaconf import DictConfig, OmegaConf
 
 import wandb
 from wandb import Artifact
-from wandb.apis.public import Run
 
 
 def hash_dictconfig(cfg: DictConfig) -> str:
@@ -440,6 +439,8 @@ def calc_sync_experiment(
 def sync_experiment(
     exp_fun, config, name, dry_run=False, rerun_all=False, interactive=True
 ):
+    print(f"Experiment: {get_exp_url(name)}")
+
     action = calc_sync_experiment(exp_fun, config, name, rerun_all)
 
     if len(action.to_run) == 0 and len(action.to_delete) == 0:
@@ -493,3 +494,7 @@ def get_exp_config(name):
     exp_run = api_runs(query)[0]
     exp_config = OmegaConf.create(exp_run.config)
     return exp_config
+
+
+def get_exp_url(name: str):
+    return f"https://wandb.ai/romeu/diffusion-3D-features/groups/{name}/workspace"

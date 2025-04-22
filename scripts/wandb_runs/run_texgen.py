@@ -5,9 +5,6 @@ import torch
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.pipelines.generative_rendering_pipeline import (
-    GenerativeRenderingConfig,
-)
 from text3d2video.pipelines.pipeline_utils import (
     ModelConfig,
     load_pipeline,

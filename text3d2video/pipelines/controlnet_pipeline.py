@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 from diffusers import (
@@ -22,8 +22,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
     """
     Base Class for Stable Diffusion + ControlNet Pipelines
     """
-
-    logger: GrLogger
 
     def __init__(
         self,
@@ -64,6 +62,41 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         return image
 
+    def model_forward(
+        self,
+        latents: Float[Tensor, "b c h w"],
+        embeddings: Float[Tensor, "b t d"],
+        t: int,
+        depth_maps: Optional[List[Image.Image]],
+        controlnet_conditioning_scale=1,
+    ):
+        if depth_maps is None:
+            return self.unet(latents, t, encoder_hidden_states=embeddings).sample
+
+        # ControlNet Pass
+        processed_images = self.preprocess_controlnet_images(depth_maps)
+
+        down_block_res_samples, mid_block_res_sample = self.controlnet(
+            latents,
+            t,
+            encoder_hidden_states=embeddings,
+            controlnet_cond=processed_images,
+            conditioning_scale=controlnet_conditioning_scale,
+            guess_mode=False,
+            return_dict=False,
+        )
+
+        # UNet Pass
+        noise_pred = self.unet(
+            latents,
+            t,
+            encoder_hidden_states=embeddings,
+            mid_block_additional_residual=mid_block_res_sample,
+            down_block_additional_residuals=down_block_res_samples,
+        ).sample
+
+        return noise_pred
+
     def model_forward_cfg(
         self,
         latents: Float[Tensor, "b c h w"],
@@ -81,28 +114,13 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         latents_duplicated = torch.cat([latents] * 2)
         both_embeddings = torch.cat([cond_embeddings, uncond_embeddings])
 
-        # ControlNet Pass
-        processed_images = self.preprocess_controlnet_images(depth_maps)
-        processed_images = torch.cat([processed_images] * 2)
-
-        down_block_res_samples, mid_block_res_sample = self.controlnet(
+        noise_pred = self.model_forward(
             latents_duplicated,
+            both_embeddings,
             t,
-            encoder_hidden_states=both_embeddings,
-            controlnet_cond=processed_images,
-            conditioning_scale=controlnet_conditioning_scale,
-            guess_mode=False,
-            return_dict=False,
+            depth_maps,
+            controlnet_conditioning_scale,
         )
-
-        # UNet Pass
-        noise_pred = self.unet(
-            latents_duplicated,
-            t,
-            encoder_hidden_states=both_embeddings,
-            mid_block_additional_residual=mid_block_res_sample,
-            down_block_additional_residuals=down_block_res_samples,
-        ).sample
 
         noise_cond, noise_uncond = noise_pred.chunk(2)
 
@@ -117,6 +135,8 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         num_inference_steps=30,
         controlnet_conditioning_scale=1.0,
         guidance_scale=7.5,
+        latents=None,
+        t_start=None,
         logger=None,
         generator=None,
     ):
@@ -129,20 +149,26 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
 
+        if t_start is None:
+            t_start = self.scheduler.timesteps[0]
+
+        start_index = (self.scheduler.timesteps >= t_start).nonzero().max()
+        denoising_timesteps = self.scheduler.timesteps[start_index:]
+
         # setup logger
         if logger is not None:
-            self.logger = logger
-            self.logger.setup_greenlists(
+            logger.setup_greenlists(
                 denoising_times=self.scheduler.timesteps.tolist(), n_frames=batch_size
             )
         else:
-            self.logger = GrLogger.create_disabled()
+            logger = GrLogger.create_disabled()
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, generator=generator)
+        if latents is None:
+            latents = self.prepare_latents(batch_size, generator=generator)
 
         # denoising loop
-        for t in tqdm(self.scheduler.timesteps):
+        for t in tqdm(denoising_timesteps):
             latents = self.scheduler.scale_model_input(latents, t)
 
             noise_pred = self.model_forward_cfg(

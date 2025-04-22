@@ -100,14 +100,14 @@ def view_pointcloud_orthographic(
     ax.set_ylabel(dim_names[vertical_dim])
 
 
-def display_vid(clip: VideoClip, width=300):
+def display_vid(clip: VideoClip, height=300):
     clip.write_videofile(
         "__temp__.mp4",
         verbose=False,
         logger=None,
     )
 
-    return Video("__temp__.mp4", embed=True, width=width)
+    return Video("__temp__.mp4", embed=True, height=height)
 
 
 def to_pil_image(feature_map: torch.Tensor, clip=False):

@@ -68,17 +68,23 @@ class GenerativeRenderingLogic:
     def __init__(
         self,
         pipe: BaseControlNetPipeline,
-        controlnet_conditioning_scale: float,
         module_paths: list[str],
+        guidance_scale=7.5,
+        controlnet_conditioning_scale: float = 1.0,
+        mean_features_weight: float = 0.5,
+        do_pre_attn_injection: bool = True,
+        do_post_attn_injection: bool = True,
     ):
         self.pipe = pipe
         self.controlnet_conditioning_scale = controlnet_conditioning_scale
+        self.guidance_scale = guidance_scale
+        self.mean_features_weight = mean_features_weight
 
         # create attn processor
         self.attn_processor = ExtractionInjectionAttn(
             self.pipe.unet,
-            do_spatial_post_attn_extraction=True,
-            do_kv_extraction=True,
+            do_spatial_post_attn_extraction=do_post_attn_injection,
+            do_kv_extraction=do_pre_attn_injection,
             also_attend_to_self=False,
             feature_blend_alpha=1.0,
             kv_extraction_paths=module_paths,
@@ -208,7 +214,7 @@ class GenerativeRenderingLogic:
 
         # classifier-free guidance
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
-        noise_pred_guided = noise_pred_uncond + self.conf.guidance_scale * (
+        noise_pred_guided = noise_pred_uncond + self.guidance_scale * (
             noise_pred_cond - noise_pred_uncond
         )
 
@@ -231,7 +237,7 @@ class GenerativeRenderingLogic:
             interpolation_mode="bilinear",
         ).to(torch.float32)
 
-        w_mean = self.conf.mean_features_weight
+        w_mean = self.mean_features_weight
         w_inpaint = 1 - w_mean
 
         if w_mean == 0:
@@ -245,206 +251,20 @@ class GenerativeRenderingLogic:
             interpolation_mode="bilinear",
         ).to(torch.float32)
 
-        w_mean = self.conf.mean_features_weight
-        w_inpaint = 1 - w_mean
         return w_mean * texture_mean + w_inpaint * texture
+
+
+def sample_keyframe_indices(
+    n_frames: int, num_keyframes: int, generator: torch.Generator = None, device="cuda"
+):
+    if num_keyframes > n_frames:
+        raise ValueError("Number of keyframes is greater than number of frames")
+
+    randperm = torch.randperm(n_frames, generator=generator, device=device)
+    return randperm[:num_keyframes]
 
 
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
-    attn_processor: ExtractionInjectionAttn
-    conf: GenerativeRenderingConfig
-    noise_initializer: NoiseInitializer
-    logger: GrLogger
-
-    def prepare_latents(
-        self,
-        meshes: Meshes,
-        cameras: FoVPerspectiveCameras,
-        verts_uvs,
-        faces_uvs,
-        generator=None,
-    ):
-        return self.noise_initializer.initial_noise(
-            cameras=cameras,
-            meshes=meshes,
-            verts_uvs=verts_uvs,
-            faces_uvs=faces_uvs,
-            device=self.device,
-            dtype=self.dtype,
-            n_frames=len(meshes),
-            generator=generator,
-        )
-
-    def sample_keyframe_indices(
-        self, n_frames: int, generator: torch.Generator = None
-    ) -> torch.Tensor:
-        if self.conf.num_keyframes > n_frames:
-            raise ValueError("Number of keyframes is greater than number of frames")
-
-        randperm = torch.randperm(n_frames, generator=generator, device=self.device)
-        return randperm[: self.conf.num_keyframes]
-
-    def model_forward(
-        self,
-        latents: Float[Tensor, "b c h w"],
-        embeddings: Float[Tensor, "b t d"],
-        t: int,
-        depth_maps: List[Image.Image],
-    ) -> Tensor:
-        # ControlNet Pass
-        processed_ctrl_images = self.preprocess_controlnet_images(depth_maps)
-        down_block_res_samples, mid_block_res_sample = self.controlnet(
-            latents,
-            t,
-            encoder_hidden_states=embeddings,
-            controlnet_cond=processed_ctrl_images,
-            conditioning_scale=self.conf.controlnet_conditioning_scale,
-            guess_mode=False,
-            return_dict=False,
-        )
-
-        # UNet Pass
-        noise_pred = self.unet(
-            latents,
-            t,
-            mid_block_additional_residual=mid_block_res_sample,
-            down_block_additional_residuals=down_block_res_samples,
-            encoder_hidden_states=embeddings,
-        ).sample
-
-        return noise_pred
-
-    def model_forward_extraction(
-        self,
-        latents: Float[Tensor, "b c h w"],
-        cond_embeddings: Float[Tensor, "t d"],
-        uncond_embeddings: Float[Tensor, "t d"],
-        depth_maps: List[Image.Image],
-        t: int,
-    ) -> GrExtractedFeatures:
-        # do cond and uncond passes
-        latents_duplicated = torch.cat([latents] * 2)
-        both_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
-        depth_maps_duplicated = depth_maps * 2
-
-        # model pass, to extract features
-        self.attn_processor.set_extraction_mode()
-        self.attn_processor.set_chunk_labels(["uncond", "cond"])
-        _ = self.model_forward(
-            latents_duplicated, both_embeddings, t, depth_maps_duplicated
-        )
-
-        extracted_kv = self.attn_processor.kv_features
-        extracted_post_attn = self.attn_processor.spatial_post_attn_features
-
-        self.attn_processor.clear_features()
-
-        extracted_kv_uncond = {}
-        extracted_kv_cond = {}
-        for layer in extracted_kv.keys():
-            kvs = extracted_kv[layer]
-            extracted_kv_uncond[layer] = kvs[0]
-            extracted_kv_cond[layer] = kvs[1]
-
-        extracted_post_attn_uncond = {}
-        extracted_post_attn_cond = {}
-        for layer in extracted_post_attn.keys():
-            post_attns = extracted_post_attn[layer]
-            n_frames = len(latents)
-            extracted_post_attn_uncond[layer] = post_attns[:n_frames]
-            extracted_post_attn_cond[layer] = post_attns[n_frames:]
-
-        return GrExtractedFeatures(
-            cond_kv=extracted_kv_cond,
-            uncond_kv=extracted_kv_uncond,
-            cond_post_attn=extracted_post_attn_cond,
-            uncond_post_attn=extracted_post_attn_uncond,
-        )
-
-    def model_forward_injection(
-        self,
-        latents: Float[Tensor, "b c h w"],
-        cond_embeddings: Float[Tensor, "t d"],
-        uncond_embeddings: Float[Tensor, "t d"],
-        depth_maps: List[Image.Image],
-        t: int,
-        cond_kv_features: Dict[str, Float[Tensor, "b t d"]],
-        uncond_kv_features: Dict[str, Float[Tensor, "b t d"]],
-        cond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
-        uncond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
-    ) -> Tensor:
-        latents_duplicated = torch.cat([latents] * 2)
-        embeddings = torch.cat([uncond_embeddings, cond_embeddings])
-        depth_maps_duplicated = depth_maps * 2
-
-        # stack kv features
-        injected_kvs = {}
-        for layer in cond_kv_features.keys():
-            layer_kvs = torch.stack(
-                [uncond_kv_features[layer], cond_kv_features[layer]]
-            )
-            injected_kvs[layer] = layer_kvs
-
-        # stack rendered features
-        injected_post_attn = {}
-        for layer in cond_rendered_features.keys():
-            layer_post_attn = torch.stack(
-                [uncond_rendered_features[layer], cond_rendered_features[layer]]
-            )
-            injected_post_attn[layer] = layer_post_attn
-
-        # pass injected features
-        self.attn_processor.set_injection_mode(
-            pre_attn_features=injected_kvs, post_attn_features=injected_post_attn
-        )
-
-        noise_pred = self.model_forward(
-            latents_duplicated, embeddings, t, depth_maps_duplicated
-        )
-
-        # classifier-free guidance
-        noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
-        noise_pred_guided = noise_pred_uncond + self.conf.guidance_scale * (
-            noise_pred_cond - noise_pred_uncond
-        )
-
-        return noise_pred_guided
-
-    def aggregate_features(
-        self,
-        feature_maps: Float[Tensor, "b c h w"],
-        uv_res: int,
-        projections: List[TexelProjection],
-    ) -> Float[Tensor, "h w c"]:
-        texel_xys = [proj.xys for proj in projections]
-        texel_uvs = [proj.uvs for proj in projections]
-
-        texture = aggregate_views_uv_texture(
-            feature_maps,
-            uv_res,
-            texel_xys,
-            texel_uvs,
-            interpolation_mode="bilinear",
-        ).to(torch.float32)
-
-        w_mean = self.conf.mean_features_weight
-        w_inpaint = 1 - w_mean
-
-        if w_mean == 0:
-            return texture
-
-        texture_mean = aggregate_views_uv_texture_mean(
-            feature_maps,
-            uv_res,
-            texel_xys,
-            texel_uvs,
-            interpolation_mode="bilinear",
-        ).to(torch.float32)
-
-        w_mean = self.conf.mean_features_weight
-        w_inpaint = 1 - w_mean
-        return w_mean * texture_mean + w_inpaint * texture
-
     @torch.no_grad()
     def __call__(
         self,
@@ -459,18 +279,27 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         generator=None,
         kf_generator=None,
         logger=None,
+        kf_indices=None,
     ):
         n_frames = len(meshes)
 
-        # setup configs
-        self.conf = conf
-        self.noise_initializer = noise_initializer
+        # setup GR logic
+        gr = GenerativeRenderingLogic(
+            self,
+            module_paths=conf.module_paths,
+            guidance_scale=conf.guidance_scale,
+            controlnet_conditioning_scale=conf.controlnet_conditioning_scale,
+            mean_features_weight=conf.mean_features_weight,
+            do_pre_attn_injection=conf.do_pre_attn_injection,
+            do_post_attn_injection=conf.do_post_attn_injection,
+        )
+        gr.set_attn_processor()
 
         # configure scheduler
-        self.scheduler.set_timesteps(self.conf.num_inference_steps)
+        self.scheduler.set_timesteps(conf.num_inference_steps)
 
         # precompute rasterization and texel projection for various resolutions (for different layers)
-        layers = [AttnLayerId.parse(path) for path in self.conf.module_paths]
+        layers = [AttnLayerId.parse(path) for path in conf.module_paths]
         layer_resolutions = list(set([layer.resolution(self.unet) for layer in layers]))
         layer_resolutions = sorted(layer_resolutions)
         raster_resolutions = layer_resolutions
@@ -487,25 +316,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             cameras, meshes, verts_uvs, faces_uvs, raster_resolutions, uv_resolutions
         )
 
-        # set up attn processor
-        self.attn_processor = ExtractionInjectionAttn(
-            self.unet,
-            do_spatial_post_attn_extraction=self.conf.do_post_attn_injection,
-            do_kv_extraction=self.conf.do_pre_attn_injection,
-            also_attend_to_self=self.conf.attend_to_self_kv,
-            feature_blend_alpha=self.conf.feature_blend_alpha,
-            kv_extraction_paths=self.conf.module_paths,
-            spatial_post_attn_extraction_paths=self.conf.module_paths,
-        )
-        self.unet.set_attn_processor(self.attn_processor)
-
         # setup logger
         if logger is not None:
-            self.logger = logger
-            self.logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
-            self.attn_processor.attn_writer = self.logger.attn_writer
+            logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
         else:
-            self.logger = GrLogger.create_disabled()
+            logger = GrLogger.create_disabled()
 
         # augment prompts
         prompts = [prompt] * n_frames
@@ -516,22 +331,32 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
 
         # initial latent noise
-        latents = self.prepare_latents(meshes, cameras, verts_uvs, faces_uvs, generator)
+        latents = noise_initializer.initial_noise(
+            meshes,
+            cameras,
+            verts_uvs,
+            faces_uvs,
+            dtype=self.dtype,
+            device=self.device,
+            generator=generator,
+        )
 
         # chunk indices to use in inference loop
-        chunks_indices = torch.split(torch.arange(0, n_frames), self.conf.chunk_size)
+        chunks_indices = torch.split(torch.arange(0, n_frames), conf.chunk_size)
 
         # render depth maps for frames
         depth_maps = render_depth_map(meshes, cameras, 512)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
-            self.attn_processor.cur_timestep = t
-
             # Feature Extraction on keyframes
-            kf_indices = self.sample_keyframe_indices(n_frames, kf_generator)
 
-            kf_feats = self.model_forward_extraction(
+            if kf_indices is None:
+                kf_indices = sample_keyframe_indices(
+                    n_frames, conf.num_keyframes, kf_generator
+                )
+
+            kf_feats = gr.model_forward_extraction(
                 latents[kf_indices],
                 cond_embeddings[kf_indices],
                 uncond_embeddings[kf_indices],
@@ -543,13 +368,13 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 res_idx = layer_resolution_indices[layer]
                 uv_res = uv_resolutions[res_idx]
                 kf_projections = [projections[i][res_idx] for i in kf_indices.tolist()]
-                return self.aggregate_features(features, uv_res, kf_projections)
+                return gr.aggregate_features(features, uv_res, kf_projections)
 
             textures_uncond = dict_map(kf_feats.uncond_post_attn, aggr_kf_features)
             textures_cond = dict_map(kf_feats.cond_post_attn, aggr_kf_features)
 
-            self.logger.write_feature_textures("textures_cond", textures_cond, t)
-            self.logger.write_feature_textures("textures_uncond", textures_uncond, t)
+            logger.write_feature_textures("textures_cond", textures_cond, t)
+            logger.write_feature_textures("textures_uncond", textures_uncond, t)
 
             # denoising in chunks
             noise_preds = []
@@ -573,15 +398,15 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                 renders_uncond = dict_map(textures_uncond, render_chunk)
                 renders_cond = dict_map(textures_cond, render_chunk)
 
-                self.logger.write_rendered_features(
+                logger.write_rendered_features(
                     "rendered_cond", renders_cond, t, chunk_frame_indices.tolist()
                 )
-                self.logger.write_rendered_features(
+                logger.write_rendered_features(
                     "rendered_uncond", renders_uncond, t, chunk_frame_indices.tolist()
                 )
 
                 # Diffusion step with pre-and post-attn injection
-                noise_pred = self.model_forward_injection(
+                noise_pred = gr.model_forward_injection(
                     latents[chunk_frame_indices],
                     cond_embeddings[chunk_frame_indices],
                     uncond_embeddings[chunk_frame_indices],

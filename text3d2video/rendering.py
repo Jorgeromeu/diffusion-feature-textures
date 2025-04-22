@@ -247,10 +247,20 @@ def shade_meshes(
     return renders
 
 
-def render_texture(meshes, cameras, uv_map, verts_uvs, faces_uvs):
+def render_texture(
+    meshes,
+    cameras,
+    uv_map,
+    verts_uvs,
+    faces_uvs,
+    resolution=512,
+    sampling_mode="bilinear",
+):
     n_frames = len(cameras)
-    texture = make_repeated_uv_texture(uv_map, faces_uvs, verts_uvs, N=n_frames)
-    renderer = make_mesh_renderer(cameras=cameras)
+    texture = make_repeated_uv_texture(
+        uv_map, faces_uvs, verts_uvs, N=n_frames, sampling_mode=sampling_mode
+    )
+    renderer = make_mesh_renderer(cameras=cameras, resolution=resolution)
     meshes_copy = meshes.clone()
     meshes_copy.textures = texture
     renders = renderer(meshes_copy, cameras=cameras)
@@ -411,7 +421,7 @@ def compute_newly_visible_masks(
     return visible_masks
 
 
-def downsample_masks(masks: Tensor, size: Tuple[int], thresh=0.5):
+def downsample_masks(masks: Tensor, size: Tuple[int], thresh=0.8):
     masks = torch.unsqueeze(masks, 1).float()
     masks_resized = TF.resize(masks, size, interpolation=TF.InterpolationMode.BILINEAR)
     masks_resized = masks_resized > thresh

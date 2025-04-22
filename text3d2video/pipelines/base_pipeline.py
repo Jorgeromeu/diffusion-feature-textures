@@ -87,7 +87,10 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
         )
 
     def decode_latents(
-        self, latents: torch.FloatTensor, generator=None, output_type="pil"
+        self,
+        latents: torch.FloatTensor,
+        generator=None,
+        output_type="pil",
     ):
         # scale latents
         scaling_factor = self.vae.config.scaling_factor

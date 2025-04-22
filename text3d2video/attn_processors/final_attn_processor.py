@@ -1,7 +1,6 @@
 from typing import Dict, List
 
 import torch
-from attr import dataclass
 from jaxtyping import Float
 from torch import Tensor
 

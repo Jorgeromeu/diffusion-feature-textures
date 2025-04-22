@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, List
+from typing import List
 
 import numpy as np
 from moviepy.editor import (
@@ -171,4 +171,4 @@ def display_vids(
     if title:
         clip = add_title_to_clip(clip, title)
 
-    return display_vid(clip, width=width)
+    return display_vid(clip, height=width)
