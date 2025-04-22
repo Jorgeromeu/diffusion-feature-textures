@@ -4,11 +4,9 @@ from typing import Tuple
 import torch
 from attr import dataclass
 from pytorch3d.io import load_obj, load_objs_as_meshes
-from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.util import ordered_sample
 from wandb_util.wandb_util import ArtifactWrapper
 
 

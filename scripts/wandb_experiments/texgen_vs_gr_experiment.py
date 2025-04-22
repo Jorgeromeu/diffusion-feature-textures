@@ -83,7 +83,12 @@ def texgen_vs_gr_experiment(config: TexGenVsGrExperimentConfig):
         "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
     ]
 
-    gr_config = GenerativeRenderingConfig(gr_decoder_paths, feature_blend_alpha=0.8)
+    gr_config = GenerativeRenderingConfig(
+        gr_decoder_paths,
+        feature_blend_alpha=0.8,
+        attend_to_self_kv=True,
+        num_inference_steps=15,
+    )
 
     controlnet_overrides = omegaconf_from_dotdict(
         {
@@ -97,7 +102,7 @@ def texgen_vs_gr_experiment(config: TexGenVsGrExperimentConfig):
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         module_paths=decoder_paths,
-        quality_update_factor=1.5,
+        quality_update_factor=1.2,
         uv_res=512,
     )
 

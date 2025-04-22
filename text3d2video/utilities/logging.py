@@ -110,7 +110,7 @@ class H5Logger(ABC):
         if not override:
             try:
                 dataset = self.fp.create_dataset(filename, data=data)
-            except ValueError as e:
+            except ValueError:
                 keys_str = " ".join(f"{k}={v}" for k, v in keys.items())
                 raise ValueError(
                     f"Failed to write tensor with name {name} and keys {keys_str}"
@@ -132,7 +132,7 @@ class H5Logger(ABC):
     def flush(self):
         self.fp.flush()
 
-    def read(self, name: str, return_pt=True, check_keys=False, **keys):
+    def read(self, name: str, return_pt=True, check_keys=False, transform=None, **keys):
         # assert keys contains all field keys
         if check_keys:
             field_keys = self.field_keys(name)
@@ -145,7 +145,10 @@ class H5Logger(ABC):
         dataset = self.fp[filename]
 
         if return_pt:
-            return dset_to_pt(dataset)
+            dataset = dset_to_pt(dataset)
+
+        if transform is not None:
+            dataset = transform(dataset)
 
         return dataset
 

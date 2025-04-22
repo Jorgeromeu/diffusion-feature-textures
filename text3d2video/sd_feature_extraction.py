@@ -1,11 +1,10 @@
 from enum import Enum
-from typing import Callable, Dict, Set, Tuple
+from typing import Tuple
 
-import torch
 from attr import dataclass
 from diffusers import UNet2DConditionModel
 from diffusers.models.attention_processor import Attention
-from torch import Tensor, nn
+from torch import nn
 
 
 def find_attn_modules(module: nn.Module):

@@ -184,6 +184,7 @@ class TexGenLogic:
     ):
         ref_kvs_cond = None
         ref_kvs_uncond = None
+
         # initialize clean image texture
         clean_tex = torch.zeros(self.uv_res, self.uv_res, 3).cuda()
 
@@ -208,6 +209,7 @@ class TexGenLogic:
             rendered_noisy = self.pipe.scheduler.add_noise(rendered_latent, epsilon, t)
 
             # blend latent with rendered noisy
+            # blended latent: noisified existing image +
             latent = latents[i]
             blended_latent = latent * mask_i + rendered_noisy * (1 - mask_i)
             blended_latent = blended_latent.to(latent)

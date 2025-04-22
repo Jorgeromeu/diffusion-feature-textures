@@ -1,4 +1,3 @@
-import array
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
@@ -184,3 +183,19 @@ def map_array(arr: np.ndarray, map_func: Callable, pbar=False) -> np.ndarray:
         return B
 
     return np.vectorize(map_func)(arr)
+
+
+def perform_chunked(
+    input_tensor: torch.Tensor,
+    func: Callable,
+    join_chunks: Callable,
+    chunk_size: int = 5,
+) -> torch.Tensor:
+    indices = torch.arange(input_tensor.shape[0])
+    chunks = torch.split(indices, chunk_size)
+    results = []
+    for chunk in chunks:
+        chunk_tensor = input_tensor[chunk]
+        result_chunk = func(chunk_tensor)
+        results.append(result_chunk)
+    return join_chunks(results)
