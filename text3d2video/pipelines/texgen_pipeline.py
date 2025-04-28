@@ -27,16 +27,16 @@ from text3d2video.rendering import (
     shade_mesh,
 )
 from text3d2video.util import chunk_dim, sample_feature_map_ndc
-from text3d2video.utilities.logging import H5Logger
+from text3d2video.utilities.logging import NULL_LOGGER
 
 
 @dataclass
 class TexGenConfig:
     module_paths: List[str]
-    num_inference_steps: int = 10
+    num_inference_steps: int = 15
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
-    quality_update_factor: float = 1.5
+    quality_update_factor: float = 1.1
     uv_res: int = 600
 
 
@@ -55,21 +55,28 @@ class TexGenLogic:
     def __init__(
         self,
         pipe: BaseControlNetPipeline,
-        uv_res: int,
-        guidance_scale: float,
-        controlnet_scale: float,
-        module_paths: List[str],
+        uv_res: int = 600,
+        image_res: int = 512,
+        guidance_scale: float = 7.5,
+        controlnet_scale: float = 1,
+        quality_update_factor: float = 1.1,
+        module_paths: List[str] = None,
     ):
+        if module_paths is None:
+            module_paths = []
+
         self.pipe = pipe
         self.uv_res = uv_res
+        self.image_res = image_res
         self.guidance_scale = guidance_scale
         self.controlnet_scale = controlnet_scale
+        self.quality_update_factor = quality_update_factor
 
         # create attn processor
         self.attn_processor = FinalAttnProcessor(
             self.pipe.unet,
             do_kv_extraction=True,
-            also_attend_to_self=True,
+            also_attend_to_self=False,
             attend_to_injected=True,
             kv_extraction_paths=module_paths,
         )
@@ -178,9 +185,10 @@ class TexGenLogic:
         projections,
         fragments,
         depth_maps,
-        newly_visible_masks_down,
-        better_quality_masks,
+        inpainting_masks,
+        update_masks,
         generator=None,
+        logger=NULL_LOGGER,
     ):
         ref_kvs_cond = None
         ref_kvs_uncond = None
@@ -196,23 +204,21 @@ class TexGenLogic:
             depth_map = depth_maps[i]
 
             # newly visible pixels in view i
-            mask_i = newly_visible_masks_down[i]
+            mask_i = inpainting_masks[i]
 
-            # render clean image partial texture
+            # render partial texture to view, encode and noise
             rendered_clean = shade_mesh(mesh, frags, clean_tex, verts_uvs, faces_uvs)
-            # self.logger.write("rendered_clean", rendered_clean, frame_i=i, t=t)
-            # encode rendered clean image
             rendered_latent = self.pipe.encode_images([rendered_clean], generator)[0]
-
-            # bring render to noise level
             epsilon = torch.randn_like(rendered_latent)
             rendered_noisy = self.pipe.scheduler.add_noise(rendered_latent, epsilon, t)
 
-            # blend latent with rendered noisy
-            # blended latent: noisified existing image +
+            # blend latent with rendered noisy according to mask
             latent = latents[i]
             blended_latent = latent * mask_i + rendered_noisy * (1 - mask_i)
             blended_latent = blended_latent.to(latent)
+
+            if i == 0:
+                blended_latent = latent
 
             # predict denoised observation
             model_out = self.model_forward_guided(
@@ -240,10 +246,18 @@ class TexGenLogic:
             denoised_observation_rgb = self.pipe.decode_latents(
                 denoised_observation.unsqueeze(0), output_type="pt"
             )[0]
-            # self.logger.write("denoised_rgb", denoised_observation_rgb, frame_i=i, t=t)
+
+            # update_uv_texture(
+            #     clean_tex,
+            #     denoised_observation_rgb,
+            #     projection.xys,
+            #     projection.uvs,
+            #     interpolation="bilinear",
+            #     update_empty_only=False,
+            # )
 
             # update texture based on quality maps
-            update_mask = better_quality_masks[i]
+            update_mask = update_masks[i]
 
             # filter out texels that lie in the outside the update mask
             texels_in_mask = sample_feature_map_ndc(
@@ -295,61 +309,12 @@ class TexGenLogic:
         noise_preds = torch.stack(noise_preds, dim=0)
         return noise_preds
 
-
-class TexGenPipeline(BaseControlNetPipeline):
-    @torch.no_grad()
-    def __call__(
-        self,
-        prompt: str,
-        meshes: Meshes,
-        cameras: FoVPerspectiveCameras,
-        verts_uvs: torch.Tensor,
-        faces_uvs: torch.Tensor,
-        texgen_config: TexGenConfig,
-        prompt_suffixes: List[str] = None,
-        generator=None,
-        logger=None,
-    ):
-        n_frames = len(meshes)
-
-        # make texgen logic object
-        texgen = TexGenLogic(
-            self,
-            texgen_config.uv_res,
-            texgen_config.guidance_scale,
-            texgen_config.controlnet_conditioning_scale,
-            texgen_config.module_paths,
-        )
-
-        # configure scheduler
-        self.scheduler.set_timesteps(texgen_config.num_inference_steps)
-
-        # setup logger
-        if logger is None:
-            logger = H5Logger.create_disabled()
-
-        # augment prompts
-        prompts = [prompt] * n_frames
-        if prompt_suffixes is not None:
-            prompts = [p + s for p, s in zip(prompts, prompt_suffixes)]
-
-        # Get prompt embeddings
-        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
-
-        # render depth maps for frames
-        depth_maps = render_depth_map(meshes, cameras, 512)
-
-        # initial latent noise
-        latents = self.prepare_latents(len(meshes), generator=generator)
-
-        # TODO move constants
-        image_res = 512
-
+    def precompute_frags_and_projections(self, cameras, meshes, verts_uvs, faces_uvs):
         # precompute rasterization and projections
         projections = []
         fragments = []
-        rasterizer = make_mesh_rasterizer(resolution=image_res)
-        for i in range(n_frames):
+        rasterizer = make_mesh_rasterizer(resolution=self.image_res)
+        for i in range(len(cameras)):
             cam = cameras[i]
             mesh = meshes[i]
 
@@ -359,8 +324,8 @@ class TexGenPipeline(BaseControlNetPipeline):
                 cam,
                 verts_uvs,
                 faces_uvs,
-                texture_res=texgen_config.uv_res,
-                raster_res=2000,
+                texture_res=self.uv_res,
+                raster_res=1000,
             )
             projections.append(projection)
 
@@ -368,20 +333,11 @@ class TexGenPipeline(BaseControlNetPipeline):
             frags = rasterizer(meshes[i], cameras=cameras[i])
             fragments.append(frags)
 
-        # precompute newly-visible masks
-        newly_visible_masks = compute_newly_visible_masks(
-            cameras,
-            meshes,
-            projections,
-            texgen_config.uv_res,
-            image_res,
-            verts_uvs,
-            faces_uvs,
-        )
-        newly_visible_masks_down = downsample_masks(
-            newly_visible_masks, (64, 64), thresh=0.1
-        ).cuda()
+        return fragments, projections
 
+    def _precompute_better_quality_masks(
+        self, cameras, meshes, projections, verts_uvs, faces_uvs
+    ):
         # compute quality maps
         quality_maps = [
             compute_uv_jacobian_map(c, m, verts_uvs, faces_uvs)
@@ -395,16 +351,119 @@ class TexGenPipeline(BaseControlNetPipeline):
             meshes,
             projections,
             quality_maps,
-            texgen_config.uv_res,
+            self.uv_res,
             verts_uvs,
             faces_uvs,
-            quality_factor=texgen_config.quality_update_factor,
+            quality_factor=self.quality_update_factor,
         )
 
-        texgen.set_attn_processor()
+        return better_quality_masks
+
+    def precompute_inpainting_masks(
+        self, cameras, meshes, projections, verts_uvs, faces_uvs
+    ):
+        newly_visible_masks = compute_newly_visible_masks(
+            cameras,
+            meshes,
+            projections,
+            self.uv_res,
+            self.image_res,
+            verts_uvs,
+            faces_uvs,
+        )
+
+        better_quality_masks = self._precompute_better_quality_masks(
+            cameras, meshes, projections, verts_uvs, faces_uvs
+        )
+
+        return downsample_masks(newly_visible_masks, (64, 64), thresh=0.1).cuda()
+
+    def precompute_update_masks(
+        self, cameras, meshes, projections, verts_uvs, faces_uvs
+    ):
+        self.quality_update_factor = 1.5
+        better_quality_masks = self._precompute_better_quality_masks(
+            cameras, meshes, projections, verts_uvs, faces_uvs
+        )
+
+        newly_visible_masks = compute_newly_visible_masks(
+            cameras,
+            meshes,
+            projections,
+            self.uv_res,
+            self.image_res,
+            verts_uvs,
+            faces_uvs,
+        )
+
+        return better_quality_masks.bool()
+
+
+class TexGenPipeline(BaseControlNetPipeline):
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: str,
+        meshes: Meshes,
+        cameras: FoVPerspectiveCameras,
+        verts_uvs: torch.Tensor,
+        faces_uvs: torch.Tensor,
+        texgen_config: TexGenConfig,
+        prompt_suffixes: List[str] = None,
+        generator=None,
+        logger=NULL_LOGGER,
+    ):
+        n_frames = len(meshes)
+
+        # make texgen logic object
+        texgen = TexGenLogic(
+            self,
+            uv_res=texgen_config.uv_res,
+            image_res=512,
+            guidance_scale=texgen_config.guidance_scale,
+            controlnet_scale=texgen_config.controlnet_conditioning_scale,
+            quality_update_factor=texgen_config.quality_update_factor,
+            module_paths=texgen_config.module_paths,
+        )
+
+        # configure scheduler
+        self.scheduler.set_timesteps(texgen_config.num_inference_steps)
+
+        # augment prompts
+        prompts = [prompt] * n_frames
+        if prompt_suffixes is not None:
+            prompts = [p + s for p, s in zip(prompts, prompt_suffixes)]
+
+        # Get prompt embeddings
+        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
+
+        # precompute depth maps
+        depth_maps = render_depth_map(meshes, cameras, 512)
+
+        # precompute fragments
+        fragments, projections = texgen.precompute_frags_and_projections(
+            cameras, meshes, verts_uvs, faces_uvs
+        )
+
+        # precompute inpainting and update masks
+        inpainting_masks = texgen.precompute_inpainting_masks(
+            cameras, meshes, projections, verts_uvs, faces_uvs
+        )
+
+        update_masks = texgen.precompute_update_masks(
+            cameras, meshes, projections, verts_uvs, faces_uvs
+        )
+
+        logger.write("inpainting_masks", inpainting_masks)
+        logger.write("update_masks", update_masks)
+
+        # initial latent noise
+        latents = self.prepare_latents(len(meshes), generator=generator)
 
         # denoising loop
         for t in tqdm(self.scheduler.timesteps):
+            texgen.set_attn_processor()
+
             # Stage 1: autoregressively denoise to get RGB texture of denoised observation at t
             clean_tex = texgen.predict_clean_texture(
                 latents,
@@ -417,10 +476,11 @@ class TexGenPipeline(BaseControlNetPipeline):
                 projections,
                 fragments,
                 depth_maps,
-                newly_visible_masks_down,
-                better_quality_masks,
+                inpainting_masks,
+                update_masks,
                 generator=generator,
             )
+            logger.write("clean_tex", clean_tex, t=t)
 
             # Stage 2: obtain noise predictions
             noise_preds = texgen.render_noise_preds(

@@ -40,7 +40,12 @@ def display_ims_grid(
     for row_i in range(n_rows):
         for col_i in range(n_cols):
             ax = axs[row_i, col_i]
-            ax.imshow(images[row_i][col_i], vmin=vmin, vmax=vmax)
+            ax.imshow(
+                images[row_i][col_i],
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="nearest",
+            )
             ax.set_xticks([])
             ax.set_yticks([])
             ax.set_frame_on(False)

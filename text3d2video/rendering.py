@@ -12,7 +12,6 @@ from pytorch3d.renderer import (
     MeshRenderer,
     RasterizationSettings,
     TexturesUV,
-    TexturesVertex,
 )
 from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
@@ -149,13 +148,6 @@ def render_rgb_uv_map(
     return all_uv_maps
 
 
-def make_repeated_vert_texture(
-    vert_features: Float[Tensor, "n c"], N=1
-) -> TexturesVertex:
-    extended_vt_features = vert_features.unsqueeze(0).expand(N, -1, -1)
-    return TexturesVertex(extended_vt_features)
-
-
 def make_repeated_uv_texture(
     uv_map: Float[Tensor, "h w c"],
     faces_uvs: Tensor,
@@ -214,22 +206,6 @@ def precompute_rasterization(
     return projections, fragments
 
 
-def precompute_rast_fragments(cameras, meshes, raster_resolutions: list[int]):
-    fragments = defaultdict(lambda: dict())
-
-    for res_i, resolution in enumerate(raster_resolutions):
-        rasterizer = make_mesh_rasterizer(resolution=resolution)
-
-        for frame_i in range(len(cameras)):
-            cam = cameras[frame_i]
-            mesh = meshes[frame_i]
-
-            frags = rasterizer(mesh, cameras=cam)
-            fragments[res_i][frame_i] = frags
-
-    return fragments
-
-
 def shade_meshes(
     shader,
     texture: TexturesUV,
@@ -255,6 +231,7 @@ def render_texture(
     faces_uvs,
     resolution=512,
     sampling_mode="bilinear",
+    return_pil=False,
 ):
     n_frames = len(cameras)
     texture = make_repeated_uv_texture(
@@ -264,6 +241,10 @@ def render_texture(
     meshes_copy = meshes.clone()
     meshes_copy.textures = texture
     renders = renderer(meshes_copy, cameras=cameras)
+
+    if return_pil:
+        renders = [TF.to_pil_image(r.cpu()) for r in renders]
+
     return renders
 
 
@@ -403,7 +384,9 @@ def compute_newly_visible_masks(
         cam = cams[i]
 
         # render visible mask
-        mask_i = render_texture(mesh, cam, visible_texture, verts_uvs, faces_uvs)[0]
+        mask_i = render_texture(
+            mesh, cam, visible_texture, verts_uvs, faces_uvs, resolution=image_res
+        )[0]
         visible_masks.append(mask_i[0].cpu())
 
         # update visible mask texture

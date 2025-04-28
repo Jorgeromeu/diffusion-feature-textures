@@ -7,7 +7,7 @@ import h5py
 import torch
 from einops import rearrange
 from jaxtyping import Float
-from rerun import Tensor
+from torch import Tensor
 
 from text3d2video.util import dict_map, ordered_sample
 from text3d2video.utilities.h5_util import dset_to_pt
@@ -199,6 +199,9 @@ class H5Logger(ABC):
         return result
 
 
+NULL_LOGGER = H5Logger.create_disabled()
+
+
 class Writer:
     logger: H5Logger
 
@@ -341,3 +344,22 @@ class FeatureExtractionLogger(H5Logger):
     def write_features_dict(self, name: str, features: Dict[str, Tensor], **keys):
         for layer, x in features.items():
             self.write(name, x, layer=layer, **keys)
+
+
+def setup_greenlists(
+    logger: H5Logger,
+    denoising_times: Tensor,
+    n_frames: int,
+    n_save_times: int = 8,
+    n_save_frames: int = 8,
+):
+    # setup time greenlist
+    if n_save_times is not None:
+        all_noise_levels = list(denoising_times) + [Tensor([0]).long()]
+        logger.key_greenlists["t"] = ordered_sample(all_noise_levels, n_save_times)
+
+    # setup frame greenlist
+    if n_save_frames is not None:
+        logger.key_greenlists["frame_i"] = ordered_sample(
+            range(n_frames), n_save_frames
+        )
