@@ -14,7 +14,6 @@ from scripts.wandb_runs.run_generative_rendering import (
     RunGenerativeRenderingConfig,
     run_generative_rendering,
 )
-from scripts.wandb_runs.run_texgen import RunTexGenConfig, run_texgen
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact

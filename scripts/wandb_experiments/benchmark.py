@@ -7,19 +7,11 @@ from pytorch3d.structures import Meshes
 
 import wandb_util.wandb_util as wbu
 from scripts.wandb_runs.make_texture import MakeTextureConfig, make_texture
-from scripts.wandb_runs.render_noise_gr import RenderNoiseGrConfig, render_noise_gr
-from scripts.wandb_runs.run_generative_rendering import (
-    RunGenerativeRenderingConfig,
-    run_generative_rendering,
-)
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.clip_metrics import CLIPMetrics
-from text3d2video.pipelines.generative_rendering_pipeline import (
-    GenerativeRenderingConfig,
-)
 from text3d2video.pipelines.pipeline_utils import ModelConfig
-from text3d2video.pipelines.texgen_pipeline import TexGenConfig
+from text3d2video.pipelines.texturing_pipeline import TexturingConfig
 from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
 from text3d2video.uv_consistency_metric import mean_uv_mse
 from wandb.apis.public import Run
@@ -70,7 +62,7 @@ def get_texture_runs(config: BenchmarkConfig):
         texture_scenes.add((s.texturing_tag, s.texture_prompt))
 
     make_texture_runs = dict()
-    texgen_config = TexGenConfig(decoder_paths)
+    texgen_config = TexturingConfig(module_paths=decoder_paths)
     for texturing_tag, texturing_prompt in texture_scenes:
         tex_name = texture_identifier(texturing_prompt, texturing_tag)
 

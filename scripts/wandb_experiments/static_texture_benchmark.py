@@ -22,12 +22,12 @@ class Method:
 
 
 @dataclass
-class StaticTextureBenchmarkConfig:
+class TexturingBenchmarkConfig:
     scenes: List[Scene]
     methods: List[Method]
 
 
-def texturing_benchmark(config: StaticTextureBenchmarkConfig):
+def texturing_benchmark(config: TexturingBenchmarkConfig):
     spec = []
     for method in config.methods:
         base_config = method.base_config
