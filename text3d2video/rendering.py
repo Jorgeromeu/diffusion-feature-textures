@@ -18,7 +18,7 @@ from pytorch3d.structures import Meshes
 from torch import Tensor, nn
 
 from text3d2video.backprojection import (
-    project_visible_texels_to_camera,
+    compute_texel_projection,
     update_uv_texture,
 )
 from text3d2video.util import sample_feature_map_ndc
@@ -54,18 +54,18 @@ class UVShader(nn.Module):
         return pixel_uvs
 
 
-def normalize_depth_map(depth):
+def zbuf_to_depth_map(zbuf):
     """
     Convert from zbuf to depth map
     """
 
-    max_depth = depth.max()
-    indices = depth == -1
-    depth = max_depth - depth
-    depth[indices] = 0
-    max_depth = depth.max()
-    depth = depth / max_depth
-    return depth
+    max_depth = zbuf.max()
+    indices = zbuf == -1
+    zbuf = max_depth - zbuf
+    zbuf[indices] = 0
+    max_depth = zbuf.max()
+    zbuf = zbuf / max_depth
+    return zbuf
 
 
 def make_mesh_rasterizer(
@@ -118,7 +118,7 @@ def render_depth_map(meshes, cameras, resolution=512, chunk_size=30):
         chunk_cameras = cameras[chunk_indices]
         fragments = rasterizer(chunk_meshes, cameras=chunk_cameras)
         depth_maps = fragments.zbuf
-        depth_maps = normalize_depth_map(depth_maps)
+        depth_maps = zbuf_to_depth_map(depth_maps)
         depth_maps = [TF.to_pil_image(depth_map[:, :, 0]) for depth_map in depth_maps]
         all_depth_maps.extend(depth_maps)
 
@@ -167,6 +167,7 @@ def make_repeated_uv_texture(
     )
 
 
+# TODO move to Generative Rendering
 def precompute_rasterization(
     cameras, meshes, vert_uvs, faces_uvs, render_resolutions, texture_resolutions
 ):
@@ -182,7 +183,7 @@ def precompute_rasterization(
             texture_res = texture_resolutions[res_i]
 
             # project UVs to camera
-            projection = project_visible_texels_to_camera(
+            projection = compute_texel_projection(
                 mesh,
                 cam,
                 vert_uvs,
@@ -204,6 +205,9 @@ def precompute_rasterization(
             projections[frame_idx][res_i] = projection
 
     return projections, fragments
+
+
+# TODO unified system for shade mesh, shade meshes render_texture, etc
 
 
 def shade_meshes(
@@ -394,8 +398,7 @@ def compute_newly_visible_masks(
         update_uv_texture(
             visible_texture,
             feature_map,
-            proj.xys,
-            proj.uvs,
+            proj,
             update_empty_only=False,
         )
 

@@ -227,14 +227,10 @@ class GenerativeRenderingLogic:
         uv_res: int,
         projections: List[TexelProjection],
     ) -> Float[Tensor, "h w c"]:
-        texel_xys = [proj.xys for proj in projections]
-        texel_uvs = [proj.uvs for proj in projections]
-
         texture = aggregate_views_uv_texture(
             feature_maps,
             uv_res,
-            texel_xys,
-            texel_uvs,
+            projections,
             interpolation_mode="bilinear",
         ).to(torch.float32)
 
@@ -247,8 +243,7 @@ class GenerativeRenderingLogic:
         texture_mean = aggregate_views_uv_texture_mean(
             feature_maps,
             uv_res,
-            texel_xys,
-            texel_uvs,
+            projections,
             interpolation_mode="bilinear",
         ).to(torch.float32)
 

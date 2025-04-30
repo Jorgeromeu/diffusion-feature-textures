@@ -9,8 +9,8 @@ from pytorch3d.structures import Meshes
 from rerun import Tensor
 
 from text3d2video.backprojection import (
+    compute_texel_projection,
     project_views_to_video_texture,
-    project_visible_texels_to_camera,
 )
 
 
@@ -47,9 +47,7 @@ def mean_uv_mse(
 
     # compute projections
     projections = [
-        project_visible_texels_to_camera(
-            m, c, verts_uvs, faces_uvs, uv_res, raster_res=uv_res
-        )
+        compute_texel_projection(m, c, verts_uvs, faces_uvs, uv_res, raster_res=uv_res)
         for m, c in zip(meshes, cameras)
     ]
 

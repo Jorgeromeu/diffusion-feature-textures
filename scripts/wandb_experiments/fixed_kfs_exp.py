@@ -15,6 +15,8 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
 )
 from text3d2video.pipelines.pipeline_utils import ModelConfig
 from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
+from text3d2video.utilities.video_comparison import video_grid
+from text3d2video.utilities.video_util import pil_frames_to_clip
 
 
 @dataclass
@@ -127,3 +129,32 @@ def get_data(name):
         gr_frames=gr_frames,
         fixed_kf_data=override_data,
     )
+
+
+def make_video(name, data=None):
+    if data is None:
+        data = get_data(name)
+
+    controlnet_vid = pil_frames_to_clip(data.controlnet_frames)
+    gr_vid = pil_frames_to_clip(data.gr_frames)
+
+    videos = [controlnet_vid, gr_vid]
+    titles = ["ControlNet", "Generative Rendering"]
+
+    for r in data.fixed_kf_data:
+        kf_frames = [data.controlnet_frames[i] for i in r.kf_indices]
+        kf_vid = pil_frames_to_clip(kf_frames, fps=2)
+        vid = pil_frames_to_clip(r.frames)
+
+        videos.append(kf_vid)
+        videos.append(vid)
+        titles.append("keyframes")
+        titles.append("Fixed Keyframes")
+
+    gap_indices = [0, 1]
+    for i in range(len(data.fixed_kf_data)):
+        last_index = gap_indices[-1]
+        gap_indices.append(last_index + 2)
+
+    comparison_vid = video_grid([videos], col_gap_indices=gap_indices, x_labels=titles)
+    return comparison_vid

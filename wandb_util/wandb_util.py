@@ -540,10 +540,13 @@ def sync_experiment(
 
     print(f"Executing {len(action.to_run)} runs")
 
+    exp_name = exp_fun.__name__
+
     # execute the runs
     # add tags and group
     for run in action.to_run:
         run.run_config.group = name
+        run.run_config.append_tags([exp_name])
 
     processes = [run.as_process() for run in action.to_run]
 

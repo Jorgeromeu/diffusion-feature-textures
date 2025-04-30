@@ -1,5 +1,7 @@
+from typing import List
+
 from attr import dataclass
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 from pytorch3d.renderer.cameras import CamerasBase
 from pytorch3d.structures import Meshes
 
@@ -12,12 +14,14 @@ from scripts.wandb_runs.run_generative_rendering import (
 )
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
+from text3d2video.clip_metrics import CLIPMetrics
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
 from text3d2video.pipelines.pipeline_utils import ModelConfig
 from text3d2video.pipelines.texgen_pipeline import TexGenConfig
 from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
+from text3d2video.uv_consistency_metric import mean_uv_mse
 from wandb.apis.public import Run
 
 
@@ -30,22 +34,16 @@ class Scene:
 
 
 @dataclass
+class Method:
+    name: str
+    fun_path: str
+    base_config: DictConfig
+
+
+@dataclass
 class BenchmarkConfig:
-    scenes: list[Scene]
-
-
-decoder_paths = [
-    "mid_block.attentions.0.transformer_blocks.0.attn1",
-    "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-    "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-    "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-    "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-    "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-    "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-    "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-    "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-    "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-]
+    scenes: List[Scene]
+    methods: List[Method]
 
 
 def texture_identifier(prompt: str, texture_tag: str):
@@ -53,6 +51,19 @@ def texture_identifier(prompt: str, texture_tag: str):
 
 
 def get_texture_runs(config: BenchmarkConfig):
+    decoder_paths = [
+        "mid_block.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+    ]
+
     # Get set of all textures to generate
     texture_scenes = set()
     for s in config.scenes:
@@ -83,49 +94,8 @@ def benchmark(config: BenchmarkConfig):
     texture_runs_dict = get_texture_runs(config)
     make_texture_runs = list(texture_runs_dict.values())
 
-    # GR base Config
-    base_gr = OmegaConf.structured(
-        RunGenerativeRenderingConfig(
-            "prompt",
-            "anim_tag",
-            GenerativeRenderingConfig(decoder_paths, num_keyframes=1),
-            ModelConfig(),
-        )
-    )
-
-    # ControlNet base Config
-    base_controlnet = OmegaConf.structured(
-        RunGenerativeRenderingConfig(
-            "prompt",
-            "anim_tag",
-            GenerativeRenderingConfig(
-                [], do_pre_attn_injection=False, do_post_attn_injection=False
-            ),
-            ModelConfig(),
-        )
-    )
-
-    methods = [
-        ("GR", run_generative_rendering, base_gr),
-        ("ControlNet", run_generative_rendering, base_controlnet),
-    ]
-
-    for start_noise in [0, 0.25, 0.5, 0.75, 1]:
-        base_render_gr = OmegaConf.structured(
-            RenderNoiseGrConfig(
-                "prompt",
-                "anim_tag",
-                "texture_tag",
-                GenerativeRenderingConfig(decoder_paths),
-                ModelConfig(),
-                start_noise_level=start_noise,
-            )
-        )
-
-        methods.append((f"RenderThenGR-{start_noise}", render_noise_gr, base_render_gr))
-
     specs = []
-    for name, method, base_config in methods:
+    for method in config.methods:
         for scene in config.scenes:
             texture_id = texture_identifier(scene.texture_prompt, scene.texturing_tag)
 
@@ -136,12 +106,12 @@ def benchmark(config: BenchmarkConfig):
                 }
             )
 
-            uses_texture = "texture_tag" in base_config
+            uses_texture = "texture_tag" in method.base_config
             if uses_texture:
                 scene_overrides["texture_tag"] = f"{texture_id}:latest"
 
-            overriden = OmegaConf.merge(base_config, scene_overrides)
-            run_spec = wbu.RunSpec(name, method, overriden)
+            overriden = OmegaConf.merge(method.base_config, scene_overrides)
+            run_spec = wbu.RunSpec(method.name, method, overriden)
 
             # conditionally add texture dependency
             if uses_texture:
@@ -170,13 +140,16 @@ def split_runs(runs: list[Run]):
 
 
 @dataclass
-class LoggedVideo:
+class GrRunData:
     frames: list
-    video_prompt: str
+    prompt: str
     cams: CamerasBase
     meshes: Meshes
     verts_uvs: list
     faces_uvs: list
+    frame_consistency: float = None
+    prompt_fidelity: float = None
+    uv_mse: float = None
 
     @classmethod
     def from_run(cls, run: Run):
@@ -195,3 +168,12 @@ class LoggedVideo:
         verts_uvs, faces_uvs = anim.uv_data()
 
         return cls(frames, prompt, cams, meshes, verts_uvs, faces_uvs)
+
+    def compute_clip_metrics(self, model: CLIPMetrics):
+        self.frame_consistency = model.frame_consistency(self.frames)
+        self.prompt_fidelity = model.prompt_fidelity(self.frames, self.prompt)
+
+    def compute_uv_mse(self):
+        self.uv_mse = mean_uv_mse(
+            self.frames, self.cams, self.meshes, self.verts_uvs, self.faces_uvs
+        )
