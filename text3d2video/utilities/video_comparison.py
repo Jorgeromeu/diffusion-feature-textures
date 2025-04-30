@@ -163,7 +163,7 @@ def video_grid(
 
 
 def display_vids(
-    clips: List[ImageSequenceClip], titles: List[str] = None, title=None, width=300
+    clips: List[ImageSequenceClip], titles: List[str] = None, title=None, height=300
 ):
     videos = [clips]
     clip = video_grid(videos, x_labels=titles, pad_video_lengths=True)
@@ -171,4 +171,4 @@ def display_vids(
     if title:
         clip = add_title_to_clip(clip, title)
 
-    return display_vid(clip, height=width)
+    return display_vid(clip, height=height)

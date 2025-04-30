@@ -15,6 +15,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from text3d2video.noise_initialization import (
     RandomNoiseInitializer,
 )
+from text3d2video.util import split_into_chunks
 
 
 class BaseStableDiffusionPipeline(DiffusionPipeline):
@@ -110,20 +111,29 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
 
         return images
 
-    def encode_images(self, images: List[Image], generator=None) -> torch.FloatTensor:
-        # preprocess image
-        image_processed = self.image_processor.preprocess(images).to(
-            device=self.device, dtype=self.dtype
-        )
+    def encode_images(
+        self, images: List[Image], generator=None, chunk_size=5
+    ) -> torch.FloatTensor:
+        images_chunks = split_into_chunks(images, chunk_size)
 
-        # encode
-        encoded = self.vae.encode(image_processed).latent_dist.sample(
-            generator=generator
-        )
+        encoded_chunks = []
+        for chunk in images_chunks:
+            # preprocess image
+            images_processed = self.image_processor.preprocess(chunk).to(
+                device=self.device, dtype=self.dtype
+            )
 
-        # scale latents
-        scaling_factor = self.vae.config.scaling_factor
-        return encoded * scaling_factor
+            # encode
+            encoded = self.vae.encode(images_processed).latent_dist.sample(
+                generator=generator
+            )
+
+            # scale latents
+            scaling_factor = self.vae.config.scaling_factor
+            encoded = encoded * scaling_factor
+            encoded_chunks.append(encoded)
+
+        return torch.cat(encoded_chunks, dim=0)
 
     @torch.no_grad()
     def __call__(
@@ -169,3 +179,17 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
 
         # decode latents
         return self.decode_latents(latents, generator)
+
+    def noise_variance(self, t):
+        """
+        Return noise scale at timestep t, e.g alpha_t [0, 1]
+        """
+        return 1 - self.scheduler.alphas_cumprod[t]
+
+    def denoising_progress(self, t):
+        """
+        Return ratio of denosing steps done, starts at 0, ends at 1
+        """
+        timesteps = self.scheduler.timesteps
+        index = (timesteps == t).nonzero(as_tuple=True)[0].item()
+        return 1 - (index / (len(timesteps) - 1))

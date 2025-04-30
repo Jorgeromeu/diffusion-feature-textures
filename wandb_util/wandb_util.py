@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import multiprocessing as mp
+import re
 import shutil
 import tempfile
 import time
@@ -9,13 +10,17 @@ from functools import wraps
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import matplotlib.patches as mpatches
 import networkx as nx
 from attr import dataclass
+from matplotlib import cm
+from matplotlib import pyplot as plt
 from moviepy.editor import ImageSequenceClip
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 import wandb
 from wandb import Artifact
+from wandb_util.graph_vis import dag_pos
 
 
 def hash_dictconfig(cfg: DictConfig) -> str:
@@ -56,6 +61,9 @@ def setup_run(cfg: DictConfig, run_config: RunConfig, job_type: str) -> bool:
     # get config dict
     config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
 
+    # resolve artifacts if needed
+    config_dict = resolve_artifacts_in_config(config_dict)
+
     # init wandb
     wandb_mode = "online" if run_config.wandb else "disabled"
 
@@ -95,6 +103,9 @@ def api_artifact(artifact_tag: str) -> Artifact:
 
 
 def api_runs(query: Dict):
+    """
+    Get runs from the api
+    """
     api = wandb.Api()
     runs = api.runs(PROJECT_NAME, filters=query)
     runs = list(runs)
@@ -106,6 +117,25 @@ def resolve_artifact_tag(artifact_tag: str):
     art = api_artifact(artifact_tag)
     true_version = art.version
     return f"{name}:{true_version}"
+
+
+def resolve_artifacts_in_config(config: DictConfig):
+    pattern = r"^[^:]+:[^:]+$"
+
+    def _resolve(node):
+        if isinstance(node, str):
+            if re.match(pattern, node) is not None:
+                return resolve_artifact_tag(node)
+
+        if isinstance(node, ListConfig):
+            return [_resolve(n) for n in node]
+
+        if isinstance(node, DictConfig):
+            return {k: _resolve(v) for k, v in node.items()}
+
+        return node
+
+    return _resolve(config)
 
 
 def get_artifact(artifact_tag: str):
@@ -249,7 +279,7 @@ class ArtifactWrapper:
         artifact = get_artifact(artifact_tag)
         return cls.from_wandb_artifact(artifact, download)
 
-    def log_if_enabled(self, aliases=None, delete_localfolder=False):
+    def log(self, aliases=None, delete_localfolder=False):
         if aliases is None:
             aliases = []
 
@@ -271,7 +301,7 @@ class ArtifactWrapper:
 
     def log_standalone(self, aliases=None, delete_localfolder=False):
         wandb.init(project=PROJECT_NAME, job_type="log_artifact_standalone")
-        self.log_if_enabled(aliases, delete_localfolder)
+        self.log(aliases, delete_localfolder)
         wandb.finish()
 
     def logged_by(self):
@@ -327,10 +357,41 @@ def wandb_run(job_type: str):
     def decorator(func):
         @wraps(func)
         def wrapper(cfg: DictConfig, run_config: RunConfig, *args, **kwargs):
-            # setup wandb run
-            setup_run(cfg, run_config, job_type)
-            # logic
-            result = func(cfg, run_config, *args, **kwargs)
+            # init wandb
+            wandb_mode = "online" if run_config.wandb else "disabled"
+
+            # get tags
+            tags = run_config.tags
+            if tags is None:
+                tags = []
+
+            # add hash-tag
+            hash = hash_dictconfig(cfg)
+            hash_tag = f"hash:{hash}"
+            tags.append(hash_tag)
+
+            with wandb.init(
+                project=PROJECT_NAME,
+                job_type=job_type,
+                mode=wandb_mode,
+                tags=tags,
+                group=run_config.group,
+                name=run_config.name,
+            ):
+                # resolve config and convert to dict
+                # cfg = resolve_artifacts_in_config(cfg)
+                config_dict = OmegaConf.to_container(
+                    cfg, resolve=True, throw_on_missing=True
+                )
+
+                # log config
+                wandb.config.update(config_dict)
+
+                result = func(cfg, run_config, *args, **kwargs)
+
+                # add hash to summary
+                wandb.summary["hash"] = hash
+
             # finalize wandb run
             wandb.finish()
             return result
@@ -406,6 +467,15 @@ def get_logged_runs(name: str, include_exp_run=False):
     return api_runs(query)
 
 
+def make_spec_dag(specification: List[RunSpec]):
+    spec_graph = nx.DiGraph()
+    for run in specification:
+        spec_graph.add_node(run)
+        for dep in run.depends_on:
+            spec_graph.add_edge(dep, run)
+    return spec_graph
+
+
 def calc_sync_experiment(
     exp_spec: Callable, exp_cfg: DictConfig, name: str, rerun_all=False
 ):
@@ -427,11 +497,7 @@ def calc_sync_experiment(
         return hash_dictconfig(spec.config)
 
     # make specification graph
-    spec_graph = nx.DiGraph()
-    for run in specification:
-        spec_graph.add_node(run)
-        for dep in run.depends_on:
-            spec_graph.add_edge(dep, run)
+    spec_graph = make_spec_dag(specification)
 
     return calc_sync_experiment_algo(spec_graph, existing_runs, hash_spec, hash_run)
 
@@ -474,10 +540,13 @@ def sync_experiment(
 
     print(f"Executing {len(action.to_run)} runs")
 
+    exp_name = exp_fun.__name__
+
     # execute the runs
     # add tags and group
     for run in action.to_run:
         run.run_config.group = name
+        run.run_config.append_tags([exp_name])
 
     processes = [run.as_process() for run in action.to_run]
 
@@ -498,3 +567,61 @@ def get_exp_config(name):
 
 def get_exp_url(name: str):
     return f"https://wandb.ai/romeu/diffusion-3D-features/groups/{name}/workspace"
+
+
+def make_valid_artifact_name(s, replace_with=""):
+    return re.sub(r"[^a-zA-Z0-9._-]", replace_with, s)
+
+
+def draw_dag(dag: nx.DiGraph, with_labels=True, label_fun=None, color_fun=None):
+    if label_fun is not None:
+        labels = {n: label_fun(n) for n in dag.nodes}
+    else:
+        labels = {n: n for n in dag.nodes}
+
+    if color_fun is not None:
+        # all unique color values
+        color_vals = [color_fun(n) for n in dag.nodes]
+        unique_color_vals = list(set(color_vals))
+
+        # map each color val to an inded
+        color_val_to_index = {
+            color_val: i for i, color_val in enumerate(unique_color_vals)
+        }
+
+        cmap = cm.get_cmap("tab10")
+        colors = [
+            cmap(color_val_to_index[color_val] % cmap.N) for color_val in color_vals
+        ]
+
+        # make legend
+        handles = [
+            mpatches.Patch(color=cmap(color_val_to_index[color_val]), label=color_val)
+            for color_val in unique_color_vals
+        ]
+        plt.legend(handles=handles)
+    else:
+        colors = None
+
+    pos = dag_pos(dag)
+    nx.draw(dag, pos=pos, node_color=colors)
+
+    if with_labels:
+        nx.draw_networkx_labels(
+            dag,
+            {k: (x, y - 0.1) for k, (x, y) in pos.items()},
+            labels,
+            font_size=8,
+        )
+
+
+def visualize_spec(spec: List[RunSpec], with_labels=True):
+    dag = make_spec_dag(spec)
+
+    def label_fun(node):
+        return node.run_config.name
+
+    def color_fun(node):
+        return node.run_fun.__name__
+
+    draw_dag(dag, with_labels=with_labels, label_fun=label_fun, color_fun=color_fun)

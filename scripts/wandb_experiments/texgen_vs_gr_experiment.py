@@ -9,10 +9,7 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 
 import wandb_util.wandb_util as wbu
-from scripts.wandb_runs.make_rgb_texture import (
-    MakeTextureConfig,
-    make_rgb_texture,
-)
+from scripts.wandb_runs.make_texture import MakeTextureConfig, make_texture
 from scripts.wandb_runs.run_generative_rendering import (
     RunGenerativeRenderingConfig,
     run_generative_rendering,
@@ -92,8 +89,11 @@ def texgen_vs_gr_experiment(config: TexGenVsGrExperimentConfig):
 
     controlnet_overrides = omegaconf_from_dotdict(
         {
-            "generative_rendering.do_pre_attn_injection": False,
-            "generative_rendering.do_post_attn_injection": False,
+            "generative_rendering": OmegaConf.structured(
+                GenerativeRenderingConfig(
+                    [], do_pre_attn_injection=False, do_post_attn_injection=False
+                )
+            )
         }
     )
 
@@ -121,55 +121,39 @@ def texgen_vs_gr_experiment(config: TexGenVsGrExperimentConfig):
     run_gr = wbu.RunSpec("GR", run_generative_rendering, run_gr_config)
 
     # Create ControlNet Run
-    run_controlnet_config = OmegaConf.merge(run_gr_config, controlnet_overrides)
+    run_controlnet_config = OmegaConf.structured(
+        RunGenerativeRenderingConfig(
+            prompt=config.gr_prompt,
+            animation_tag=config.anim_tag,
+            generative_rendering=GenerativeRenderingConfig(
+                [], do_pre_attn_injection=False, do_post_attn_injection=False
+            ),
+            model=model_config,
+            seed=config.seed,
+        )
+    )
+
     run_controlnet = wbu.RunSpec(
         "ControlNet", run_generative_rendering, run_controlnet_config
     )
 
     # create TexGen Run
-    run_texgen_config = RunTexGenConfig(
+    make_texture_config = MakeTextureConfig(
         prompt=config.texgen_prompt,
         animation_tag=config.texturing_tag,
         texgen=texgen_config,
         model=model_config,
-        out_artifact="texture_views",
+        texture_out_art="texture_views",
         seed=config.seed,
     )
 
-    run_texgen_config = OmegaConf.structured(run_texgen_config)
-    run_txgen = wbu.RunSpec("TexGen", run_texgen, run_texgen_config)
-
-    # create Make Texture run
-    create_texure_config = MakeTextureConfig(
-        video_anim="texture_views:latest",
-    )
-    create_texure_config = OmegaConf.structured(create_texure_config)
-    create_texture = wbu.RunSpec(
-        "make_texture",
-        make_rgb_texture,
-        create_texure_config,
-        depends_on=[run_txgen],
-    )
-
-    # create TexGen on anim frames run
-    run_texgen_anim_config = RunTexGenConfig(
-        prompt=config.texgen_prompt,
-        animation_tag=config.anim_tag,
-        texgen=texgen_config,
-        model=model_config,
-        out_artifact="anim_texture_views",
-        seed=config.seed,
-    )
-
-    run_texgen_anim_config = OmegaConf.structured(run_texgen_anim_config)
-    run_texgen_anim = wbu.RunSpec("TexGen_anim", run_texgen, run_texgen_anim_config)
+    make_texture_config = OmegaConf.structured(make_texture_config)
+    make_txture = wbu.RunSpec("TexGen", make_texture, make_texture_config)
 
     return [
         run_gr,
         run_controlnet,
-        run_texgen_anim,
-        run_txgen,
-        create_texture,
+        make_txture,
     ]
 
 

@@ -192,7 +192,7 @@ def cli(artifact_name: str, filename: str, n_frames: int, rerun: bool):
         artifact_name, filename, n_frames=n_frames, rerun=rerun
     )
 
-    artifact.log_if_enabled()
+    artifact.log()
 
 
 if __name__ == "__main__":

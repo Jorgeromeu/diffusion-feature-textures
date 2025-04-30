@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List
 
 import torch
 from attr import dataclass
@@ -15,50 +15,24 @@ from torch import Tensor
 from text3d2video.util import hwc_to_chw, sample_feature_map_ndc, unique_with_indices
 
 
-def project_visible_verts_to_camera(
-    meshes: Meshes, cameras: CamerasBase, raster_res=600
-):
-    # rasterize mesh, to get visible verts
-    raster_settings = RasterizationSettings(
-        image_size=raster_res,
-        blur_radius=0.0,
-        faces_per_pixel=1,
-    )
-    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
-    fragments = rasterizer(meshes)
-
-    pix_to_face = fragments.pix_to_face[0]
-    mask = pix_to_face > 0
-    visible_face_indices = pix_to_face[mask]
-    visible_face_indices = visible_face_indices.unique()
-    visible_faces = meshes.faces_packed()[visible_face_indices]
-
-    visible_vert_indices = torch.unique(visible_faces)
-    visible_verts = meshes.verts_packed()[visible_vert_indices]
-
-    visible_verts_ndc = cameras.transform_points_ndc(visible_verts)
-    visible_verts_xy = visible_verts_ndc[:, 0:2]
-    visible_verts_xy[:, 0] *= -1
-
-    vert_indices = visible_vert_indices
-
-    return visible_verts_xy, vert_indices
-
-
 @dataclass
 class TexelProjection:
-    xys: Tensor
-    uvs: Tensor
+    """
+    Texel Projection represents a mapping between UV coordinates and NDC coordinates.
+    """
+
+    xys: Tensor  # (N, 2) float pixel coordinates
+    uvs: Tensor  # (N, 2) unique UV coordinates
 
 
-def project_visible_texels_to_camera(
+def compute_texel_projection(
     mesh: Meshes,
     camera: CamerasBase,
     verts_uvs: Tensor,
     faces_uvs: Tensor,
     texture_res: int,
     raster_res=1000,
-) -> Tuple[List[Tensor], List[Tensor]]:
+) -> TexelProjection:
     """
     Project visible UV coordinates to camera pixel coordinates
     :param meshes: Meshes object
@@ -67,11 +41,7 @@ def project_visible_texels_to_camera(
     :param faces_uvs: (F, 3) face indices for UV coordinates
     :param texture_res: UV_map resolution
     :param render_resolution: render resolution
-
-    Return two corresponding sets of points in the camera and UV space
-
-    :return xy_ndc_coords: (N, 2) pixel coordinates
-    :return uv_pix_coords_unique: (N, 2) unique UV coordinates
+    :return TexelProjection
     """
 
     # rasterize mesh at high resolution
@@ -117,61 +87,47 @@ def project_visible_texels_to_camera(
     return TexelProjection(xys=texel_xy_coords, uvs=texel_coords)
 
 
-# Aggregation
-
-
-def aggregate_views_vert_texture(
-    feature_maps: Float[Tensor, "n c h w"],
-    n_verts: int,
-    vertex_positions: List[Float[Tensor, "v 3"]],
-    vertex_indices: List[Float[Tensor, "v"]],  # noqa: F821
-    mode="nearest",
-    aggregation_type="first",
-):
-    # initialize empty vertex features
-    feature_dim = feature_maps.shape[1]
-    vert_features = torch.zeros(n_verts, feature_dim).to(feature_maps)
-    vert_features_cnt = torch.zeros(n_verts).to(feature_maps)
-
-    for i, feature_map in enumerate(feature_maps):
-        # get features for each vertex, for given view
-        frame_vert_xys = vertex_positions[i]
-        frame_vert_indices = vertex_indices[i]
-
-        # project frame features to vertices
-        frame_vert_features = sample_feature_map_ndc(
-            feature_map,
-            frame_vert_xys,
-            mode=mode,
-        ).to(vert_features)
-
-        if aggregation_type == "mean":
-            vert_features[frame_vert_indices] += frame_vert_features
-
-        elif aggregation_type == "first":
-            # update empty entries in vert_features
-            mask = torch.all(vert_features[frame_vert_indices] == 0, dim=1)
-            vert_features[frame_vert_indices[mask]] = frame_vert_features[mask]
-
-        # count number of features per vertex
-        frame_nonzero_features = torch.all(frame_vert_features != 0, dim=1)
-        frame_nonzero_indices = frame_vert_indices[frame_nonzero_features]
-        vert_features_cnt[frame_nonzero_indices] += 1
-
-    if aggregation_type == "mean":
-        vert_features /= torch.clamp(vert_features_cnt, min=1).unsqueeze(1)
-
-    # average features
-    return vert_features
+def compute_texel_projections(
+    meshes: Meshes,
+    cameras: CamerasBase,
+    verts_uvs: Tensor,
+    faces_uvs: Tensor,
+    texture_res: int,
+    raster_res=1000,
+) -> List[TexelProjection]:
+    """
+    Compute texel projections for each camera
+    :param meshes: Meshes object
+    :param cameras: CamerasBase object
+    :param verts_uvs: (V, 2) UV coordinates
+    :param faces_uvs: (F, 3) face indices for UV coordinates
+    :param texture_res: UV_map resolution
+    :param render_resolution: render resolution
+    :return List[TexelProjection]
+    """
+    projections = []
+    for i in range(len(cameras)):
+        projection = compute_texel_projection(
+            meshes[i],
+            cameras[i],
+            verts_uvs,
+            faces_uvs,
+            texture_res,
+            raster_res=raster_res,
+        )
+        projections.append(projection)
+    return projections
 
 
 def aggregate_views_uv_texture(
     feature_maps: Float[Tensor, "n c h w"],
     uv_resolution: int,
-    texel_xys: List[Float[Tensor, "v 3"]],
-    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
+    projections: List[TexelProjection],
     interpolation_mode="bilinear",
 ):
+    texel_xys = [projection.xys for projection in projections]
+    texel_uvs = [projection.uvs for projection in projections]
+
     # initialize empty uv map
     feature_dim = feature_maps.shape[1]
     uv_map = torch.zeros(uv_resolution, uv_resolution, feature_dim).to(feature_maps)
@@ -205,10 +161,12 @@ def aggregate_views_uv_texture(
 def aggregate_views_uv_texture_mean(
     feature_maps: Float[Tensor, "n c h w"],
     uv_resolution: int,
-    texel_xys: List[Float[Tensor, "v 3"]],
-    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
+    projections: List[TexelProjection],
     interpolation_mode="bilinear",
 ):
+    texel_xys = [p.xys for p in projections]
+    texel_uvs = [p.uvs for p in projections]
+
     # initialize empty uv map
     feature_dim = feature_maps.shape[1]
 
@@ -227,10 +185,8 @@ def aggregate_views_uv_texture_mean(
         ).to(uv_map)
 
         # update uv map
-        uv_map[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] = colors
+        uv_map[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] += colors
         counts[uv_pix_coords[:, 1], uv_pix_coords[:, 0]] += 1
-
-    # average features
 
     # clamp so lowest count is 1
     counts_prime = torch.clamp(counts, min=1)
@@ -242,12 +198,14 @@ def aggregate_views_uv_texture_mean(
 def update_uv_texture(
     uv_map: Tensor,
     feature_map: Tensor,
-    texel_xys: Tensor,
-    texel_uvs: Tensor,
+    projection: TexelProjection,
     interpolation="bilinear",
     update_empty_only=True,
 ):
     # mask of unfilled texels
+
+    texel_xys = projection.xys
+    texel_uvs = projection.uvs
 
     if update_empty_only:
         mask = uv_map.sum(dim=-1) > 0
@@ -273,18 +231,32 @@ def update_uv_texture(
     return uv_map
 
 
+def project_view_to_texture_masked(
+    uv_map: Tensor,
+    feature_map: Float[Tensor, "c h w"],
+    mask: Float[Tensor, "h w"],
+    projection: TexelProjection,
+):
+    texels_in_mask = sample_feature_map_ndc(mask.unsqueeze(0).cuda(), projection.xys)
+    uvs = projection.uvs[texels_in_mask[:, 0]]
+    xys = projection.xys[texels_in_mask[:, 0]]
+
+    # update texture
+    colors = sample_feature_map_ndc(feature_map, xys).float()
+    uv_map[uvs[:, 1], uvs[:, 0]] = colors
+    return uv_map
+
+
 def project_views_to_video_texture(
     feature_maps: Float[Tensor, "n c h w"],
     uv_resolution: int,
-    texel_xys: List[Float[Tensor, "v 3"]],
-    texel_uvs: List[Float[Tensor, "v"]],  # noqa: F821
-    interpolation_mode="bilinear",
+    projections: List[TexelProjection],
 ):
     texture_frames = []
     for i in range(len(feature_maps)):
         texture = torch.zeros(uv_resolution, uv_resolution, 3).to(feature_maps)
         view = feature_maps[i]
-        update_uv_texture(texture, view, texel_xys[i], texel_uvs[i])
+        update_uv_texture(texture, view, projections[i])
         texture_frames.append(texture)
     texture_frames = torch.stack(texture_frames, dim=0)
     texture_frames = hwc_to_chw(texture_frames)

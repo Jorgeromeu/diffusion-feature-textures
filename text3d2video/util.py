@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
@@ -176,26 +177,83 @@ def chw_to_hwc(x: torch.Tensor) -> torch.Tensor:
 
 
 def map_array(arr: np.ndarray, map_func: Callable, pbar=False) -> np.ndarray:
+    arr_flat = arr.flatten()
     if pbar:
-        arr_flat = arr.flatten()
-        B_flat = np.array([map_func(x) for x in tqdm(arr_flat)])
-        B = B_flat.reshape(arr.shape)
-        return B
+        arr_flat = tqdm(arr_flat)
+    mapped = [map_func(x) for x in arr_flat]
+    B_flat = object_array(mapped)
+    B = B_flat.reshape(arr.shape)
+    return B
 
-    return np.vectorize(map_func)(arr)
+
+def group_into_array(entries: List, key_funs: List[Callable]) -> Dict:
+    # for each key_fun get set of values
+    dim_values = [set() for _ in key_funs]
+    for r in entries:
+        for i, key_fun in enumerate(key_funs):
+            key = key_fun(r)
+            dim_values[i].add(key)
+
+    dim_values = [sorted(list(d)) for d in dim_values]
+    shape = [len(d) for d in dim_values]
+
+    # create empty grid
+    grid = np.empty(shape, dtype=object)
+
+    for e in entries:
+        # get keys
+        keys = tuple(key_fun(e) for key_fun in key_funs)
+
+        indices = []
+        for i, key in enumerate(keys):
+            idx = dim_values[i].index(key)
+            indices.append(idx)
+
+        index = tuple(indices)
+
+        # populate grid
+        grid[index] = e
+
+    return grid, dim_values
 
 
-def perform_chunked(
-    input_tensor: torch.Tensor,
-    func: Callable,
-    join_chunks: Callable,
-    chunk_size: int = 5,
-) -> torch.Tensor:
-    indices = torch.arange(input_tensor.shape[0])
-    chunks = torch.split(indices, chunk_size)
-    results = []
-    for chunk in chunks:
-        chunk_tensor = input_tensor[chunk]
-        result_chunk = func(chunk_tensor)
-        results.append(result_chunk)
-    return join_chunks(results)
+def split_into_chunks(x, chunk_size=5):
+    if isinstance(x, torch.Tensor):
+        return x.split(chunk_size)
+    elif isinstance(x, list):
+        return [x[i : i + chunk_size] for i in range(0, len(x), chunk_size)]
+    else:
+        raise TypeError(f"Unsupported type: {type(x)}")
+
+
+def create_fresh_dir(dir_path: str) -> str:
+    """
+    Create a fresh directory by removing the existing one and creating a new one.
+    """
+    import os
+    import shutil
+
+    if os.path.exists(dir_path):
+        shutil.rmtree(dir_path)
+    os.makedirs(dir_path)
+    return Path(dir_path)
+
+
+class PrintCols:
+    def __init__(self, cols: List[str], widths: List[int] = None):
+        self.cols = cols
+
+        if widths is None:
+            self.widths = [10 for col in cols]
+
+        assert len(cols) == len(widths), "cols and widths must have the same length"
+        self.widths = widths
+
+    def _make_row(self, cells: List[str]):
+        return " ".join(f"{cell:<{width}}" for cell, width in zip(cells, self.widths))
+
+    def print_header(self):
+        print(self._make_row(self.cols))
+
+    def print_row(self, *row: List[str]):
+        print(self._make_row(row))

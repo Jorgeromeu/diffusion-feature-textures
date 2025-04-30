@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 from attr import dataclass
@@ -30,7 +30,7 @@ from text3d2video.rendering import (
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
 from text3d2video.util import dict_map
-from text3d2video.utilities.logging import GrLogger
+from text3d2video.utilities.logging import NULL_LOGGER
 
 
 # pylint: disable=too-many-instance-attributes
@@ -43,10 +43,11 @@ class GenerativeRenderingConfig:
     attend_to_self_kv: bool = False
     mean_features_weight: float = 0.5
     chunk_size: int = 5
-    num_keyframes: int = 1
-    num_inference_steps: int = 10
+    num_inference_steps: int = 15
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
+    num_keyframes: int = 3
+    kf_indices: Optional[List[int]] = None  # if None, sample random keyframes
 
 
 @dataclass
@@ -226,14 +227,10 @@ class GenerativeRenderingLogic:
         uv_res: int,
         projections: List[TexelProjection],
     ) -> Float[Tensor, "h w c"]:
-        texel_xys = [proj.xys for proj in projections]
-        texel_uvs = [proj.uvs for proj in projections]
-
         texture = aggregate_views_uv_texture(
             feature_maps,
             uv_res,
-            texel_xys,
-            texel_uvs,
+            projections,
             interpolation_mode="bilinear",
         ).to(torch.float32)
 
@@ -246,8 +243,7 @@ class GenerativeRenderingLogic:
         texture_mean = aggregate_views_uv_texture_mean(
             feature_maps,
             uv_res,
-            texel_xys,
-            texel_uvs,
+            projections,
             interpolation_mode="bilinear",
         ).to(torch.float32)
 
@@ -278,8 +274,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         prompt_suffixes: List[str] = None,
         generator=None,
         kf_generator=None,
-        logger=None,
-        kf_indices=None,
+        start_noise_level: Optional[float] = 0,
+        start_latents: Optional[Float[Tensor, "b c h w"]] = None,
+        logger=NULL_LOGGER,
     ):
         n_frames = len(meshes)
 
@@ -296,7 +293,9 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         gr.set_attn_processor()
 
         # configure scheduler
-        self.scheduler.set_timesteps(conf.num_inference_steps)
+        timesteps = self.get_partial_timesteps(
+            conf.num_inference_steps, start_noise_level
+        )
 
         # precompute rasterization and texel projection for various resolutions (for different layers)
         layers = [AttnLayerId.parse(path) for path in conf.module_paths]
@@ -316,12 +315,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             cameras, meshes, verts_uvs, faces_uvs, raster_resolutions, uv_resolutions
         )
 
-        # setup logger
-        if logger is not None:
-            logger.setup_greenlists(self.scheduler.timesteps.tolist(), n_frames)
-        else:
-            logger = GrLogger.create_disabled()
-
         # augment prompts
         prompts = [prompt] * n_frames
         if prompt_suffixes is not None:
@@ -331,15 +324,19 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
 
         # initial latent noise
-        latents = noise_initializer.initial_noise(
-            meshes,
-            cameras,
-            verts_uvs,
-            faces_uvs,
-            dtype=self.dtype,
-            device=self.device,
-            generator=generator,
-        )
+
+        if start_latents is not None:
+            latents = start_latents
+        else:
+            latents = noise_initializer.initial_noise(
+                meshes,
+                cameras,
+                verts_uvs,
+                faces_uvs,
+                dtype=self.dtype,
+                device=self.device,
+                generator=generator,
+            )
 
         # chunk indices to use in inference loop
         chunks_indices = torch.split(torch.arange(0, n_frames), conf.chunk_size)
@@ -348,10 +345,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         depth_maps = render_depth_map(meshes, cameras, 512)
 
         # denoising loop
-        for t in tqdm(self.scheduler.timesteps):
+        for t in tqdm(timesteps):
             # Feature Extraction on keyframes
-
-            if kf_indices is None:
+            if conf.kf_indices is not None:
+                kf_indices = Tensor(conf.kf_indices).long()
+            else:
                 kf_indices = sample_keyframe_indices(
                     n_frames, conf.num_keyframes, kf_generator
                 )
@@ -372,9 +370,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
             textures_uncond = dict_map(kf_feats.uncond_post_attn, aggr_kf_features)
             textures_cond = dict_map(kf_feats.cond_post_attn, aggr_kf_features)
-
-            logger.write_feature_textures("textures_cond", textures_cond, t)
-            logger.write_feature_textures("textures_uncond", textures_uncond, t)
 
             # denoising in chunks
             noise_preds = []
@@ -397,13 +392,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
                 renders_uncond = dict_map(textures_uncond, render_chunk)
                 renders_cond = dict_map(textures_cond, render_chunk)
-
-                logger.write_rendered_features(
-                    "rendered_cond", renders_cond, t, chunk_frame_indices.tolist()
-                )
-                logger.write_rendered_features(
-                    "rendered_uncond", renders_uncond, t, chunk_frame_indices.tolist()
-                )
 
                 # Diffusion step with pre-and post-attn injection
                 noise_pred = gr.model_forward_injection(

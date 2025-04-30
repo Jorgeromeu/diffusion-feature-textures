@@ -79,4 +79,4 @@ def run_generative_rendering(
     wbu.log_moviepy_clip("video", pil_frames_to_clip(video_frames), fps=10)
 
     # save video artifact
-    video_artifact.log_if_enabled()
+    video_artifact.log()

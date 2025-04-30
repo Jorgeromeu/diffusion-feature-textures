@@ -1,7 +1,6 @@
 from itertools import product
 from typing import Dict, List
 
-import numpy as np
 from attr import dataclass
 from omegaconf import DictConfig, OmegaConf
 
@@ -10,7 +9,6 @@ from scripts.wandb_runs.run_generative_rendering import (
     run_generative_rendering,
 )
 from text3d2video.utilities.omegaconf_util import (
-    matches_override,
     omegaconf_from_dotdict,
 )
 
@@ -43,29 +41,3 @@ def multidim_sweep_exp(config: MultiDimSweepConfig):
     ]
 
     return runs
-
-
-def get_multidim_sweep_runs_grouped(exp_name):
-    # get the overrides from the experiment run
-    exp_config = wbu.get_exp_config(exp_name)
-
-    override_dims = exp_config.override_dims
-
-    shape = [len(dim) for dim in override_dims]
-    grid = np.empty(shape, dtype=object)
-
-    # for each run, check where it is in the grid
-    for run in wbu.get_logged_runs(exp_name):
-        config = OmegaConf.create(run.config)
-
-        # for each dimension, get index where overrides match
-        index = []
-        for dim, overrides in enumerate(override_dims):
-            for i, o in enumerate(overrides):
-                if matches_override(config, o):
-                    index.append(i)
-
-        # add the run to the grid
-        grid[tuple(index)] = run
-
-    return grid

@@ -12,8 +12,8 @@ class ModelConfig:
 
 def load_pipeline(
     pipeline_class: type,
-    sd_path=None,
-    controlnet_path=None,
+    sd_path="runwayml/stable-diffusion-v1-5",
+    controlnet_path="lllyasviel/control_v11f1p_sd15_depth",
     device="cuda",
     dtype=torch.float16,
     scheduler_class=DDIMScheduler,

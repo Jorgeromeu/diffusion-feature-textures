@@ -15,13 +15,19 @@ from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
-from text3d2video.utilities.logging import GrLogger
 
 
 class BaseControlNetPipeline(BaseStableDiffusionPipeline):
     """
     Base Class for Stable Diffusion + ControlNet Pipelines
     """
+
+    def get_partial_timesteps(self, num_inference_steps: int, noise_level: float):
+        self.scheduler.set_timesteps(num_inference_steps)
+
+        start_index = int((len(self.scheduler.timesteps) - 1) * noise_level)
+        timesteps = self.scheduler.timesteps[start_index:]
+        return timesteps
 
     def __init__(
         self,
@@ -137,7 +143,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         guidance_scale=7.5,
         latents=None,
         t_start=None,
-        logger=None,
         generator=None,
     ):
         # number of images being generated
@@ -154,14 +159,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
 
         start_index = (self.scheduler.timesteps >= t_start).nonzero().max()
         denoising_timesteps = self.scheduler.timesteps[start_index:]
-
-        # setup logger
-        if logger is not None:
-            logger.setup_greenlists(
-                denoising_times=self.scheduler.timesteps.tolist(), n_frames=batch_size
-            )
-        else:
-            logger = GrLogger.create_disabled()
 
         # initialize latents from standard normal
         if latents is None:

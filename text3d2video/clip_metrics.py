@@ -1,8 +1,9 @@
-import torch
-from omegaconf import OmegaConf
-from transformers import CLIPModel, CLIPProcessor
+from typing import List
 
-from text3d2video.artifacts.video_artifact import VideoArtifact
+import torch
+from PIL import Image
+from transformers import CLIPModel, CLIPProcessor
+from transformers.models.clip.modeling_clip import CLIPOutput
 
 
 class CLIPMetrics:
@@ -21,24 +22,16 @@ class CLIPMetrics:
         )
         self.processor = CLIPProcessor.from_pretrained(model_repo)
 
-    def _get_clip_output(self, video: VideoArtifact):
-        # get prompt
-        generation_run = video.logged_by()
-        prompt = OmegaConf.create(generation_run.config).prompt
-
-        # get frames
-        frames = video.get_frames()
-
-        inputs = self.processor(text=[prompt], images=frames, return_tensors="pt")
+    def model_forward(self, images: List[Image.Image], texts: List[str]) -> CLIPOutput:
+        inputs = self.processor(text=texts, images=images, return_tensors="pt")
         inputs.to(self.device)
-
         with torch.no_grad():
             outputs = self.model(**inputs)
 
         return outputs
 
-    def prompt_fidelity(self, video: VideoArtifact):
-        outs = self._get_clip_output(video)
+    def prompt_fidelity(self, frames: List[Image.Image], prompt: str):
+        outs = self.model_forward(frames, [prompt])
 
         image_embeds = outs.image_embeds
         text_embed = outs.text_embeds[0]
@@ -53,8 +46,8 @@ class CLIPMetrics:
         average_sim = torch.mean(torch.tensor(similarities)).item()
         return average_sim
 
-    def frame_consistency(self, video: VideoArtifact):
-        outs = self._get_clip_output(video)
+    def frame_consistency(self, frames: List[Image.Image]):
+        outs = self.model_forward(frames, [""])
         image_embeds = outs.image_embeds
 
         similarities = []

@@ -48,3 +48,17 @@ def omegaconf_from_dotdict(d: dict):
 
     dotlist = [f"{k}={v}" for k, v in d.items()]
     return OmegaConf.from_dotlist(dotlist)
+
+
+def get_import_path(obj):
+    """
+    Get the importable path of a Python object.
+    Example: module.submodule.Class.method
+    """
+    module = getattr(obj, "__module__", None)
+    qualname = getattr(obj, "__qualname__", None)
+
+    if module is None or qualname is None:
+        raise ValueError(f"Cannot get import path for object {obj}")
+
+    return f"{module}.{qualname}"
