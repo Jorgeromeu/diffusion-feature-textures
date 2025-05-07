@@ -4,13 +4,11 @@ import torch
 from attr import dataclass
 from jaxtyping import Float
 from PIL import Image
-from pytorch3d.renderer import (
-    FoVPerspectiveCameras,
-)
-from pytorch3d.structures import Meshes
-from torch import Tensor
+from pytorch3d.renderer.mesh.rasterizer import Fragments
+from torch import Generator, Tensor
 from tqdm import tqdm
 
+from text3d2video.artifacts.anim_artifact import AnimSequence
 from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
@@ -19,18 +17,26 @@ from text3d2video.backprojection import (
     aggregate_views_uv_texture,
     aggregate_views_uv_texture_mean,
 )
-from text3d2video.noise_initialization import NoiseInitializer
+from text3d2video.noise_initialization import (
+    UVNoiseInitializer,
+)
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
     make_repeated_uv_texture,
     precompute_rasterization,
     render_depth_map,
+    render_texture,
     shade_meshes,
 )
 from text3d2video.sd_feature_extraction import AttnLayerId
-from text3d2video.util import dict_map
-from text3d2video.utilities.logging import NULL_LOGGER
+from text3d2video.util import dict_map, linear_map
+from text3d2video.utilities.logging import (
+    NULL_LOGGER,
+    setup_greenlists,
+    write_feature_dict,
+    write_feature_frame_dict,
+)
 
 
 # pylint: disable=too-many-instance-attributes
@@ -47,7 +53,6 @@ class GenerativeRenderingConfig:
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
     num_keyframes: int = 3
-    kf_indices: Optional[List[int]] = None  # if None, sample random keyframes
 
 
 @dataclass
@@ -65,11 +70,19 @@ class GrExtractedFeatures:
             return None
 
 
+@dataclass
+class GrCamSeq:
+    seq: AnimSequence
+    projections: List[List[TexelProjection]]
+    fragments: List[List[Fragments]]
+    depth_maps: List[Image.Image]
+
+
 class GenerativeRenderingLogic:
     def __init__(
         self,
         pipe: BaseControlNetPipeline,
-        module_paths: list[str],
+        module_paths: list[str] = [],
         guidance_scale=7.5,
         controlnet_conditioning_scale: float = 1.0,
         mean_features_weight: float = 0.5,
@@ -80,14 +93,14 @@ class GenerativeRenderingLogic:
         self.controlnet_conditioning_scale = controlnet_conditioning_scale
         self.guidance_scale = guidance_scale
         self.mean_features_weight = mean_features_weight
-
+        self.module_paths = module_paths
         # create attn processor
         self.attn_processor = ExtractionInjectionAttn(
             self.pipe.unet,
             do_spatial_post_attn_extraction=do_post_attn_injection,
             do_kv_extraction=do_pre_attn_injection,
             also_attend_to_self=False,
-            feature_blend_alpha=1.0,
+            feature_blend_alpha=0.5,
             kv_extraction_paths=module_paths,
             spatial_post_attn_extraction_paths=module_paths,
         )
@@ -183,6 +196,7 @@ class GenerativeRenderingLogic:
         uncond_kv_features: Dict[str, Float[Tensor, "b t d"]],
         cond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
         uncond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
+        progress: float = 1.0,
     ) -> Tensor:
         latents_duplicated = torch.cat([latents] * 2)
         embeddings = torch.cat([uncond_embeddings, cond_embeddings])
@@ -212,6 +226,8 @@ class GenerativeRenderingLogic:
         noise_pred = self.model_forward(
             latents_duplicated, embeddings, t, depth_maps_duplicated
         )
+
+        self.attn_processor.feature_blend_alpha = progress
 
         # classifier-free guidance
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
@@ -249,15 +265,53 @@ class GenerativeRenderingLogic:
 
         return w_mean * texture_mean + w_inpaint * texture
 
+    def calculate_layer_resolutions(self):
+        layers = [AttnLayerId.parse(path) for path in self.module_paths]
+        layer_resolutions = list(
+            set([layer.resolution(self.pipe.unet) for layer in layers])
+        )
+        layer_resolutions = sorted(layer_resolutions)
+
+        layer_resolution_indices = {
+            layer.module_path(): layer_resolutions.index(
+                layer.resolution(self.pipe.unet)
+            )
+            for layer in layers
+        }
+
+        return layer_resolutions, layer_resolution_indices
+
+    def precompute_seq(self, anim: AnimSequence, resolutions, uv_resolutions):
+        projections, fragments = precompute_rasterization(
+            anim.cams,
+            anim.meshes,
+            anim.verts_uvs,
+            anim.faces_uvs,
+            resolutions,
+            uv_resolutions,
+        )
+
+        depth_maps = render_depth_map(anim.meshes, anim.cams)
+
+        return GrCamSeq(anim, projections, fragments, depth_maps)
+
 
 def sample_keyframe_indices(
     n_frames: int, num_keyframes: int, generator: torch.Generator = None, device="cuda"
 ):
     if num_keyframes > n_frames:
-        raise ValueError("Number of keyframes is greater than number of frames")
+        raise ValueError(
+            f"Number of keyframes ({num_keyframes}) is greater than number of frames ({n_frames})."
+        )
 
     randperm = torch.randperm(n_frames, generator=generator, device=device)
     return randperm[:num_keyframes]
+
+
+@dataclass
+class GenerativeRenderingOutput:
+    images: List[Image.Image]
+    extr_images: Optional[List[Image.Image]] = None
 
 
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
@@ -265,20 +319,18 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
     def __call__(
         self,
         prompt: str,
-        meshes: Meshes,
-        cameras: FoVPerspectiveCameras,
-        verts_uvs: torch.Tensor,
-        faces_uvs: torch.Tensor,
+        anim: AnimSequence,
         conf: GenerativeRenderingConfig,
-        noise_initializer: NoiseInitializer,
-        prompt_suffixes: List[str] = None,
-        generator=None,
-        kf_generator=None,
+        src_anim: Optional[AnimSequence] = None,
+        texture: Optional[Tensor] = None,
         start_noise_level: Optional[float] = 0,
-        start_latents: Optional[Float[Tensor, "b c h w"]] = None,
+        kf_generator: Optional[Generator] = None,
+        generator: Optional[Generator] = None,
         logger=NULL_LOGGER,
     ):
-        n_frames = len(meshes)
+        n_frames = len(anim.cams)
+
+        noise_texture = UVNoiseInitializer(noise_texture_res=120)
 
         # setup GR logic
         gr = GenerativeRenderingLogic(
@@ -292,135 +344,274 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         )
         gr.set_attn_processor()
 
+        use_texture = texture is not None
+
         # configure scheduler
-        timesteps = self.get_partial_timesteps(
-            conf.num_inference_steps, start_noise_level
-        )
+        if use_texture:
+            timesteps = self.get_partial_timesteps(
+                conf.num_inference_steps, start_noise_level
+            )
+        else:
+            timesteps = self.get_partial_timesteps(conf.num_inference_steps, 0)
 
-        # precompute rasterization and texel projection for various resolutions (for different layers)
-        layers = [AttnLayerId.parse(path) for path in conf.module_paths]
-        layer_resolutions = list(set([layer.resolution(self.unet) for layer in layers]))
-        layer_resolutions = sorted(layer_resolutions)
-        raster_resolutions = layer_resolutions
+        setup_greenlists(logger, timesteps, n_frames, n_save_frames=10, n_save_times=10)
 
-        uv_factor = 4
-        uv_resolutions = [int(screen * uv_factor) for screen in layer_resolutions]
+        layer_resolutions, layer_resolution_indices = gr.calculate_layer_resolutions()
+        uv_resolutions = [4 * res for res in layer_resolutions]
 
-        layer_resolution_indices = {
-            layer.module_path(): layer_resolutions.index(layer.resolution(self.unet))
-            for layer in layers
-        }
-
-        projections, fragments = precompute_rasterization(
-            cameras, meshes, verts_uvs, faces_uvs, raster_resolutions, uv_resolutions
-        )
-
-        # augment prompts
-        prompts = [prompt] * n_frames
-        if prompt_suffixes is not None:
-            prompts = [p + s for p, s in zip(prompts, prompt_suffixes)]
+        precomputed = gr.precompute_seq(anim, layer_resolutions, uv_resolutions)
 
         # Get prompt embeddings
-        cond_embeddings, uncond_embeddings = self.encode_prompt(prompts)
+        cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
 
-        # initial latent noise
+        # initialize latents
+        # TODO support taking in the float and the texture and starting denoising from there
+        noise_texture.sample_background(generator)
+        noise_texture.sample_noise_texture(generator)
 
-        if start_latents is not None:
-            latents = start_latents
+        if use_texture:
+            anim_renders = render_texture(
+                anim.meshes, anim.cams, texture, anim.verts_uvs, anim.faces_uvs
+            )
+
+            anim_encoded = self.encode_images(anim_renders)
+            anim_noise = noise_texture.initial_noise(
+                anim.meshes, anim.cams, anim.verts_uvs, anim.faces_uvs
+            )
+
+            for i in range(len(anim_renders)):
+                logger.write("anim_render", anim_renders[i], frame_i=i)
+                logger.write("anim_encoded", anim_encoded[i], frame_i=i)
+
+            anim_latents = self.scheduler.add_noise(
+                anim_encoded, anim_noise, timesteps[0]
+            )
+
         else:
-            latents = noise_initializer.initial_noise(
-                meshes,
-                cameras,
-                verts_uvs,
-                faces_uvs,
+            anim_latents = noise_texture.initial_noise(
+                anim.meshes,
+                anim.cams,
+                anim.verts_uvs,
+                anim.faces_uvs,
                 dtype=self.dtype,
                 device=self.device,
                 generator=generator,
             )
 
-        # chunk indices to use in inference loop
-        chunks_indices = torch.split(torch.arange(0, n_frames), conf.chunk_size)
+        for i in range(len(anim_latents)):
+            logger.write("anim_latent", anim_latents[i], frame_i=i)
 
-        # render depth maps for frames
-        depth_maps = render_depth_map(meshes, cameras, 512)
+        # use kfs/or src seq
+        use_keyframes = src_anim is None
+
+        # initialize latents for extraction frames
+        if not use_keyframes:
+            if use_texture:
+                extr_renders = render_texture(
+                    src_anim.meshes,
+                    src_anim.cams,
+                    texture,
+                    src_anim.verts_uvs,
+                    src_anim.faces_uvs,
+                )
+
+                extr_encoded = self.encode_images(extr_renders)
+
+                for i in range(len(extr_renders)):
+                    logger.write("extr_render", extr_renders[i], extr_frame_i=i)
+                    logger.write("extr_encoded", extr_encoded[i], extr_frame_i=i)
+
+                extr_noise = noise_texture.initial_noise(
+                    src_anim.meshes,
+                    src_anim.cams,
+                    src_anim.verts_uvs,
+                    src_anim.faces_uvs,
+                )
+                extr_latents = self.scheduler.add_noise(
+                    extr_encoded, extr_noise, timesteps[0]
+                )
+
+            else:
+                extr_latents = noise_texture.initial_noise(
+                    src_anim.meshes,
+                    src_anim.cams,
+                    src_anim.verts_uvs,
+                    src_anim.faces_uvs,
+                    dtype=self.dtype,
+                    device=self.device,
+                    generator=generator,
+                )
+
+            for i in range(len(extr_latents)):
+                logger.write("extr_latent", extr_latents[i], extr_frame_i=i)
+
+            precomputed_extraction = gr.precompute_seq(
+                src_anim, layer_resolutions, uv_resolutions
+            )
+
+            extr_prompts = [prompt] * len(src_anim.cams)
+            extr_cond_embs, extr_uncond_embs = self.encode_prompt(extr_prompts)
+
+            extr_depth_maps = precomputed_extraction.depth_maps
+            extr_projections = list(precomputed_extraction.projections.values())
+            extr_fragments = list(precomputed_extraction.fragments.values())
+
+        # chunk indices to use i regeneration
+        chunks_indices = torch.split(torch.arange(0, n_frames), conf.chunk_size)
 
         # denoising loop
         for t in tqdm(timesteps):
-            # Feature Extraction on keyframes
-            if conf.kf_indices is not None:
-                kf_indices = Tensor(conf.kf_indices).long()
-            else:
+            if use_keyframes:
                 kf_indices = sample_keyframe_indices(
                     n_frames, conf.num_keyframes, kf_generator
                 )
 
-            kf_feats = gr.model_forward_extraction(
-                latents[kf_indices],
-                cond_embeddings[kf_indices],
-                uncond_embeddings[kf_indices],
-                [depth_maps[i] for i in kf_indices.tolist()],
+                # get extr_latents/embs from anim_latents/embs
+                extr_latents = anim_latents[kf_indices]
+                extr_cond_embs = cond_embeddings[kf_indices]
+                extr_uncond_embs = uncond_embeddings[kf_indices]
+                extr_depth_maps = [
+                    precomputed.depth_maps[i] for i in kf_indices.tolist()
+                ]
+                extr_projections = [
+                    precomputed.projections[i] for i in kf_indices.tolist()
+                ]
+
+            feats = gr.model_forward_extraction(
+                extr_latents,
+                extr_cond_embs,
+                extr_uncond_embs,
+                extr_depth_maps,
                 t,
             )
 
-            def aggr_kf_features(layer, features):
+            def aggr_feats(layer, features):
                 res_idx = layer_resolution_indices[layer]
                 uv_res = uv_resolutions[res_idx]
-                kf_projections = [projections[i][res_idx] for i in kf_indices.tolist()]
-                return gr.aggregate_features(features, uv_res, kf_projections)
+                projections = [projs[res_idx] for projs in extr_projections]
+                return gr.aggregate_features(features, uv_res, projections)
 
-            textures_uncond = dict_map(kf_feats.uncond_post_attn, aggr_kf_features)
-            textures_cond = dict_map(kf_feats.cond_post_attn, aggr_kf_features)
+            textures_uncond = dict_map(feats.uncond_post_attn, aggr_feats)
+            textures_cond = dict_map(feats.cond_post_attn, aggr_feats)
 
-            # denoising in chunks
+            # write extracted features
+            write_feature_dict(logger, "kvs_cond", feats.cond_kv, t)
+            write_feature_frame_dict(
+                logger,
+                "feats_cond",
+                feats.cond_post_attn,
+                t,
+                torch.arange(0, len(extr_latents)),
+                frame_key="extr_frame_i",
+            )
+
+            # write feature texture
+            write_feature_dict(logger, "feat_tex_cond", textures_cond, t)
+
+            progress = self.denoising_progress(t)
+
+            feature_alpha = linear_map(
+                progress, from_min=0, from_max=1, to_min=1, to_max=0.3
+            )
+            print(feature_alpha)
+
+            # denoise anim latents
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
-                # render chunk post-attn features
+                # render chunk feats
+                chunk_frags = [
+                    precomputed.fragments[i] for i in chunk_frame_indices.tolist()
+                ]
+
                 def render_chunk(layer, uv_map):
-                    chunk_meshes = meshes[chunk_frame_indices]
+                    chunk_meshes = anim.meshes[chunk_frame_indices]
                     res_idx = layer_resolution_indices[layer]
-
-                    chunk_frags = [
-                        fragments[i][res_idx] for i in chunk_frame_indices.tolist()
-                    ]
-
+                    frags = [f[res_idx] for f in chunk_frags]
                     texture = make_repeated_uv_texture(
-                        uv_map, faces_uvs, verts_uvs, sampling_mode="nearest", N=1
+                        uv_map,
+                        anim.faces_uvs,
+                        anim.verts_uvs,
+                        sampling_mode="nearest",
+                        N=1,
                     )
                     shader = TextureShader()
-
-                    return shade_meshes(shader, texture, chunk_meshes, chunk_frags)
+                    return shade_meshes(shader, texture, chunk_meshes, frags)
 
                 renders_uncond = dict_map(textures_uncond, render_chunk)
                 renders_cond = dict_map(textures_cond, render_chunk)
 
-                # Diffusion step with pre-and post-attn injection
+                write_feature_frame_dict(
+                    logger, "renders_cond", renders_cond, t, chunk_frame_indices
+                )
+
+                # model forward with pre-and post-attn injection
                 noise_pred = gr.model_forward_injection(
-                    latents[chunk_frame_indices],
+                    anim_latents[chunk_frame_indices],
                     cond_embeddings[chunk_frame_indices],
                     uncond_embeddings[chunk_frame_indices],
-                    [depth_maps[i] for i in chunk_frame_indices.tolist()],
+                    [precomputed.depth_maps[i] for i in chunk_frame_indices.tolist()],
                     t,
-                    kf_feats.cond_kv,
-                    kf_feats.uncond_kv,
+                    feats.cond_kv,
+                    feats.uncond_kv,
                     renders_cond,
                     renders_uncond,
+                    progress=feature_alpha,
                 )
 
                 noise_preds.append(noise_pred)
 
-            # concatenate predictions
             noise_preds = torch.cat(noise_preds, dim=0)
-
-            # update latents
-            latents = self.scheduler.step(
-                noise_preds, t, latents, generator=generator
+            anim_latents = self.scheduler.step(
+                noise_preds, t, anim_latents, generator=generator
             ).prev_sample
 
-        # decode latents in chunks
-        decoded_imgs = []
-        for chunk_frame_indices in chunks_indices:
-            chunk_latents = latents[chunk_frame_indices]
-            chunk_images = self.decode_latents(chunk_latents, generator)
-            decoded_imgs.extend(chunk_images)
+            # denoise extraction latents
+            if not use_keyframes:
 
-        return decoded_imgs
+                def render_extr_feats(layer, uv_map):
+                    extr_meshes = src_anim.meshes
+                    res_idx = layer_resolution_indices[layer]
+                    frags = [f[res_idx] for f in extr_fragments]
+                    texture = make_repeated_uv_texture(
+                        uv_map,
+                        anim.faces_uvs,
+                        anim.verts_uvs,
+                        sampling_mode="nearest",
+                        N=1,
+                    )
+                    shader = TextureShader()
+                    return shade_meshes(shader, texture, extr_meshes, frags)
+
+                renders_uncond = dict_map(textures_uncond, render_extr_feats)
+                renders_cond = dict_map(textures_cond, render_extr_feats)
+
+                # model forward with pre-and post-attn injection
+                noise_pred = gr.model_forward_injection(
+                    extr_latents,
+                    extr_cond_embs,
+                    extr_uncond_embs,
+                    extr_depth_maps,
+                    t,
+                    feats.cond_kv,
+                    feats.uncond_kv,
+                    renders_cond,
+                    renders_uncond,
+                    progress=feature_alpha,
+                )
+
+                extr_latents = self.scheduler.step(
+                    noise_pred, t, extr_latents, generator=generator
+                ).prev_sample
+
+        ims = self.decode_latents(
+            anim_latents, chunk_size=conf.chunk_size, generator=generator
+        )
+
+        if not use_keyframes:
+            extr_ims = self.decode_latents(
+                extr_latents, chunk_size=conf.chunk_size, generator=generator
+            )
+        else:
+            extr_ims = None
+
+        return GenerativeRenderingOutput(images=ims, extr_images=extr_ims)

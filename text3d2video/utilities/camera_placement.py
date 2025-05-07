@@ -49,21 +49,13 @@ def front_facing_extrinsics(degrees=0, xs=0, ys=0, zs=1.5):
     return torch.stack(rs_w2c), torch.stack(ts_w2c)
 
 
-def turntable_extrinsics(
-    dists=2,
-    angles=0,
-    elevs=0,
-    vertical=False,
-) -> FoVPerspectiveCameras:
+def turntable_extrinsics(dists=2, angles=0, elevs=0) -> FoVPerspectiveCameras:
     dists, angles, elevs = broadcast_inputs(dists, angles, elevs)
-    n = len(angles)
 
-    azim = angles
+    # target = torch.Tensor([0, 0.3, 0])
+    # target = repeat(target, "d -> b d", b=dists.shape[0])
 
-    if vertical:
-        azim, elevs = elevs, azim
-
-    R, T = look_at_view_transform(dists, elevs, azim)
+    R, T = look_at_view_transform(dists, elevs, angles)
     return R, T
 
 

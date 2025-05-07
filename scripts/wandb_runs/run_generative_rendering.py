@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 
 import torch
+from git import Optional
 
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
     GenerativeRenderingPipeline,
@@ -23,6 +23,9 @@ class RunGenerativeRenderingConfig:
     animation_tag: str
     generative_rendering: GenerativeRenderingConfig
     model: ModelConfig
+    src_anim_tag: Optional[str] = None
+    texture_tag: Optional[str] = None
+    start_noise_level: float = 0.0
     seed: int = 0
     kf_seed: int = 0
     out_artifact: str = "video"
@@ -39,8 +42,25 @@ def run_generative_rendering(
     animation = AnimationArtifact.from_wandb_artifact_tag(
         cfg.animation_tag, download=True
     )
-    cam_frames, mesh_frames = animation.load_frames()
-    verts_uvs, faces_uvs = animation.uv_data()
+    anim = animation.read_anim_seq()
+
+    # read source animation
+    if cfg.src_anim_tag is not None:
+        src_animation = AnimationArtifact.from_wandb_artifact_tag(
+            cfg.src_anim_tag, download=True
+        )
+        src_anim = src_animation.read_anim_seq()
+    else:
+        src_anim = None
+
+    # read texture
+    if cfg.texture_tag is not None:
+        texture = AnimationArtifact.from_wandb_artifact_tag(
+            cfg.texture_tag, download=True
+        )
+        texture = texture.read_anim_seq()
+    else:
+        texture = None
 
     # load pipeline
     device = torch.device("cuda")
@@ -48,28 +68,21 @@ def run_generative_rendering(
         GenerativeRenderingPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo
     )
 
-    noise_initializer = UVNoiseInitializer(noise_texture_res=120)
-
-    # set seed
-    generator = torch.Generator(device=device)
-    generator.manual_seed(cfg.seed)
-
-    # set kf seed
-    kf_generator = torch.Generator(device=device)
-    kf_generator.manual_seed(cfg.kf_seed)
+    # set seeds
+    generator = torch.Generator(device=device).manual_seed(cfg.seed)
+    kf_generator = torch.Generator(device=device).manual_seed(cfg.kf_seed)
 
     # inference
     video_frames = pipe(
         cfg.prompt,
-        mesh_frames,
-        cam_frames,
-        verts_uvs,
-        faces_uvs,
+        anim,
         conf=cfg.generative_rendering,
-        noise_initializer=noise_initializer,
+        src_anim=src_anim,
+        texture=None,
+        start_noise_level=cfg.start_noise_level,
         generator=generator,
         kf_generator=kf_generator,
-    )
+    ).images
 
     # save video
     video_artifact = VideoArtifact.create_empty_artifact("video")

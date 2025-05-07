@@ -1,3 +1,4 @@
+from itertools import chain
 from typing import List
 
 import torch
@@ -92,27 +93,33 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
         latents: torch.FloatTensor,
         generator=None,
         output_type="pil",
+        chunk_size=10,
     ):
         # scale latents
         scaling_factor = self.vae.config.scaling_factor
         latents_scaled = latents / scaling_factor
 
-        # decode
-        images = self.vae.decode(
-            latents_scaled,
-            return_dict=False,
-            generator=generator,
-        )[0]
+        decoded_images = []
+        for chunk in split_into_chunks(latents_scaled, chunk_size):
+            # decode latents
+            images = self.vae.decode(
+                chunk,
+                return_dict=False,
+                generator=generator,
+            )[0]
 
-        # postprocess images
-        images = self.image_processor.postprocess(
-            images, output_type=output_type, do_denormalize=[True] * len(latents)
-        )
+            # postprocess images
+            images = self.image_processor.postprocess(
+                images, output_type=output_type, do_denormalize=[True] * len(chunk)
+            )
+            decoded_images.append(images)
+
+        images = list(chain.from_iterable(decoded_images))
 
         return images
 
     def encode_images(
-        self, images: List[Image], generator=None, chunk_size=5
+        self, images: List[Image], generator=None, chunk_size=10
     ) -> torch.FloatTensor:
         images_chunks = split_into_chunks(images, chunk_size)
 
@@ -192,4 +199,4 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
         """
         timesteps = self.scheduler.timesteps
         index = (timesteps == t).nonzero(as_tuple=True)[0].item()
-        return 1 - (index / (len(timesteps) - 1))
+        return index / (len(timesteps) - 1)

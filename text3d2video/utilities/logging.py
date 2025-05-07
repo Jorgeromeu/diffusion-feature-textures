@@ -363,3 +363,33 @@ def setup_greenlists(
         logger.key_greenlists["frame_i"] = ordered_sample(
             range(n_frames), n_save_frames
         )
+
+
+def write_feature_frame_dict(
+    logger,
+    name: str,
+    features: Dict[str, Tensor],
+    t,
+    frame_indices: list[int],
+    frame_key="frame_i",
+):
+    keys_base = {"t": t}
+
+    for layer, feature_maps in features.items():
+        for i, feature_map in enumerate(feature_maps):
+            frame_i = frame_indices[i]
+            keys = keys_base | {"layer": layer, frame_key: frame_i}
+            logger.write(name, feature_map, **keys)
+
+
+def write_feature_dict(
+    logger,
+    name: str,
+    textures: Dict[str, Tensor],
+    t,
+):
+    keys_base = {"t": t}
+
+    for layer, texture in textures.items():
+        keys = keys_base | {"layer": layer}
+        logger.write(name, texture, **keys)

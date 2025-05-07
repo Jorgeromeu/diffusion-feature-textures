@@ -12,7 +12,7 @@ from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.backprojection import (
     aggregate_views_uv_texture_mean,
-    compute_texel_projection,
+    compute_texel_projections,
 )
 from text3d2video.pipelines.pipeline_utils import (
     ModelConfig,
@@ -67,11 +67,8 @@ def make_texture(cfg: MakeTextureConfig, run_config: wbu.RunConfig):
     torch.set_grad_enabled(False)
 
     # read animation
-    animation = AnimationArtifact.from_wandb_artifact_tag(
-        cfg.animation_tag, download=True
-    )
-    cams, meshes = animation.load_frames()
-    verts_uvs, faces_uvs = animation.uv_data()
+    anim = AnimationArtifact.from_wandb_artifact_tag(cfg.animation_tag, download=True)
+    seq = anim.read_anim_seq()
 
     # load pipeline
     device = torch.device("cuda")
@@ -85,11 +82,8 @@ def make_texture(cfg: MakeTextureConfig, run_config: wbu.RunConfig):
 
     images = pipe(
         cfg.prompt,
-        meshes,
-        cams,
-        verts_uvs,
-        faces_uvs,
-        texgen_config=cfg.texgen,
+        seq,
+        conf=cfg.texgen,
         generator=generator,
     )
 
@@ -98,12 +92,9 @@ def make_texture(cfg: MakeTextureConfig, run_config: wbu.RunConfig):
 
     # project to texture
     texture_res = 1000
-    projections = [
-        compute_texel_projection(
-            m, c, verts_uvs, faces_uvs, texture_res, raster_res=2000
-        )
-        for m, c in zip(meshes, cams)
-    ]
+    projections = compute_texel_projections(
+        seq.meshes, seq.cams, seq.verts_uvs, seq.faces_uvs, texture_res, raster_res=2000
+    )
 
     texturing_frames_pt = [TF.to_tensor(f) for f in images]
     texturing_frames_pt = torch.stack(texturing_frames_pt).cuda()

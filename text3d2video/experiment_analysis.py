@@ -34,11 +34,14 @@ class GrData:
     depths: List[Image] = None
 
     @classmethod
-    def from_gr_run(cls, run: Run):
+    def from_gr_run(
+        cls, run: Run, with_video: bool = True, with_anim: bool = True
+    ) -> "GrData":
         # Read video
-        video = wbu.logged_artifacts(run, "video")[0]
-        video = VideoArtifact.from_wandb_artifact(video)
-        frames = video.read_frames()
+        if with_video:
+            video = wbu.logged_artifacts(run, "video")[0]
+            video = VideoArtifact.from_wandb_artifact(video)
+            frames = video.read_frames()
 
         # Read config
         config: RunGenerativeRenderingConfig = OmegaConf.create(run.config)
@@ -49,15 +52,16 @@ class GrData:
         # get gr config
         gr_config = config.generative_rendering
 
-        # read animation
-        anim = wbu.used_artifacts(run, "animation")[0]
-        anim = AnimationArtifact.from_wandb_artifact(anim)
-        cams, meshes = anim.load_frames()
-        verts_uvs, faces_uvs = anim.uv_data()
+        if with_anim:
+            # read animation
+            anim = wbu.used_artifacts(run, "animation")[0]
+            anim = AnimationArtifact.from_wandb_artifact(anim)
+            cams, meshes = anim.load_frames()
+            verts_uvs, faces_uvs = anim.uv_data()
 
-        # render depth maps and uv maps
-        depths = render_depth_map(meshes, cams)
-        uvs = render_rgb_uv_map(meshes, cams, verts_uvs, faces_uvs)
+            # render depth maps and uv maps
+            depths = render_depth_map(meshes, cams)
+            uvs = render_rgb_uv_map(meshes, cams, verts_uvs, faces_uvs)
 
         return cls(
             frames=frames,

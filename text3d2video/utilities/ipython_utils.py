@@ -3,11 +3,15 @@ from typing import List
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from IPython.display import Video
 from matplotlib.axes import Axes
-from moviepy.editor import VideoClip
 from PIL import Image
 from torch import Tensor
+
+
+def subplots_grid(n_rows, n_cols, scale=2, squeeze=False):
+    return plt.subplots(
+        n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale), squeeze=squeeze
+    )
 
 
 def display_ims_grid(
@@ -103,16 +107,6 @@ def view_pointcloud_orthographic(
     ax.set_aspect("equal")
     ax.set_xlabel(dim_names[horizontal_dim])
     ax.set_ylabel(dim_names[vertical_dim])
-
-
-def display_vid(clip: VideoClip, height=300):
-    clip.write_videofile(
-        "__temp__.mp4",
-        verbose=False,
-        logger=None,
-    )
-
-    return Video("__temp__.mp4", embed=True, height=height)
 
 
 def to_pil_image(feature_map: torch.Tensor, clip=False):

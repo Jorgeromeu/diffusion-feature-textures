@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -239,21 +239,30 @@ def create_fresh_dir(dir_path: str) -> str:
     return Path(dir_path)
 
 
-class PrintCols:
-    def __init__(self, cols: List[str], widths: List[int] = None):
-        self.cols = cols
+def concat_lists(lists: List[List]) -> List:
+    """
+    Concatenate a list of lists into a single list.
+    """
+    return [item for sublist in lists for item in sublist]
 
-        if widths is None:
-            self.widths = [10 for col in cols]
 
-        assert len(cols) == len(widths), "cols and widths must have the same length"
-        self.widths = widths
+def augment_prompt(
+    prompt: str, n: int, suffixes: Optional[List[str]] = None
+) -> List[str]:
+    prompts = [prompt] * n
+    if suffixes is not None:
+        assert len(suffixes) == n, "suffixes must have the same length as n"
+        prompts = [f"{prompt} {suffix}" for suffix in suffixes]
 
-    def _make_row(self, cells: List[str]):
-        return " ".join(f"{cell:<{width}}" for cell, width in zip(cells, self.widths))
+    return prompts
 
-    def print_header(self):
-        print(self._make_row(self.cols))
 
-    def print_row(self, *row: List[str]):
-        print(self._make_row(row))
+def linear_map(x, from_min, from_max, to_min, to_max):
+    return to_min + (x - from_min) * (to_max - to_min) / (from_max - from_min)
+
+
+def rgb_to_luminance(r, g, b):
+    """
+    Convert RGB values (0,1) to luminance
+    """
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b

@@ -21,7 +21,7 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
 from text3d2video.pipelines.pipeline_utils import ModelConfig
-from text3d2video.pipelines.texgen_pipeline import TexGenConfig
+from text3d2video.pipelines.texturing_pipeline import TexturingConfig
 from text3d2video.rendering import render_rgb_uv_map, render_texture
 from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
 from text3d2video.utilities.video_comparison import video_grid
@@ -86,7 +86,7 @@ def texgen_vs_gr_experiment(config: TexGenVsGrExperimentConfig):
         num_inference_steps=15,
     )
 
-    controlnet_overrides = omegaconf_from_dotdict(
+    omegaconf_from_dotdict(
         {
             "generative_rendering": OmegaConf.structured(
                 GenerativeRenderingConfig(
@@ -96,12 +96,11 @@ def texgen_vs_gr_experiment(config: TexGenVsGrExperimentConfig):
         }
     )
 
-    texgen_config = TexGenConfig(
+    texgen_config = TexturingConfig(
         num_inference_steps=10,
         guidance_scale=7.5,
         controlnet_conditioning_scale=1.0,
         module_paths=decoder_paths,
-        quality_update_factor=1.2,
         uv_res=512,
     )
 
@@ -238,8 +237,8 @@ def comparison_vid(data):
     controlnet_vid = pil_frames_to_clip(data.controlnet_frames)
     uv_vid = pil_frames_to_clip(data.uvs)
     texture_vid = pil_frames_to_clip(data.renders)
-    texture_anim_vid = pil_frames_to_clip(data.texture_anim_frames)
-    texturing_vid = pil_frames_to_clip(data.texturing_frames)
+    pil_frames_to_clip(data.texture_anim_frames)
+    pil_frames_to_clip(data.texturing_frames)
 
     videos = [
         (uv_vid, "UV"),

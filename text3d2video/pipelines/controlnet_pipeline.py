@@ -124,7 +124,7 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
             latents_duplicated,
             both_embeddings,
             t,
-            depth_maps,
+            depth_maps * 2,
             controlnet_conditioning_scale,
         )
 
@@ -141,8 +141,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         num_inference_steps=30,
         controlnet_conditioning_scale=1.0,
         guidance_scale=7.5,
-        latents=None,
-        t_start=None,
         generator=None,
     ):
         # number of images being generated
@@ -154,18 +152,12 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         # set timesteps
         self.scheduler.set_timesteps(num_inference_steps)
 
-        if t_start is None:
-            t_start = self.scheduler.timesteps[0]
-
-        start_index = (self.scheduler.timesteps >= t_start).nonzero().max()
-        denoising_timesteps = self.scheduler.timesteps[start_index:]
-
         # initialize latents from standard normal
-        if latents is None:
-            latents = self.prepare_latents(batch_size, generator=generator)
+        latents = self.prepare_latents(batch_size, generator=generator)
+        timesteps = self.scheduler.timesteps
 
         # denoising loop
-        for t in tqdm(denoising_timesteps):
+        for t in tqdm(timesteps):
             latents = self.scheduler.scale_model_input(latents, t)
 
             noise_pred = self.model_forward_cfg(

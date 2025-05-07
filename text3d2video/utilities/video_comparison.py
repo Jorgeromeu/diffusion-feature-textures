@@ -2,15 +2,16 @@ from dataclasses import dataclass
 from typing import List
 
 import numpy as np
+from IPython.display import Video
 from moviepy.editor import (
     ColorClip,
     CompositeVideoClip,
     ImageSequenceClip,
     TextClip,
+    VideoClip,
     clips_array,
 )
 
-from text3d2video.utilities.ipython_utils import display_vid
 from text3d2video.utilities.video_util import extend_clip_repeat
 
 
@@ -162,9 +163,30 @@ def video_grid(
     return array_clip
 
 
+def display_vid(clip: VideoClip, height=300, title=None):
+    if title:
+        clip = add_title_to_clip(clip, title)
+
+    clip.write_videofile(
+        "__temp__.mp4",
+        verbose=False,
+        logger=None,
+    )
+
+    return Video("__temp__.mp4", embed=True, height=height)
+
+
 def display_vids(
-    clips: List[ImageSequenceClip], titles: List[str] = None, title=None, height=300
+    clips: List[ImageSequenceClip],
+    titles: List[str] = None,
+    title=None,
+    height=300,
+    match_height=True,
 ):
+    if match_height:
+        max_height = max([v.size[1] for v in clips])
+        clips = [v.resize(height=max_height) for v in clips]
+
     videos = [clips]
     clip = video_grid(videos, x_labels=titles, pad_video_lengths=True)
 
