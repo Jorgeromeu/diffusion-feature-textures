@@ -65,6 +65,14 @@ class AnimationArtifact(ArtifactWrapper):
         torch.save(verts_uvs, self._verts_uvs_path())
         torch.save(faces_uvs, self._faces_uvs_path())
 
+    def write_anim_seq(self, seq: AnimSequence):
+        """
+        Writes the animation sequence to the artifact.
+        :param seq: AnimSequence object
+        """
+        self.write_frames(seq.cams, seq.meshes)
+        self.write_uv_data(seq.verts_uvs, seq.faces_uvs)
+
     # reading
 
     def frame_indices(self, sample_n=None):

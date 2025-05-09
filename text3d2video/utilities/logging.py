@@ -385,11 +385,11 @@ def write_feature_frame_dict(
 def write_feature_dict(
     logger,
     name: str,
-    textures: Dict[str, Tensor],
+    features: Dict[str, Tensor],
     t,
 ):
     keys_base = {"t": t}
 
-    for layer, texture in textures.items():
+    for layer, texture in features.items():
         keys = keys_base | {"layer": layer}
         logger.write(name, texture, **keys)

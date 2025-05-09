@@ -314,6 +314,69 @@ class GenerativeRenderingOutput:
     extr_images: Optional[List[Image.Image]] = None
 
 
+class RgbExtractionPipeline(BaseControlNetPipeline):
+    @torch.no_grad()
+    def __call__(
+        self,
+        prompt: str,
+        anim: AnimSequence,
+        src_frames: List[Image.Image],
+        generator=None,
+    ):
+        n_frames = len(anim)
+
+        cond_embs, uncond_embs = self.encode_prompt([prompt] * n_frames)
+
+        latents = self.prepare_latents(n_frames, generator)
+
+        self.scheduler.set_timesteps(10)
+
+        depth_maps = anim.render_depth_maps()
+
+        src_latents = self.encode_images(src_frames)
+        src_noise = torch.randn_like(src_latents)
+
+        decoder_paths = [
+            "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
+            "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
+            "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
+            "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
+            "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
+            "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
+            "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
+            "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
+            "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
+        ]
+
+        gr = GenerativeRenderingLogic(self, module_paths=decoder_paths)
+        gr.set_attn_processor()
+
+        for t in tqdm(self.scheduler.timesteps):
+            src_noisy = self.scheduler.add_noise(src_latents, src_noise, t)
+
+            feats = gr.model_forward_extraction(
+                src_noisy, cond_embs, uncond_embs, depth_maps, t
+            )
+
+            noise_pred = gr.model_forward_injection(
+                latents,
+                cond_embs,
+                uncond_embs,
+                depth_maps,
+                t,
+                {},
+                {},
+                feats.cond_post_attn,
+                feats.uncond_post_attn,
+            )
+
+            latents = self.scheduler.step(
+                noise_pred, t, latents, generator=generator
+            ).prev_sample
+
+        return self.decode_latents(latents, generator=generator)
+
+
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
     @torch.no_grad()
     def __call__(

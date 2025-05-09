@@ -231,16 +231,6 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
         if injected_qrys is not None:
             qry = blend_feature_images(qry, injected_qrys)
 
-        # self.attn_writer.write_qkv(
-        #     qry,
-        #     key,
-        #     val,
-        #     t=self.cur_timestep,
-        #     layer=self._cur_module_path,
-        #     n_chunks=self.n_chunks,
-        #     frame_indices=self.frame_indices,
-        # )
-
         attn_out = memory_efficient_attention(attn, key, qry, val, attention_mask)
 
         # inject post attn features

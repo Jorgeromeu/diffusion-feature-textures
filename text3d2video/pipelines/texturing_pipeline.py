@@ -27,7 +27,11 @@ from text3d2video.rendering import (
     render_texture,
 )
 from text3d2video.util import augment_prompt, chunk_dim
-from text3d2video.utilities.logging import NULL_LOGGER, setup_greenlists
+from text3d2video.utilities.logging import (
+    NULL_LOGGER,
+    setup_greenlists,
+    write_feature_dict,
+)
 
 
 @dataclass
@@ -71,7 +75,7 @@ class TexturingLogic:
         self.attn_processor = FinalAttnProcessor(
             self.pipe.unet,
             do_kv_extraction=True,
-            also_attend_to_self=False,
+            also_attend_to_self=True,
             attend_to_injected=True,
             kv_extraction_paths=module_paths,
         )
@@ -263,7 +267,7 @@ class TexturingLogic:
             update_masks=update_masks,
         )
 
-    def multiview_denoising(
+    def attn_guided_mv_denoising(
         self,
         latents,
         cond_embeddings,
@@ -279,10 +283,10 @@ class TexturingLogic:
         verts_uvs = cam_seq.verts_uvs
         faces_uvs = cam_seq.faces_uvs
 
-        blended_latents = []
+        updated_latents = []
 
-        ref_kvs_cond = None
-        ref_kvs_uncond = None
+        ref_kvs_cond = {}
+        ref_kvs_uncond = {}
 
         n_views = len(cam_seq.cams)
         for i in range(n_views):
@@ -303,25 +307,32 @@ class TexturingLogic:
             rendered_noisy = self.pipe.scheduler.add_noise(rendered_latent, noise, t)[0]
 
             # blend according to mask
-            blended = latent * mask_i + rendered_noisy * (1 - mask_i)
-            blended = blended.to(latent)
-            blended = blended.unsqueeze(0)
+            updated = latent * mask_i + rendered_noisy * (1 - mask_i)
+            updated = updated.to(latent)
+            updated = updated.unsqueeze(0)
 
             if i == 0:
-                blended = latent.unsqueeze(0)
+                updated = latent.unsqueeze(0)
 
             # noise pred
             model_out = self.model_forward_guided_kvs(
-                blended,
+                updated,
                 cond_embeddings[[i]],
                 uncond_embeddings[[i]],
                 t,
                 depth_maps=[depth],
                 injected_kvs_cond=ref_kvs_cond,
                 injected_kvs_uncond=ref_kvs_uncond,
+                extract_kvs=True,
             )
 
             noise_pred = model_out.noise_pred
+
+            # WRITE KVS
+            if len(ref_kvs_cond) > 0:
+                key = list(ref_kvs_cond.keys())[-1]
+                kvs = ref_kvs_cond[key]
+                logger.write("kvs", kvs, t=t, frame_i=i)
 
             if i == 0:
                 ref_kvs_cond = model_out.extracted_kvs_cond
@@ -329,7 +340,7 @@ class TexturingLogic:
 
             # get clean image
             clean_im = self.pipe.scheduler.step(
-                noise_pred, t, blended
+                noise_pred, t, updated
             ).pred_original_sample
             clean_im_rgb = self.pipe.decode_latents(
                 clean_im, output_type="pt", generator=generator
@@ -345,11 +356,11 @@ class TexturingLogic:
                 proj,
             )
 
-            blended_latents.append(blended[0])
+            updated_latents.append(updated[0])
 
-        blended_latents = torch.stack(blended_latents, dim=0)
+        updated_latents = torch.stack(updated_latents, dim=0)
 
-        return blended_latents, clean_tex
+        return updated_latents, clean_tex
 
     def render_noise_preds(
         self,
@@ -396,6 +407,7 @@ class TexturingConfig:
     controlnet_conditioning_scale: float = 1.0
     uv_res: int = 600
     module_paths: List[str] = []
+    quality_factor: float = 1.5
 
 
 class TexturingPipeline(BaseControlNetPipeline):
@@ -418,6 +430,8 @@ class TexturingPipeline(BaseControlNetPipeline):
             uv_res=conf.uv_res,
             guidance_scale=conf.guidance_scale,
             controlnet_conditioning_scale=conf.controlnet_conditioning_scale,
+            module_paths=conf.module_paths,
+            quality_factor=conf.quality_factor,
         )
 
         # configure scheduler
@@ -456,9 +470,11 @@ class TexturingPipeline(BaseControlNetPipeline):
         clean_tex = torch.zeros(conf.uv_res, conf.uv_res, 3).cuda()
 
         # denoising loop
-        for i, t in enumerate(tqdm(timesteps)):
+        for t in tqdm(timesteps):
+            # clean_tex = torch.zeros_like(clean_tex)
+
             # Stage 1: autoregressively denoise to get denoised texture pred
-            updated_latents, clean_tex = method.multiview_denoising(
+            updated_latents, clean_tex = method.attn_guided_mv_denoising(
                 latents,
                 cond_embeddings,
                 uncond_embeddings,
@@ -471,54 +487,19 @@ class TexturingPipeline(BaseControlNetPipeline):
             logger.write("clean_tex", clean_tex, t=t)
 
             # update latents
-            # latents = updated_latents
+            latents = updated_latents
 
             # Stage 2: obtain noise predictions
             rendered_noise_pred = method.render_noise_preds(
                 clean_tex,
-                latents,
+                updated_latents,
                 t,
                 cam_seq,
                 generator=generator,
             )
-
-            latents_duplicated = torch.cat([latents] * 2)
-            both_embeddings = torch.cat([cond_embeddings, uncond_embeddings])
-            noise_pred = self.model_forward(
-                latents_duplicated,
-                both_embeddings,
-                t,
-                cam_seq.depth_maps * 2,
-            )
-
-            noise_cond, noise_uncond = noise_pred.chunk(2)
-
-            w = 7.5
-            noise_tex_cond = 1 / w * (rendered_noise_pred - noise_uncond) + noise_uncond
-
-            # 0 at start, 1 at end
-            progress = self.noise_variance(t)
-
-            w_texture = w * progress
-            w_text = w * (1 - progress)
-
-            noise_pred = (
-                noise_uncond
-                + w_texture * (noise_tex_cond - noise_uncond)
-                + w_text * (noise_cond - noise_uncond)
-            )
-
-            # noise_pred = rendered_noise_pred
+            noise_pred = rendered_noise_pred
 
             # denoise latents
-            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+            latents = self.scheduler.step(noise_pred, t, updated_latents).prev_sample
 
-        # decode latents in chunks
-        decoded_imgs = []
-        chunks_indices = torch.split(torch.arange(0, n_frames), 5)
-        for chunk_frame_indices in chunks_indices:
-            chunk_latents = latents[chunk_frame_indices]
-            chunk_images = self.decode_latents(chunk_latents, generator)
-            decoded_imgs.extend(chunk_images)
-
-        return decoded_imgs
+        return self.decode_latents(latents, generator=generator)

@@ -1,6 +1,7 @@
 from typing import List
 
 from attr import dataclass
+from hydra.utils import get_method
 from omegaconf import DictConfig, OmegaConf
 from pytorch3d.renderer.cameras import CamerasBase
 from pytorch3d.structures import Meshes
@@ -21,8 +22,7 @@ from wandb.apis.public import Run
 class Scene:
     animation_tag: str
     texturing_tag: str
-    video_prompt: str
-    texture_prompt: str
+    prompt: str
 
 
 @dataclass
@@ -44,7 +44,6 @@ def texture_identifier(prompt: str, texture_tag: str):
 
 def get_texture_runs(config: BenchmarkConfig):
     decoder_paths = [
-        "mid_block.attentions.0.transformer_blocks.0.attn1",
         "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
         "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
         "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
@@ -59,7 +58,7 @@ def get_texture_runs(config: BenchmarkConfig):
     # Get set of all textures to generate
     texture_scenes = set()
     for s in config.scenes:
-        texture_scenes.add((s.texturing_tag, s.texture_prompt))
+        texture_scenes.add((s.texturing_tag, s.prompt))
 
     make_texture_runs = dict()
     texgen_config = TexturingConfig(module_paths=decoder_paths)
@@ -89,11 +88,11 @@ def benchmark(config: BenchmarkConfig):
     specs = []
     for method in config.methods:
         for scene in config.scenes:
-            texture_id = texture_identifier(scene.texture_prompt, scene.texturing_tag)
+            texture_id = texture_identifier(scene.prompt, scene.texturing_tag)
 
             scene_overrides = omegaconf_from_dotdict(
                 {
-                    "prompt": scene.video_prompt,
+                    "prompt": scene.prompt,
                     "animation_tag": scene.animation_tag,
                 }
             )
@@ -103,7 +102,9 @@ def benchmark(config: BenchmarkConfig):
                 scene_overrides["texture_tag"] = f"{texture_id}:latest"
 
             overriden = OmegaConf.merge(method.base_config, scene_overrides)
-            run_spec = wbu.RunSpec(method.name, method, overriden)
+
+            fun = get_method(method.fun_path)
+            run_spec = wbu.RunSpec(method.name, fun, overriden)
 
             # conditionally add texture dependency
             if uses_texture:
@@ -113,9 +114,6 @@ def benchmark(config: BenchmarkConfig):
             specs.append(run_spec)
 
     return make_texture_runs + specs
-
-
-# Analysis
 
 
 def split_runs(runs: list[Run]):
