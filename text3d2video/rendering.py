@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import List, Tuple
 
 import torch
@@ -17,11 +16,8 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.structures import Meshes
 from torch import Tensor, nn
 
-from text3d2video.backprojection import (
-    compute_texel_projection,
-    update_uv_texture,
-)
 from text3d2video.util import sample_feature_map_ndc
+from text3d2video.utilities.ipython_utils import display_ims
 
 
 class TextureShader(nn.Module):
@@ -165,49 +161,6 @@ def make_repeated_uv_texture(
         extended_verts_uvs,
         sampling_mode=sampling_mode,
     )
-
-
-# TODO move to Generative Rendering
-def precompute_rasterization(
-    cameras, meshes, vert_uvs, faces_uvs, render_resolutions, texture_resolutions
-):
-    projections = defaultdict(lambda: dict())
-    fragments = defaultdict(lambda: dict())
-
-    for frame_idx in range(len(cameras)):
-        cam = cameras[frame_idx]
-        mesh = meshes[frame_idx]
-
-        for res_i in range(len(render_resolutions)):
-            render_res = render_resolutions[res_i]
-            texture_res = texture_resolutions[res_i]
-
-            # project UVs to camera
-            projection = compute_texel_projection(
-                mesh,
-                cam,
-                vert_uvs,
-                faces_uvs,
-                raster_res=texture_res * 10,
-                texture_res=texture_res,
-            )
-
-            # rasterize
-            rasterizer = make_mesh_rasterizer(
-                resolution=render_res,
-                faces_per_pixel=1,
-                blur_radius=0,
-                bin_size=0,
-            )
-            frame_fragments = rasterizer(mesh, cameras=cam)
-
-            fragments[frame_idx][res_i] = frame_fragments
-            projections[frame_idx][res_i] = projection
-
-    return projections, fragments
-
-
-# TODO unified system for shade mesh, shade meshes render_texture, etc
 
 
 def shade_meshes(
@@ -366,50 +319,124 @@ def compute_autoregressive_update_masks(
     return better_quality_masks
 
 
-def compute_newly_visible_masks(
-    cams,
-    meshes,
-    projections,
-    uv_res: int,
-    image_res: int,
-    verts_uvs,
-    faces_uvs,
-):
-    """
-    Given a sequence of cameras, compute the masks denoting for each render, the parts to update, according to what has already been seen, and image space coordinates
-    """
-
-    visible_texture = torch.ones(uv_res, uv_res, 1).cuda()
-    visible_masks = []
-
-    for i in range(len(cams)):
-        proj = projections[i]
-        mesh = meshes[i]
-        cam = cams[i]
-
-        # render visible mask
-        mask_i = render_texture(
-            mesh, cam, visible_texture, verts_uvs, faces_uvs, resolution=image_res
-        )[0]
-        visible_masks.append(mask_i[0].cpu())
-
-        # update visible mask texture
-        feature_map = torch.zeros(1, image_res, image_res).cuda()
-        update_uv_texture(
-            visible_texture,
-            feature_map,
-            proj,
-            update_empty_only=False,
-        )
-
-    visible_masks = torch.stack(visible_masks)
-
-    return visible_masks
-
-
 def downsample_masks(masks: Tensor, size: Tuple[int], thresh=0.8):
     masks = torch.unsqueeze(masks, 1).float()
     masks_resized = TF.resize(masks, size, interpolation=TF.InterpolationMode.BILINEAR)
     masks_resized = masks_resized > thresh
     masks_resized = masks_resized.squeeze(1).cpu().float()
     return masks_resized
+
+
+def display_frags(
+    frags: Fragments,
+    show_zbuf=True,
+    show_pix_to_face=True,
+    show_bary_coords=True,
+    show_dists=True,
+):
+    ims = []
+    titles = []
+
+    if show_zbuf:
+        ims.append(frags.zbuf[0, ..., 0].cpu())
+        titles.append("zbuf")
+
+    if show_pix_to_face:
+        ims.append(frags.pix_to_face[0, ..., 0].cpu())
+        titles.append("pix_to_face")
+
+    if show_bary_coords:
+        ims.append(frags.bary_coords[0, :, :, 0, :].cpu())
+        titles.append("bary_coords")
+
+    if show_dists:
+        dists = frags.dists[0, ..., 0].cpu()
+        ims.append(dists)
+        titles.append("dists")
+
+    display_ims(
+        ims,
+        titles=titles,
+    )
+
+
+def dilate_feature_map(feature_map, valid_mask, kernel_size=3, iterations=1):
+    """
+    Dilate features using max pooling on a valid mask and neighbor copying.
+    Args:
+        feature_map: (B, C, H, W) — features to dilate
+        valid_mask:  (B, 1, H, W) — 1 where valid, 0 elsewhere
+        kernel_size: convolution window for dilation
+        iterations: how many times to apply dilation
+    Returns:
+        dilated_feature_map, dilated_mask
+    """
+    B, C, H, W = feature_map.shape
+
+    # Copy input
+    feat = feature_map.clone()
+    mask = valid_mask.clone()
+
+    for _ in range(iterations):
+        # Get max mask in neighborhood: where new pixels will be added
+        mask_dilated = F.max_pool2d(
+            mask.float(), kernel_size, stride=1, padding=kernel_size // 2
+        )
+        new_mask = (mask_dilated > 0) & (mask == 0)  # new additions
+
+        # For each channel, mask out invalid pixels and max-pool the rest
+        feat_masked = feat * mask  # zero out invalid
+        feat_sum = F.avg_pool2d(
+            feat_masked, kernel_size, stride=1, padding=kernel_size // 2
+        )
+        norm = (
+            F.avg_pool2d(mask.float(), kernel_size, stride=1, padding=kernel_size // 2)
+            + 1e-6
+        )
+        feat_pooled = feat_sum / norm  # avoid divide by zero
+
+        # Update only new pixels
+        update = new_mask.expand(-1, C, -1, -1)
+        feat[update] = feat_pooled[update]
+        mask = mask | new_mask  # update mask
+
+    return feat, mask
+
+
+def dilate_frags(frags: Fragments, kernel_size=3, iterations=1):
+    assert frags.pix_to_face.shape[-1] == 1, "only supports K=1"
+
+    dilate_kwargs = {
+        "kernel_size": kernel_size,
+        "iterations": iterations,
+    }
+
+    pix_to_face = frags.pix_to_face[..., 0]
+
+    valid = pix_to_face != -1
+    valid_mask = valid.unsqueeze(1)
+
+    pix_to_face_dil, mask_dil = dilate_feature_map(
+        pix_to_face.unsqueeze(1).float(), valid_mask, **dilate_kwargs
+    )
+    pix_to_face_dil = pix_to_face_dil.squeeze(1).unsqueeze(-1).long()
+
+    zbuf = frags.zbuf[..., 0]
+    zbuf_dil, _ = dilate_feature_map(zbuf.unsqueeze(1), valid_mask, **dilate_kwargs)
+    zbuf_dil = zbuf_dil.squeeze(1).unsqueeze(-1)
+
+    bary_coords = rearrange(frags.bary_coords, "b h w 1 c -> b c h w")
+    bary_coords_dil, _ = dilate_feature_map(bary_coords, valid_mask, **dilate_kwargs)
+    bary_coords_dil = rearrange(bary_coords_dil, "b c h w -> b h w 1 c")
+
+    dists = frags.dists[..., 0]
+    dists_dil, _ = dilate_feature_map(dists.unsqueeze(1), valid_mask, **dilate_kwargs)
+    dists_dil = rearrange(dists_dil, "b 1 h w -> b h w 1")
+
+    frags_dil = Fragments(
+        pix_to_face=pix_to_face_dil,
+        zbuf=zbuf_dil,
+        bary_coords=bary_coords_dil,
+        dists=dists_dil,
+    )
+    return frags_dil

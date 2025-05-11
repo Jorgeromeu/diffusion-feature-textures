@@ -23,6 +23,7 @@ def display_ims_grid(
     show=True,
     vmin=None,
     vmax=None,
+    hide_ticks=True,
 ):
     images = images.copy()
 
@@ -50,9 +51,11 @@ def display_ims_grid(
                 vmax=vmax,
                 interpolation="nearest",
             )
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_frame_on(False)
+
+            if hide_ticks:
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_frame_on(False)
 
             if row_i == 0 and col_titles is not None:
                 ax.set_title(col_titles[col_i])
@@ -80,6 +83,7 @@ def display_ims(
     show=True,
     vmin=None,
     vmax=None,
+    hide_ticks=True,
 ):
     result = display_ims_grid(
         [images],
@@ -90,6 +94,7 @@ def display_ims(
         show=show,
         vmin=vmin,
         vmax=vmax,
+        hide_ticks=hide_ticks,
     )
 
     if not show:

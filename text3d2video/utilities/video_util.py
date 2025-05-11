@@ -8,7 +8,7 @@ def duration_to_fps(duration: int, n_frames: int) -> int:
     return n_frames / duration
 
 
-def pil_frames_to_clip(frames: List, fps=10, duration=None) -> ImageSequenceClip:
+def pil_frames_to_clip(frames: List, fps=15, duration=None) -> ImageSequenceClip:
     # convert PIL images to numpy arrays
     frames_rgb = [im.convert("RGB") for im in frames]
     frames_np = [np.asarray(im) for im in frames_rgb]

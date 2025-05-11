@@ -1,6 +1,6 @@
 from typing import List
 
-from attr import dataclass
+from attr import asdict, dataclass
 from hydra.utils import get_method
 from omegaconf import DictConfig, OmegaConf
 from pytorch3d.renderer.cameras import CamerasBase
@@ -14,15 +14,89 @@ from text3d2video.clip_metrics import CLIPMetrics
 from text3d2video.pipelines.pipeline_utils import ModelConfig
 from text3d2video.pipelines.texturing_pipeline import TexturingConfig
 from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
+from text3d2video.utilities.video_comparison import video_grid
+from text3d2video.utilities.video_util import pil_frames_to_clip
 from text3d2video.uv_consistency_metric import mean_uv_mse
 from wandb.apis.public import Run
+
+
+@dataclass
+class GeometryAndPrompts:
+    animation_tag: str
+    texturing_tag: str
+    src_tag: str
+    prompts: List[str]
+    n_seeds: int
+
+    def make_vid(self, with_col_titles=True):
+        def anim_uv_vid(anim_tag: str, fps=15):
+            anim = AnimationArtifact.from_wandb_artifact_tag(anim_tag)
+            uvs = anim.read_anim_seq().render_rgb_uv_maps()
+            return pil_frames_to_clip(uvs, fps=fps)
+
+        vids = [
+            anim_uv_vid(tag)
+            for tag in [self.animation_tag, self.texturing_tag, self.src_tag]
+        ]
+
+        col_titles = ["Animation", "Texturing", "src"] if with_col_titles else None
+
+        label = f'"{str(self.prompts)}" (n_seeds: {self.n_seeds})'
+
+        return video_grid(
+            [vids],
+            padding_mode="slow_down",
+            x_labels=col_titles,
+            y_labels=[label],
+        )
+
+    def to_scenes(self):
+        scenes = []
+        for prompt in self.prompts:
+            for i in range(self.n_seeds):
+                scene = Scene(
+                    self.animation_tag,
+                    self.texturing_tag,
+                    self.src_tag,
+                    prompt,
+                    i,
+                )
+                scenes.append(scene)
+        return scenes
 
 
 @dataclass
 class Scene:
     animation_tag: str
     texturing_tag: str
+    src_tag: str
     prompt: str
+    seed: int
+
+    def tabulate_row(self):
+        return asdict(self)
+
+    def make_vid(self, with_col_titles=True):
+        def anim_uv_vid(anim_tag: str, fps=15):
+            anim = AnimationArtifact.from_wandb_artifact_tag(anim_tag)
+            uvs = anim.read_anim_seq().render_rgb_uv_maps()
+            return pil_frames_to_clip(uvs, fps=fps)
+
+        vids = [
+            anim_uv_vid(tag)
+            for tag in [self.animation_tag, self.texturing_tag, self.src_tag]
+        ]
+
+        col_titles = ["Animation", "Texturing", "src"] if with_col_titles else None
+
+        label = f'"{self.prompt}" (seed: {self.seed})'
+
+        return video_grid(
+            [vids],
+            padding_mode="slow_down",
+            x_labels=col_titles,
+            y_labels=[label],
+        )
 
 
 @dataclass
@@ -30,6 +104,13 @@ class Method:
     name: str
     fun_path: str
     base_config: DictConfig
+
+    def tabulate_row(self):
+        return {
+            "name": self.name,
+            "fun": self.fun_path.split(".")[-1],
+            "config": OmegaConf.to_yaml(self.base_config),
+        }
 
 
 @dataclass
@@ -43,25 +124,13 @@ def texture_identifier(prompt: str, texture_tag: str):
 
 
 def get_texture_runs(config: BenchmarkConfig):
-    decoder_paths = [
-        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-    ]
-
     # Get set of all textures to generate
     texture_scenes = set()
     for s in config.scenes:
         texture_scenes.add((s.texturing_tag, s.prompt))
 
     make_texture_runs = dict()
-    texgen_config = TexturingConfig(module_paths=decoder_paths)
+    texgen_config = TexturingConfig()
     for texturing_tag, texturing_prompt in texture_scenes:
         tex_name = texture_identifier(texturing_prompt, texturing_tag)
 

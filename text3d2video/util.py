@@ -266,3 +266,7 @@ def rgb_to_luminance(r, g, b):
     Convert RGB values (0,1) to luminance
     """
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def interpolate_to_factor(x, alpha, factor):
+    return x * (1 - alpha + alpha * factor)

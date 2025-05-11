@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Dict, List, Optional
 
 import torch
@@ -16,6 +17,7 @@ from text3d2video.backprojection import (
     TexelProjection,
     aggregate_views_uv_texture,
     aggregate_views_uv_texture_mean,
+    compute_texel_projection_old,
 )
 from text3d2video.noise_initialization import (
     UVNoiseInitializer,
@@ -23,14 +25,19 @@ from text3d2video.noise_initialization import (
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     TextureShader,
+    make_mesh_rasterizer,
     make_repeated_uv_texture,
-    precompute_rasterization,
     render_depth_map,
     render_texture,
     shade_meshes,
 )
-from text3d2video.sd_feature_extraction import AttnLayerId
-from text3d2video.util import dict_map, linear_map
+from text3d2video.sd_feature_extraction import (
+    AttnLayerId,
+    AttnType,
+    BlockType,
+    find_attn_modules,
+)
+from text3d2video.util import dict_map, interpolate_to_factor
 from text3d2video.utilities.logging import (
     NULL_LOGGER,
     setup_greenlists,
@@ -42,7 +49,6 @@ from text3d2video.utilities.logging import (
 # pylint: disable=too-many-instance-attributes
 @dataclass
 class GenerativeRenderingConfig:
-    module_paths: list[str]
     do_pre_attn_injection: bool = True
     do_post_attn_injection: bool = True
     feature_blend_alpha: float = 0.8
@@ -78,35 +84,111 @@ class GrCamSeq:
     depth_maps: List[Image.Image]
 
 
+def precompute_rasterization(
+    cameras, meshes, vert_uvs, faces_uvs, render_resolutions, texture_resolutions
+):
+    projections = defaultdict(lambda: dict())
+    fragments = defaultdict(lambda: dict())
+
+    for frame_idx in range(len(cameras)):
+        cam = cameras[frame_idx]
+        mesh = meshes[frame_idx]
+
+        for res_i in range(len(render_resolutions)):
+            render_res = render_resolutions[res_i]
+            texture_res = texture_resolutions[res_i]
+
+            # project UVs to camera
+            projection = compute_texel_projection_old(
+                mesh,
+                cam,
+                vert_uvs,
+                faces_uvs,
+                raster_res=texture_res * 10,
+                texture_res=texture_res,
+            )
+
+            # rasterize
+            rasterizer = make_mesh_rasterizer(
+                resolution=render_res,
+                faces_per_pixel=1,
+                blur_radius=0,
+                bin_size=0,
+            )
+            frame_fragments = rasterizer(mesh, cameras=cam)
+
+            fragments[frame_idx][res_i] = frame_fragments
+            projections[frame_idx][res_i] = projection
+
+    return projections, fragments
+
+
 class GenerativeRenderingLogic:
     def __init__(
         self,
         pipe: BaseControlNetPipeline,
-        module_paths: list[str] = [],
         guidance_scale=7.5,
         controlnet_conditioning_scale: float = 1.0,
         mean_features_weight: float = 0.5,
         do_pre_attn_injection: bool = True,
         do_post_attn_injection: bool = True,
+        also_attend_to_self: bool = True,
     ):
         self.pipe = pipe
         self.controlnet_conditioning_scale = controlnet_conditioning_scale
         self.guidance_scale = guidance_scale
         self.mean_features_weight = mean_features_weight
-        self.module_paths = module_paths
-        # create attn processor
-        self.attn_processor = ExtractionInjectionAttn(
-            self.pipe.unet,
-            do_spatial_post_attn_extraction=do_post_attn_injection,
-            do_kv_extraction=do_pre_attn_injection,
-            also_attend_to_self=False,
-            feature_blend_alpha=0.5,
-            kv_extraction_paths=module_paths,
-            spatial_post_attn_extraction_paths=module_paths,
-        )
+        self.do_pre_attn_injection = do_pre_attn_injection
+        self.do_post_attn_injection = do_post_attn_injection
+        self.also_attend_to_self = also_attend_to_self
 
     def set_attn_processor(self):
+        # get up-SA layers
+        self.module_paths = find_attn_modules(
+            self.pipe.unet,
+            block_types=[BlockType.UP],
+            layer_types=[AttnType.SELF_ATTN],
+            return_as_string=True,
+        )
+
+        # assign feature blend alphas
+        feature_blend_alphas = {layer: 0.5 for layer in self.module_paths}
+
+        self.attn_processor = ExtractionInjectionAttn(
+            self.pipe.unet,
+            do_spatial_post_attn_extraction=self.do_post_attn_injection,
+            do_kv_extraction=self.do_pre_attn_injection,
+            feature_blend_alphas=feature_blend_alphas,
+            kv_extraction_paths=self.module_paths,
+            spatial_post_attn_extraction_paths=self.module_paths,
+            also_attend_to_self=self.also_attend_to_self,
+        )
+
         self.pipe.unet.set_attn_processor(self.attn_processor)
+
+    def set_feature_blend_alpha_weights(self, progress_t: float):
+        t_lowest_scale = 0.5
+        layer_lowest_scale = 0.5
+
+        # get alpha at time step
+        alpha_t = interpolate_to_factor(1, progress_t, t_lowest_scale)
+
+        # get alpha for each layer
+        n_layers = len(self.module_paths)
+        alphas = {}
+        for layer in self.module_paths:
+            layer_id = AttnLayerId.parse(layer)
+            layer_progress = layer_id.unet_block_index() / (n_layers - 1)
+
+            alpha_layer_t = interpolate_to_factor(
+                alpha_t,
+                layer_progress,
+                layer_lowest_scale,
+            )
+
+            alphas[layer] = alpha_layer_t
+
+        self.attn_processor.feature_blend_alphas = alphas
 
     def model_forward(
         self,
@@ -227,7 +309,7 @@ class GenerativeRenderingLogic:
             latents_duplicated, embeddings, t, depth_maps_duplicated
         )
 
-        self.attn_processor.feature_blend_alpha = progress
+        self.set_feature_blend_alpha_weights(progress)
 
         # classifier-free guidance
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
@@ -314,69 +396,6 @@ class GenerativeRenderingOutput:
     extr_images: Optional[List[Image.Image]] = None
 
 
-class RgbExtractionPipeline(BaseControlNetPipeline):
-    @torch.no_grad()
-    def __call__(
-        self,
-        prompt: str,
-        anim: AnimSequence,
-        src_frames: List[Image.Image],
-        generator=None,
-    ):
-        n_frames = len(anim)
-
-        cond_embs, uncond_embs = self.encode_prompt([prompt] * n_frames)
-
-        latents = self.prepare_latents(n_frames, generator)
-
-        self.scheduler.set_timesteps(10)
-
-        depth_maps = anim.render_depth_maps()
-
-        src_latents = self.encode_images(src_frames)
-        src_noise = torch.randn_like(src_latents)
-
-        decoder_paths = [
-            "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-            "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-            "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-            "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-            "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-            "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-            "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-        ]
-
-        gr = GenerativeRenderingLogic(self, module_paths=decoder_paths)
-        gr.set_attn_processor()
-
-        for t in tqdm(self.scheduler.timesteps):
-            src_noisy = self.scheduler.add_noise(src_latents, src_noise, t)
-
-            feats = gr.model_forward_extraction(
-                src_noisy, cond_embs, uncond_embs, depth_maps, t
-            )
-
-            noise_pred = gr.model_forward_injection(
-                latents,
-                cond_embs,
-                uncond_embs,
-                depth_maps,
-                t,
-                {},
-                {},
-                feats.cond_post_attn,
-                feats.uncond_post_attn,
-            )
-
-            latents = self.scheduler.step(
-                noise_pred, t, latents, generator=generator
-            ).prev_sample
-
-        return self.decode_latents(latents, generator=generator)
-
-
 class GenerativeRenderingPipeline(BaseControlNetPipeline):
     @torch.no_grad()
     def __call__(
@@ -398,12 +417,12 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         # setup GR logic
         gr = GenerativeRenderingLogic(
             self,
-            module_paths=conf.module_paths,
             guidance_scale=conf.guidance_scale,
             controlnet_conditioning_scale=conf.controlnet_conditioning_scale,
             mean_features_weight=conf.mean_features_weight,
             do_pre_attn_injection=conf.do_pre_attn_injection,
             do_post_attn_injection=conf.do_post_attn_injection,
+            also_attend_to_self=conf.attend_to_self_kv,
         )
         gr.set_attn_processor()
 
@@ -573,11 +592,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
 
             progress = self.denoising_progress(t)
 
-            feature_alpha = linear_map(
-                progress, from_min=0, from_max=1, to_min=1, to_max=0.3
-            )
-            print(feature_alpha)
-
             # denoise anim latents
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
@@ -618,7 +632,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     feats.uncond_kv,
                     renders_cond,
                     renders_uncond,
-                    progress=feature_alpha,
+                    progress=progress,
                 )
 
                 noise_preds.append(noise_pred)
@@ -659,7 +673,7 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     feats.uncond_kv,
                     renders_cond,
                     renders_uncond,
-                    progress=feature_alpha,
+                    progress=progress,
                 )
 
                 extr_latents = self.scheduler.step(

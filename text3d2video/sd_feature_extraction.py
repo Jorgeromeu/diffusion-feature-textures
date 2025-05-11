@@ -7,7 +7,7 @@ from diffusers.models.attention_processor import Attention
 from torch import nn
 
 
-def find_attn_modules(module: nn.Module):
+def find_all_attn_modules(module: nn.Module):
     """
     Find all attention modules in a module
     """
@@ -152,7 +152,7 @@ class AttnLayerId:
         res = input_res // (2**level_idx)
         return res
 
-    def unet_path_index(self):
+    def unet_block_index(self):
         """
         Gives the index of the attention layer, in its path (enc/dec/mid)
         """
@@ -179,7 +179,7 @@ class AttnLayerId:
 
         # TODO make more agnostic to unet architecture
 
-        path_idx = self.unet_path_index()
+        path_idx = self.unet_block_index()
 
         if self.block_type == BlockType.DOWN:
             return path_idx
@@ -200,7 +200,7 @@ def read_layer_paths(
     return enc_layers, mid_layers, dec_layers
 
 
-def find_attn_layers(
+def find_attn_modules(
     module: nn.Module,
     layer_types: AttnType = None,
     resolutions=None,
@@ -216,7 +216,7 @@ def find_attn_layers(
     if block_types is None:
         block_types = [BlockType.DOWN, BlockType.MID, BlockType.UP]
 
-    modules = find_attn_modules(module)
+    modules = find_all_attn_modules(module)
 
     # parse
     layers = [AttnLayerId.parse(m) for m in modules]

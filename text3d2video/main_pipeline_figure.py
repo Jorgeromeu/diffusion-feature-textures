@@ -6,7 +6,7 @@ from einops import rearrange
 
 from text3d2video.feature_visualization import RgbPcaUtil
 from text3d2video.pipelines.generative_rendering_pipeline import (
-    GenerativeRenderingOutput,
+    GrOutput,
 )
 from text3d2video.util import create_fresh_dir, hwc_to_chw, pil_latent
 from text3d2video.utilities.attn_vis import reshape_concatenated
@@ -14,9 +14,7 @@ from text3d2video.utilities.figure_creation_utils import write_image_seq
 from text3d2video.utilities.logging import H5Logger
 
 
-def main_pipeline_figure_images(
-    out_path: str, h5_path: str, out: GenerativeRenderingOutput
-) -> None:
+def main_pipeline_figure_images(out_path: str, h5_path: str, out: GrOutput) -> None:
     """
     Read
     """

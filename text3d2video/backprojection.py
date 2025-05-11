@@ -3,16 +3,24 @@ from typing import List
 import torch
 from attr import dataclass
 from jaxtyping import Float
+from matplotlib import pyplot as plt
 from pytorch3d.ops import interpolate_face_attributes
 from pytorch3d.renderer import (
     CamerasBase,
     MeshRasterizer,
     RasterizationSettings,
 )
+from pytorch3d.renderer.cameras import OrthographicCameras
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.util import hwc_to_chw, sample_feature_map_ndc, unique_with_indices
+from text3d2video.rendering import dilate_frags, make_mesh_rasterizer, render_texture
+from text3d2video.util import (
+    hwc_to_chw,
+    sample_feature_map_ndc,
+    unique_with_indices,
+)
+from text3d2video.utilities.camera_placement import front_facing_extrinsics
 
 
 @dataclass
@@ -25,7 +33,7 @@ class TexelProjection:
     uvs: Tensor  # (N, 2) unique UV coordinates
 
 
-def compute_texel_projection(
+def compute_texel_projection_old(
     mesh: Meshes,
     camera: CamerasBase,
     verts_uvs: Tensor,
@@ -85,6 +93,98 @@ def compute_texel_projection(
     texel_xy_coords = xys[coord_pix_indices, :]
 
     return TexelProjection(xys=texel_xy_coords, uvs=texel_coords)
+
+
+def compute_texel_projection(
+    mesh: Meshes,
+    camera: CamerasBase,
+    verts_uvs: Tensor,
+    faces_uvs: Tensor,
+    texture_res: int,
+    raster_res=1000,
+    visible_only=True,
+) -> TexelProjection:
+    """
+    Project visible UV coordinates to camera pixel coordinates
+    :param meshes: Meshes object
+    :param cameras: CamerasBase object
+    :param verts_uvs: (V, 2) UV coordinates
+    :param faces_uvs: (F, 3) face indices for UV coordinates
+    :param texture_res: UV_map resolution
+    :param render_resolution: render resolution
+    :return TexelProjection
+    """
+
+    # Construct UV mesh
+    verts_uvs_ndc = verts_uvs * 2 - 1
+    verts_uvs_xyz = torch.cat(
+        [verts_uvs_ndc, torch.zeros_like(verts_uvs[:, :1])], dim=-1
+    )
+    uv_mesh = Meshes(verts=[verts_uvs_xyz], faces=[faces_uvs])
+
+    # rasterize uv mesh
+    R, T = front_facing_extrinsics(zs=1)
+    uv_camera = OrthographicCameras(R=R, T=T, device="cuda")
+    uv_rasterizer = make_mesh_rasterizer(resolution=texture_res, blur_radius=1e-6)
+    uv_frags = uv_rasterizer(uv_mesh, cameras=uv_camera)
+
+    uv_frags = dilate_frags(uv_frags, iterations=1)
+
+    pix_to_face = uv_frags.pix_to_face[0, ..., 0]
+    bary_coords = uv_frags.bary_coords[0, :, :, 0, :]
+
+    valid_mask = pix_to_face != -1
+
+    faces = mesh.faces_list()[0]
+    verts = mesh.verts_list()[0]
+
+    # for each valid texel, its face index and bary coords
+    texel_faces = pix_to_face[valid_mask]
+    texel_bary = bary_coords[valid_mask]
+
+    # get 3D coordinate of texel by interpolating the 3D triangles of the face
+    tri_inds = faces[texel_faces.cpu()]
+    v0, v1, v2 = verts[tri_inds[:, 0]], verts[tri_inds[:, 1]], verts[tri_inds[:, 2]]
+    vert_coords_3d = (
+        texel_bary[:, 0:1] * v0 + texel_bary[:, 1:2] * v1 + texel_bary[:, 2:3] * v2
+    )
+
+    # map verts to NDC space
+    points_ndc = camera.transform_points_ndc(vert_coords_3d)
+    points_ndc[:, 0] = -points_ndc[:, 0]  # flip y axis
+    ndc_coords_xy = points_ndc[:, :2]
+
+    # also map points to camera space to get their z-values (for depth test)
+    points_cam = camera.get_world_to_view_transform().transform_points(vert_coords_3d)
+    points_zs = points_cam[:, 2]
+
+    # render zbuf for view
+    depth_rasterizer = make_mesh_rasterizer(resolution=raster_res)
+    view_frags = depth_rasterizer(mesh, cameras=camera)
+    zbuf = view_frags.zbuf[0, ...]  # H W,1
+    zbuf = hwc_to_chw(zbuf)  # 1 H W
+
+    # get the z corresponding to texels from zbuf
+    texel_closest_z = sample_feature_map_ndc(zbuf, ndc_coords_xy)[:, 0]
+
+    eps = 0.01
+    visible_mask = points_zs < texel_closest_z + eps
+
+    # if no visibility check take all verts
+    if not visible_only:
+        visible_mask = torch.ones_like(visible_mask).bool()
+
+    visible_xys = ndc_coords_xy[visible_mask]
+
+    # finally get for each texel, its UV pixel coord
+    u = torch.arange(0, texture_res)
+    v = torch.arange(0, texture_res)
+    U, V = torch.meshgrid(u, v, indexing="xy")
+    uv = torch.stack([U, V], dim=-1).to(verts_uvs.device)
+    uvs = uv[valid_mask]
+    uvs = uvs[visible_mask]
+
+    return TexelProjection(xys=visible_xys, uvs=uvs)
 
 
 def compute_texel_projections(
@@ -261,3 +361,92 @@ def project_views_to_video_texture(
     texture_frames = torch.stack(texture_frames, dim=0)
     texture_frames = hwc_to_chw(texture_frames)
     return texture_frames.cpu()
+
+
+def display_projection(
+    projection: TexelProjection,
+    cmap="turbo",
+    s=0.5,
+    alpha=0.2,
+    uv_image=None,
+    xy_image=None,
+):
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+    ax_xy = axs[0]
+    ax_uv = axs[1]
+
+    indices = torch.arange(0, projection.xys.shape[0])
+
+    if xy_image is not None:
+        ax_xy.imshow(xy_image, extent=(-1, 1, -1, 1))
+
+    ax_xy.set_xlim(-1, 1)
+    ax_xy.set_ylim(-1, 1)
+    ax_xy.set_title("XY (NDC space)")
+
+    ax_xy.scatter(
+        projection.xys[:, 0].cpu(),
+        projection.xys[:, 1].cpu(),
+        s=s,
+        c=indices.cpu(),
+        cmap=cmap,
+        alpha=alpha,
+    )
+
+    if uv_image is not None:
+        ax_uv.imshow(uv_image)
+
+    ax_uv.scatter(
+        projection.uvs[:, 0].cpu(),
+        projection.uvs[:, 1].cpu(),
+        s=s,
+        c=indices.cpu(),
+        cmap=cmap,
+        alpha=alpha,
+    )
+    ax_uv.set_title("UV")
+
+    plt.tight_layout()
+    pass
+
+
+def compute_newly_visible_masks(
+    cams,
+    meshes,
+    projections,
+    uv_res: int,
+    image_res: int,
+    verts_uvs,
+    faces_uvs,
+):
+    """
+    Given a sequence of cameras, compute the masks denoting for each render, the parts to update, according to what has already been seen, and image space coordinates
+    """
+
+    visible_texture = torch.ones(uv_res, uv_res, 1).cuda()
+    visible_masks = []
+
+    for i in range(len(cams)):
+        proj = projections[i]
+        mesh = meshes[i]
+        cam = cams[i]
+
+        # render visible mask
+        mask_i = render_texture(
+            mesh, cam, visible_texture, verts_uvs, faces_uvs, resolution=image_res
+        )[0]
+        visible_masks.append(mask_i[0].cpu())
+
+        # update visible mask texture
+        feature_map = torch.zeros(1, image_res, image_res).cuda()
+        update_uv_texture(
+            visible_texture,
+            feature_map,
+            proj,
+            update_empty_only=False,
+        )
+
+    visible_masks = torch.stack(visible_masks)
+
+    return visible_masks

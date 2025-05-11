@@ -10,8 +10,10 @@ from moviepy.editor import (
     TextClip,
     VideoClip,
     clips_array,
+    vfx,
 )
 
+from text3d2video.util import object_array
 from text3d2video.utilities.video_util import extend_clip_repeat
 
 
@@ -121,22 +123,39 @@ def make_gap_col(col, size=15):
     return gap_clips
 
 
+class VideoPadding:
+    REPEAT = "repeat"
+    SLOW_DOWN = "slow_down"
+    ZERO = "zero"
+
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.value == other.value
+        return False
+
+
 def video_grid(
     clips: np.ndarray,
     x_labels: List[str] = None,
     y_labels: List[str] = None,
     col_gap_indices=None,
     col_gap_sizes=None,
-    pad_video_lengths: bool = True,
+    padding_mode: str = VideoPadding.REPEAT,
 ):
     """
     Arrange a grid of moviepy clips into a single clip as a grid, with optional x and y labels
     """
     clips = clips.copy()
 
-    if pad_video_lengths:
+    if padding_mode == VideoPadding.REPEAT:
         max_duration = np.vectorize(lambda v: v.duration)(clips).max()
         clips = np.vectorize(lambda v: extend_clip_repeat(v, max_duration))(clips)
+
+    if padding_mode == VideoPadding.SLOW_DOWN:
+        max_duration = np.vectorize(lambda v: v.duration)(clips).max()
+        clips = np.vectorize(lambda v: v.fx(vfx.speedx, v.duration / max_duration))(
+            clips
+        )
 
     if x_labels is not None:
         top_row = clips[0]
@@ -182,13 +201,26 @@ def display_vids(
     title=None,
     height=300,
     match_height=True,
+    padding_mode: str = VideoPadding.REPEAT,
+    vertical=False,
 ):
     if match_height:
         max_height = max([v.size[1] for v in clips])
         clips = [v.resize(height=max_height) for v in clips]
 
-    videos = [clips]
-    clip = video_grid(videos, x_labels=titles, pad_video_lengths=True)
+    videos = object_array([clips])
+
+    video_grid_kwargs = {
+        "padding_mode": padding_mode,
+    }
+
+    if vertical:
+        videos = np.transpose(videos)
+        video_grid_kwargs["y_labels"] = titles
+    else:
+        video_grid_kwargs["x_labels"] = titles
+
+    clip = video_grid(videos, **video_grid_kwargs)
 
     if title:
         clip = add_title_to_clip(clip, title)

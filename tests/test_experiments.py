@@ -29,19 +29,16 @@ def test_benchmark():
     metal_cat = BenchmarkScene(
         "cat_statue_mv:latest",
         "cat_statue_mv:latest",
-        "Metalic Cat Statue",
+        "cat_statue_mv:latest",
         "Silver Cat Statue",
-    )
-
-    stormtrooper_ymca = BenchmarkScene(
-        "ymca_20:latest", "human_mv:latest", "Stormtrooper", "Stormtrooper"
+        0,
     )
 
     base_config = OmegaConf.structured(
         RunGenerativeRenderingConfig(
             prompt="",
             animation_tag="",
-            generative_rendering=GenerativeRenderingConfig(module_paths=[]),
+            generative_rendering=GenerativeRenderingConfig(),
             model=ModelConfig(),
         )
     )
@@ -50,10 +47,7 @@ def test_benchmark():
         BenchmarkMethod("GR", get_import_path(run_generative_rendering), base_config)
     ]
 
-    scenes = [
-        metal_cat,
-        stormtrooper_ymca,
-    ]
+    scenes = [metal_cat]
 
     config = BenchmarkConfig(scenes=scenes, methods=methods)
     config = OmegaConf.structured(config)
@@ -65,7 +59,7 @@ def test_texturing_benchmark():
         MakeTextureConfig(
             prompt="",
             animation_tag="",
-            texgen=TexturingConfig(module_paths=[]),
+            texgen=TexturingConfig(),
             model=ModelConfig(),
         )
     )

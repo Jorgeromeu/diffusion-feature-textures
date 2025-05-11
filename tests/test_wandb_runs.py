@@ -14,22 +14,10 @@ from text3d2video.pipelines.texturing_pipeline import TexturingConfig
 
 
 def test_run_gr():
-    decoder_paths = [
-        "mid_block.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-    ]
     config = RunGenerativeRenderingConfig(
         "Cat",
         "mv_cat_statue:latest",
-        GenerativeRenderingConfig(decoder_paths, num_inference_steps=2),
+        GenerativeRenderingConfig(num_inference_steps=2),
         ModelConfig(),
     )
     config = OmegaConf.create(config)
@@ -38,23 +26,11 @@ def test_run_gr():
 
 
 def test_make_texture():
-    decoder_paths = [
-        "mid_block.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.1.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.2.attentions.2.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.0.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.1.transformer_blocks.0.attn1",
-        "up_blocks.3.attentions.2.transformer_blocks.0.attn1",
-    ]
     config = MakeTextureConfig(
         "Cat",
         "mv_cat_statue:latest",
         ModelConfig(),
-        TexturingConfig(module_paths=decoder_paths, num_inference_steps=2),
+        TexturingConfig(num_inference_steps=2),
     )
     config = OmegaConf.create(config)
 

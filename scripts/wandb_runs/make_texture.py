@@ -93,7 +93,7 @@ def make_texture(cfg: MakeTextureConfig, run_config: wbu.RunConfig):
     # project to texture
     texture_res = 1000
     projections = compute_texel_projections(
-        seq.meshes, seq.cams, seq.verts_uvs, seq.faces_uvs, texture_res, raster_res=2000
+        seq.meshes, seq.cams, seq.verts_uvs, seq.faces_uvs, texture_res, raster_res=1000
     )
 
     texturing_frames_pt = [TF.to_tensor(f) for f in images]

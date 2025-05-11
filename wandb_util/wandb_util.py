@@ -300,9 +300,8 @@ class ArtifactWrapper:
             )
 
     def log_standalone(self, aliases=None, delete_localfolder=False):
-        wandb.init(project=PROJECT_NAME, job_type="log_artifact_standalone")
-        self.log(aliases, delete_localfolder)
-        wandb.finish()
+        with wandb.init(project=PROJECT_NAME, job_type="log_artifact_standalone"):
+            self.log(aliases, delete_localfolder)
 
     def logged_by(self):
         return self.wandb_artifact.logged_by()

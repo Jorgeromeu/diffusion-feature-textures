@@ -76,7 +76,12 @@ def add_pixel_marker(
 
 def add_zoom_inset(ax: Axes, box: Bbox, width="40%", loc="lower right", color="red"):
     # make inset
-    axins = inset_axes(ax, width=width, height=width, loc=loc)
+    axins = inset_axes(
+        ax,
+        width=width,
+        height=width,
+        loc=loc,
+    )
     axins.set_xticks([])
     axins.set_yticks([])
 
@@ -112,6 +117,39 @@ def add_zoom_inset(ax: Axes, box: Bbox, width="40%", loc="lower right", color="r
     ax.add_patch(rect)
 
 
+def make_zoom_inset(src_ax: Axes, tgt_ax: Axes, box: Bbox, color="red"):
+    # Recover image data, and add to new axes
+    img = src_ax.images[0]
+    data = img.get_array()
+    extent = img.get_extent()
+    cmap = img.get_cmap()
+    norm = img.norm
+    tgt_ax.imshow(
+        data,
+        extent=extent,
+        cmap=cmap,
+        norm=norm,
+    )
+
+    # zoom
+    tgt_ax.set_xlim(box.x0, box.x1)
+    tgt_ax.set_ylim(box.y1, box.y0)
+
+    for spine in tgt_ax.spines.values():
+        spine.set_edgecolor(color)
+        spine.set_linewidth(1)
+
+    rect = Rectangle(
+        (box.x0, box.y0),
+        box.width,
+        box.height,
+        edgecolor=color,
+        facecolor="none",
+        linewidth=1,
+    )
+    src_ax.add_patch(rect)
+
+
 def add_inset(ax: Axes, width="40%", loc="lower right"):
     axins = inset_axes(ax, width=width, height=width, loc=loc)
     axins.set_xticks([])
@@ -131,3 +169,9 @@ def bbox_around_point(point: np.ndarray, width: int = 10) -> Bbox:
     y1 = point[1] + width / 2
 
     return Bbox.from_extents(x0, y0, x1, y1)
+
+
+def binary_masks_diff(ax: Axes, mask_before: Tensor, mask_after: Tensor):
+    diff = mask_after.int() - mask_before.int()
+    ax.imshow(diff == 1, cmap="Greens", alpha=0.8)
+    ax.imshow(diff == -1, cmap="Reds", alpha=0.8)

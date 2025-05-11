@@ -14,23 +14,25 @@ from text3d2video.artifacts.anim_artifact import AnimSequence
 from text3d2video.attn_processors.final_attn_processor import FinalAttnProcessor
 from text3d2video.backprojection import (
     TexelProjection,
+    compute_newly_visible_masks,
     compute_texel_projection,
+    compute_texel_projections,
     project_view_to_texture_masked,
+    update_uv_texture,
 )
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     compute_autoregressive_update_masks,
-    compute_newly_visible_masks,
     compute_uv_jacobian_map,
     downsample_masks,
     make_mesh_rasterizer,
     render_texture,
 )
+from text3d2video.sd_feature_extraction import AttnType, BlockType, find_attn_modules
 from text3d2video.util import augment_prompt, chunk_dim
 from text3d2video.utilities.logging import (
     NULL_LOGGER,
     setup_greenlists,
-    write_feature_dict,
 )
 
 
@@ -41,8 +43,7 @@ class TexturingCamSeq:
     verts_uvs: torch.Tensor
     faces_uvs: torch.Tensor
     depth_maps: List[Image.Image]
-    projections_hd: List[TexelProjection]
-    projections_ld: List[TexelProjection]
+    projections: List[TexelProjection]
     fragments: List[Fragments]
     newly_visible_masks: List[torch.Tensor]
     update_masks: List[torch.Tensor]
@@ -62,14 +63,25 @@ class TexturingLogic:
         guidance_scale=7.5,
         uv_res=600,
         controlnet_conditioning_scale=1.0,
-        quality_factor=1.5,
-        module_paths=[],
+        do_text_and_texture_resampling=True,
+        use_update_masks=True,
+        use_referecnce_kvs=True,
     ):
         self.pipe = pipe
         self.guidance_scale = guidance_scale
         self.uv_res = uv_res
         self.controlnet_conditioning_scale = controlnet_conditioning_scale
-        self.quality_factor = quality_factor
+        self.do_text_and_texture_resampling = do_text_and_texture_resampling
+        self.use_update_masks = use_update_masks
+        self.use_referecnce_kvs = use_referecnce_kvs
+
+    def set_attn_processor(self):
+        module_paths = find_attn_modules(
+            self.pipe.unet,
+            block_types=[BlockType.UP],
+            layer_types=[AttnType.SELF_ATTN],
+            return_as_string=True,
+        )
 
         # create attn processor
         self.attn_processor = FinalAttnProcessor(
@@ -80,7 +92,6 @@ class TexturingLogic:
             kv_extraction_paths=module_paths,
         )
 
-    def set_attn_processor(self):
         self.pipe.unet.set_attn_processor(self.attn_processor)
 
     def model_forward_guided_kvs(
@@ -106,6 +117,7 @@ class TexturingLogic:
             injected_kvs_cond = {}
         if injected_kvs_uncond is None:
             injected_kvs_uncond = {}
+
         injected_kvs = {}
         for key in injected_kvs_cond:
             injected_kvs[key] = torch.cat(
@@ -123,7 +135,7 @@ class TexturingLogic:
 
         # combine predictions according to CFG
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
-        # TODO deal with guidance scale here
+
         noise_pred = noise_pred_uncond + self.guidance_scale * (
             noise_pred_cond - noise_pred_uncond
         )
@@ -138,27 +150,20 @@ class TexturingLogic:
 
         return TexGenModelOutput(
             noise_pred=noise_pred,
-            extracted_kvs_uncond=extracted_kvs_cond,
-            extracted_kvs_cond=extracted_kvs_uncond,
+            extracted_kvs_uncond=extracted_kvs_uncond,
+            extracted_kvs_cond=extracted_kvs_cond,
         )
 
     def compute_newly_visible_masks(self, seq: AnimSequence):
-        raster_res = 2000
-        projections = []
-        for i in range(len(seq)):
-            cam = seq.cams[i]
-            mesh = seq.meshes[i]
-
-            # project UVs to camera
-            projection = compute_texel_projection(
-                mesh,
-                cam,
-                seq.verts_uvs,
-                seq.faces_uvs,
-                texture_res=self.uv_res,
-                raster_res=raster_res,
-            )
-            projections.append(projection)
+        raster_res = 1000
+        projections = compute_texel_projections(
+            seq.meshes,
+            seq.cams,
+            seq.verts_uvs,
+            seq.faces_uvs,
+            self.uv_res,
+            raster_res=raster_res,
+        )
 
         newly_visible_masks = compute_newly_visible_masks(
             seq.cams,
@@ -171,18 +176,21 @@ class TexturingLogic:
         )
 
         newly_visible_masks = downsample_masks(
-            newly_visible_masks, (64, 64), thresh=0.5
+            newly_visible_masks, (64, 64), thresh=0.2
         )
 
         return newly_visible_masks
 
-    def compute_uv_update_masks(self, seq: AnimSequence):
-        projections = [
-            compute_texel_projection(
-                m, c, seq.verts_uvs, seq.faces_uvs, self.uv_res, raster_res=2000
-            )
-            for c, m in zip(seq.cams, seq.meshes)
-        ]
+    def compute_uv_update_masks(self, seq: AnimSequence, logger=NULL_LOGGER):
+        raster_res = 1000
+        projections = compute_texel_projections(
+            seq.meshes,
+            seq.cams,
+            seq.verts_uvs,
+            seq.faces_uvs,
+            self.uv_res,
+            raster_res=raster_res,
+        )
 
         # compute quality maps based on image-space gradients
         quality_maps = [
@@ -190,6 +198,12 @@ class TexturingLogic:
             for c, m in zip(seq.cams, seq.meshes)
         ]
         quality_maps = torch.stack(quality_maps)
+
+        for i, q in enumerate(quality_maps):
+            logger.write("quality_map", q, frame_i=i)
+
+        # give some extra weight to first view
+        quality_maps[0] /= 2
 
         # compute update masks
         better_quality_masks = compute_autoregressive_update_masks(
@@ -200,7 +214,7 @@ class TexturingLogic:
             self.uv_res,
             seq.verts_uvs,
             seq.faces_uvs,
-            quality_factor=self.quality_factor,
+            quality_factor=1.5,
         )
 
         # quality_factor 0: always update
@@ -208,15 +222,13 @@ class TexturingLogic:
         # quality_factor high = newly visible
         return better_quality_masks
 
-    def precompute_cam_seq(self, seq: AnimSequence):
+    def precompute_cam_seq(self, seq: AnimSequence, logger=NULL_LOGGER):
         # newly visible masks
         newly_visible_masks = self.compute_newly_visible_masks(seq)
 
         # projections and fragments
-        PROJ_RASTER_RES = 2000
-        PROJ_RASTER_RES_LD = 2000
-        projections_hd = []
-        projections_ld = []
+        PROJ_RASTER_RES = 1000
+        projections = []
         fragments = []
         rasterizer = make_mesh_rasterizer(resolution=64)
         for i in range(len(seq)):
@@ -232,17 +244,7 @@ class TexturingLogic:
                 texture_res=self.uv_res,
                 raster_res=PROJ_RASTER_RES,
             )
-            projections_hd.append(projection)
-
-            projection_ld = compute_texel_projection(
-                mesh,
-                cam,
-                seq.verts_uvs,
-                seq.faces_uvs,
-                texture_res=self.uv_res,
-                raster_res=PROJ_RASTER_RES_LD,
-            )
-            projections_ld.append(projection_ld)
+            projections.append(projection)
 
             # rasterize
             frags = rasterizer(mesh, cameras=seq.cams[i])
@@ -252,7 +254,7 @@ class TexturingLogic:
         depth_maps = seq.render_depth_maps()
 
         # update masks
-        update_masks = self.compute_uv_update_masks(seq)
+        update_masks = self.compute_uv_update_masks(seq, logger=logger)
 
         return TexturingCamSeq(
             cams=seq.cams,
@@ -260,87 +262,57 @@ class TexturingLogic:
             verts_uvs=seq.verts_uvs,
             faces_uvs=seq.faces_uvs,
             depth_maps=depth_maps,
-            projections_hd=projections_hd,
-            projections_ld=projections_ld,
+            projections=projections,
             fragments=fragments,
             newly_visible_masks=newly_visible_masks,
             update_masks=update_masks,
         )
 
-    def attn_guided_mv_denoising(
+    def attn_guided_mv_sampling(
         self,
         latents,
         cond_embeddings,
         uncond_embeddings,
         t,
-        prev_clean_tex: Tensor,
         cam_seq: TexturingCamSeq,
+        prev_clean_tex: Optional[Tensor] = None,
         logger=NULL_LOGGER,
         generator=None,
     ):
-        clean_tex = prev_clean_tex.clone()
+        if prev_clean_tex is None:
+            clean_tex = torch.zeros(self.uv_res, self.uv_res, 3).cuda()
+        else:
+            clean_tex = prev_clean_tex.clone()
 
-        verts_uvs = cam_seq.verts_uvs
-        faces_uvs = cam_seq.faces_uvs
+        updated_latents = latents.clone()
 
-        updated_latents = []
+        kvs_cond = {}
+        kvs_uncond = {}
 
-        ref_kvs_cond = {}
-        ref_kvs_uncond = {}
-
-        n_views = len(cam_seq.cams)
-        for i in range(n_views):
-            mesh = cam_seq.meshes[i]
-            cam = cam_seq.cams[i]
-            proj = cam_seq.projections_ld[i]
+        for i in range(len(cam_seq.cams)):
+            proj = cam_seq.projections[i]
             depth = cam_seq.depth_maps[i]
-            latent = latents[i]
-            mask_i = cam_seq.newly_visible_masks[i].cuda()
+            latent = updated_latents[i]
 
-            # render partial texture
-            rendered = render_texture(mesh, cam, clean_tex, verts_uvs, faces_uvs)
-            logger.write("rendered", rendered[0], t=t, frame_i=i)
-
-            # bring render to noise level
-            rendered_latent = self.pipe.encode_images(rendered)
-            noise = torch.randn_like(rendered_latent)
-            rendered_noisy = self.pipe.scheduler.add_noise(rendered_latent, noise, t)[0]
-
-            # blend according to mask
-            updated = latent * mask_i + rendered_noisy * (1 - mask_i)
-            updated = updated.to(latent)
-            updated = updated.unsqueeze(0)
-
-            if i == 0:
-                updated = latent.unsqueeze(0)
-
-            # noise pred
-            model_out = self.model_forward_guided_kvs(
-                updated,
+            out = self.model_forward_guided_kvs(
+                latent.unsqueeze(0),
                 cond_embeddings[[i]],
                 uncond_embeddings[[i]],
                 t,
                 depth_maps=[depth],
-                injected_kvs_cond=ref_kvs_cond,
-                injected_kvs_uncond=ref_kvs_uncond,
+                injected_kvs_cond=kvs_cond,
+                injected_kvs_uncond=kvs_uncond,
                 extract_kvs=True,
             )
 
-            noise_pred = model_out.noise_pred
-
-            # WRITE KVS
-            if len(ref_kvs_cond) > 0:
-                key = list(ref_kvs_cond.keys())[-1]
-                kvs = ref_kvs_cond[key]
-                logger.write("kvs", kvs, t=t, frame_i=i)
-
-            if i == 0:
-                ref_kvs_cond = model_out.extracted_kvs_cond
-                ref_kvs_uncond = model_out.extracted_kvs_uncond
+            # update ref-kvs
+            if i == 0 and self.use_referecnce_kvs:
+                kvs_cond = out.extracted_kvs_cond
+                kvs_uncond = out.extracted_kvs_uncond
 
             # get clean image
             clean_im = self.pipe.scheduler.step(
-                noise_pred, t, updated
+                out.noise_pred, t, latent
             ).pred_original_sample
             clean_im_rgb = self.pipe.decode_latents(
                 clean_im, output_type="pt", generator=generator
@@ -348,17 +320,42 @@ class TexturingLogic:
 
             logger.write("clean_im", clean_im_rgb, t=t, frame_i=i)
 
-            update_mask = cam_seq.update_masks[i].cuda()
-            project_view_to_texture_masked(
-                clean_tex,
-                clean_im_rgb,
-                update_mask,
-                proj,
-            )
+            # project texture
+            if self.use_update_masks:
+                update_mask = cam_seq.update_masks[i]
+                project_view_to_texture_masked(
+                    clean_tex, clean_im_rgb, update_mask, proj
+                )
+            else:
+                update_uv_texture(clean_tex, clean_im_rgb, proj)
 
-            updated_latents.append(updated[0])
+            # update next latent
+            if i < len(cam_seq.cams) - 1:
+                i_next = i + 1
+                mesh_next = cam_seq.meshes[i_next]
+                cam_next = cam_seq.cams[i_next]
+                latent_next = updated_latents[i_next]
+                mask_i_next = cam_seq.newly_visible_masks[i_next].cuda()
 
-        updated_latents = torch.stack(updated_latents, dim=0)
+                # render partial texture
+                rendered = render_texture(
+                    mesh_next, cam_next, clean_tex, cam_seq.verts_uvs, cam_seq.faces_uvs
+                )[0]
+                logger.write("rendered", rendered, t=t, frame_i=i_next)
+
+                # bring render to noise level
+                rendered_latent = self.pipe.encode_images([rendered], generator)[0]
+                noise = torch.randn_like(rendered_latent)
+                rendered_noisy = self.pipe.scheduler.add_noise(
+                    rendered_latent, noise, t
+                )
+
+                updated_latent = latent_next * mask_i_next + rendered_noisy * (
+                    1 - mask_i_next
+                )
+
+                # blend according to mask
+                updated_latents[i_next] = updated_latent
 
         return updated_latents, clean_tex
 
@@ -399,6 +396,43 @@ class TexturingLogic:
         noise_preds = torch.stack(noise_preds, dim=0)
         return noise_preds
 
+    def txt_and_texture_guided_resampling(
+        self, clean_tex, latents, t, cond_embeddings, uncond_embeddings, cam_seq
+    ):
+        rendered_noise = self.render_noise_preds(
+            clean_tex,
+            latents,
+            t,
+            cam_seq,
+        )
+
+        if not self.do_text_and_texture_resampling:
+            return rendered_noise
+
+        self.attn_processor.injected_kvs = {}
+        latents_duplicated = torch.cat([latents] * 2)
+        both_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
+        depth_maps_duplicated = cam_seq.depth_maps * 2
+        noise_preds = self.pipe.model_forward(
+            latents_duplicated, both_embeddings, t, depth_maps_duplicated
+        )
+        noise_pred_uncond, noise_pred_cond = noise_preds.chunk(2)
+
+        w = self.guidance_scale
+        noise_tex = (1 / w) * (rendered_noise - noise_pred_uncond) + noise_pred_uncond
+
+        progress = self.pipe.denoising_progress(t)
+        w_texture = w * progress
+        w_text = w * (1 - progress)
+
+        noise_pred = (
+            noise_pred_uncond
+            + w_text * (noise_pred_cond - noise_pred_uncond)
+            + w_texture * (noise_tex - noise_pred_uncond)
+        )
+
+        return noise_pred
+
 
 @dataclass
 class TexturingConfig:
@@ -406,8 +440,10 @@ class TexturingConfig:
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
     uv_res: int = 600
-    module_paths: List[str] = []
-    quality_factor: float = 1.5
+    do_text_and_texture_resampling: bool = True
+    use_update_masks: bool = True
+    use_referecnce_kvs: bool = True
+    use_prev_clean_tex: bool = True
 
 
 class TexturingPipeline(BaseControlNetPipeline):
@@ -430,8 +466,9 @@ class TexturingPipeline(BaseControlNetPipeline):
             uv_res=conf.uv_res,
             guidance_scale=conf.guidance_scale,
             controlnet_conditioning_scale=conf.controlnet_conditioning_scale,
-            module_paths=conf.module_paths,
-            quality_factor=conf.quality_factor,
+            do_text_and_texture_resampling=conf.do_text_and_texture_resampling,
+            use_update_masks=conf.use_update_masks,
+            use_referecnce_kvs=conf.use_referecnce_kvs,
         )
 
         # configure scheduler
@@ -467,39 +504,43 @@ class TexturingPipeline(BaseControlNetPipeline):
             timesteps = self.get_partial_timesteps(conf.num_inference_steps, 0)
             latents = self.prepare_latents(len(seq), generator=generator)
 
-        clean_tex = torch.zeros(conf.uv_res, conf.uv_res, 3).cuda()
+        clean_tex = torch.zeros(method.uv_res, method.uv_res, 3).cuda()
 
         # denoising loop
         for t in tqdm(timesteps):
-            # clean_tex = torch.zeros_like(clean_tex)
-
             # Stage 1: autoregressively denoise to get denoised texture pred
-            updated_latents, clean_tex = method.attn_guided_mv_denoising(
+
+            if not (conf.use_update_masks and conf.use_prev_clean_tex):
+                clean_tex = torch.zeros_like(clean_tex)
+
+            latents, clean_tex = method.attn_guided_mv_sampling(
                 latents,
                 cond_embeddings,
                 uncond_embeddings,
                 t,
-                clean_tex,
                 cam_seq,
-                logger,
+                logger=logger,
                 generator=generator,
+                prev_clean_tex=clean_tex,
             )
-            logger.write("clean_tex", clean_tex, t=t)
 
-            # update latents
-            latents = updated_latents
+            logger.write(
+                "clean_tex",
+                clean_tex,
+                t=t,
+            )
 
             # Stage 2: obtain noise predictions
-            rendered_noise_pred = method.render_noise_preds(
+            noise_pred = method.txt_and_texture_guided_resampling(
                 clean_tex,
-                updated_latents,
+                latents,
                 t,
+                cond_embeddings,
+                uncond_embeddings,
                 cam_seq,
-                generator=generator,
             )
-            noise_pred = rendered_noise_pred
 
             # denoise latents
-            latents = self.scheduler.step(noise_pred, t, updated_latents).prev_sample
+            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         return self.decode_latents(latents, generator=generator)
