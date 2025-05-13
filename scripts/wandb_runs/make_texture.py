@@ -91,9 +91,9 @@ def make_texture(cfg: MakeTextureConfig, run_config: wbu.RunConfig):
     wbu.log_moviepy_clip("video", pil_frames_to_clip(images), fps=10)
 
     # project to texture
-    texture_res = 1000
+    texture_res = cfg.texgen.uv_res
     projections = compute_texel_projections(
-        seq.meshes, seq.cams, seq.verts_uvs, seq.faces_uvs, texture_res, raster_res=1000
+        seq.meshes, seq.cams, seq.verts_uvs, seq.faces_uvs, texture_res
     )
 
     texturing_frames_pt = [TF.to_tensor(f) for f in images]

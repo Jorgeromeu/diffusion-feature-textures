@@ -10,6 +10,7 @@ from rerun import Tensor
 
 from text3d2video.backprojection import (
     compute_texel_projection,
+    compute_texel_projections,
     project_views_to_video_texture,
 )
 
@@ -46,10 +47,9 @@ def mean_uv_mse(
     frames_pt = torch.stack(frames_pt).cuda()
 
     # compute projections
-    projections = [
-        compute_texel_projection(m, c, verts_uvs, faces_uvs, uv_res, raster_res=uv_res)
-        for m, c in zip(meshes, cameras)
-    ]
+    projections = compute_texel_projections(
+        meshes, cameras, verts_uvs, faces_uvs, uv_res
+    )
 
     # get video texture
     video_texture = project_views_to_video_texture(frames_pt, uv_res, projections)

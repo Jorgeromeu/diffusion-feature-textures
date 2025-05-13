@@ -5,6 +5,7 @@ from git import Optional
 
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
+from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
@@ -27,7 +28,7 @@ class RunGenerativeRenderingConfig:
     texture_tag: Optional[str] = None
     start_noise_level: float = 0.0
     seed: int = 0
-    kf_seed: int = 0
+    kf_seed: Optional[int] = None  # if none use main seed
     out_artifact: str = "video"
 
 
@@ -55,10 +56,10 @@ def run_generative_rendering(
 
     # read texture
     if cfg.texture_tag is not None:
-        texture = AnimationArtifact.from_wandb_artifact_tag(
+        texture = TextureArtifact.from_wandb_artifact_tag(
             cfg.texture_tag, download=True
         )
-        texture = texture.read_anim_seq()
+        texture = texture.read_texture()
     else:
         texture = None
 
@@ -70,7 +71,8 @@ def run_generative_rendering(
 
     # set seeds
     generator = torch.Generator(device=device).manual_seed(cfg.seed)
-    kf_generator = torch.Generator(device=device).manual_seed(cfg.kf_seed)
+    kf_seed = cfg.kf_seed if cfg.kf_seed is not None else cfg.seed
+    kf_generator = torch.Generator(device=device).manual_seed(kf_seed)
 
     # inference
     video_frames = pipe(
@@ -78,7 +80,7 @@ def run_generative_rendering(
         anim,
         conf=cfg.generative_rendering,
         src_anim=src_anim,
-        texture=None,
+        texture=texture,
         start_noise_level=cfg.start_noise_level,
         generator=generator,
         kf_generator=kf_generator,

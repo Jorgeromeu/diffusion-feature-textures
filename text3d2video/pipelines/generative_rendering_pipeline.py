@@ -51,7 +51,6 @@ from text3d2video.utilities.logging import (
 class GenerativeRenderingConfig:
     do_pre_attn_injection: bool = True
     do_post_attn_injection: bool = True
-    feature_blend_alpha: float = 0.8
     attend_to_self_kv: bool = False
     mean_features_weight: float = 0.5
     chunk_size: int = 5
@@ -169,6 +168,8 @@ class GenerativeRenderingLogic:
     def set_feature_blend_alpha_weights(self, progress_t: float):
         t_lowest_scale = 0.5
         layer_lowest_scale = 0.5
+        # t_lowest_scale = 0.6
+        # layer_lowest_scale = 0.9
 
         # get alpha at time step
         alpha_t = interpolate_to_factor(1, progress_t, t_lowest_scale)
@@ -305,11 +306,11 @@ class GenerativeRenderingLogic:
             pre_attn_features=injected_kvs, post_attn_features=injected_post_attn
         )
 
+        self.set_feature_blend_alpha_weights(progress)
+
         noise_pred = self.model_forward(
             latents_duplicated, embeddings, t, depth_maps_duplicated
         )
-
-        self.set_feature_blend_alpha_weights(progress)
 
         # classifier-free guidance
         noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)

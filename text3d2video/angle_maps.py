@@ -65,3 +65,9 @@ def render_view_angle_map(cam, mesh, resolution=512):
     theta[bg_mask] = 0
 
     return theta
+
+
+def render_view_angle_quality_map(cam, mesh, resolution=512):
+    angle = render_view_angle_map(cam, mesh, resolution=resolution)
+    quality = angle / torch.pi
+    return 1 - quality

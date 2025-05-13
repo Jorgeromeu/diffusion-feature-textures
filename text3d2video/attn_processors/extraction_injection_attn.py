@@ -109,8 +109,7 @@ class ExtractionInjectionAttn(BaseAttnProcessor):
 
         n_frames = hidden_states.shape[0] // self.n_chunks()
 
-        extended_attn = False
-
+        extended_attn = True
         if extended_attn:
             kv_x = extended_attn_kv_hidden_states(
                 hidden_states, chunk_size=self.n_chunks()

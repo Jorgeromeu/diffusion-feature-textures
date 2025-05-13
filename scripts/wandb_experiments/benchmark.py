@@ -3,20 +3,14 @@ from typing import List
 from attr import asdict, dataclass
 from hydra.utils import get_method
 from omegaconf import DictConfig, OmegaConf
-from pytorch3d.renderer.cameras import CamerasBase
-from pytorch3d.structures import Meshes
 
 import wandb_util.wandb_util as wbu
 from scripts.wandb_runs.make_texture import MakeTextureConfig, make_texture
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
-from text3d2video.artifacts.video_artifact import VideoArtifact
-from text3d2video.clip_metrics import CLIPMetrics
 from text3d2video.pipelines.pipeline_utils import ModelConfig
 from text3d2video.pipelines.texturing_pipeline import TexturingConfig
-from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
 from text3d2video.utilities.video_comparison import video_grid
 from text3d2video.utilities.video_util import pil_frames_to_clip
-from text3d2video.uv_consistency_metric import mean_uv_mse
 from wandb.apis.public import Run
 
 
@@ -105,12 +99,15 @@ class Method:
     fun_path: str
     base_config: DictConfig
 
-    def tabulate_row(self):
-        return {
+    def tabulate_row(self, with_config: bool = True):
+        row = {
             "name": self.name,
             "fun": self.fun_path.split(".")[-1],
-            "config": OmegaConf.to_yaml(self.base_config),
         }
+        if with_config:
+            row["config"] = OmegaConf.to_yaml(self.base_config)
+
+        return row
 
 
 @dataclass
@@ -159,24 +156,30 @@ def benchmark(config: BenchmarkConfig):
         for scene in config.scenes:
             texture_id = texture_identifier(scene.prompt, scene.texturing_tag)
 
-            scene_overrides = omegaconf_from_dotdict(
-                {
-                    "prompt": scene.prompt,
-                    "animation_tag": scene.animation_tag,
-                }
-            )
+            overrides = {
+                "prompt": scene.prompt,
+                "animation_tag": scene.animation_tag,
+                "seed": scene.seed,
+                "texture_tag": f"{texture_id}:latest",
+                "src_anim_tag": scene.src_tag,
+            }
 
-            uses_texture = "texture_tag" in method.base_config
-            if uses_texture:
-                scene_overrides["texture_tag"] = f"{texture_id}:latest"
+            overriden = method.base_config.copy()
 
-            overriden = OmegaConf.merge(method.base_config, scene_overrides)
+            for key, value in overrides.items():
+                use_field = (
+                    hasattr(method.base_config, key)
+                    and getattr(method.base_config, key) is not None
+                )
+                if use_field:
+                    overriden[key] = value
 
             fun = get_method(method.fun_path)
             run_spec = wbu.RunSpec(method.name, fun, overriden)
 
             # conditionally add texture dependency
-            if uses_texture:
+            use_texture = hasattr(method.base_config, "texture_tag")
+            if use_texture:
                 make_texture_spec = texture_runs_dict[texture_id]
                 run_spec.depends_on.append(make_texture_spec)
 
@@ -196,43 +199,3 @@ def split_runs(runs: list[Run]):
             video_gen_runs.append(run)
 
     return texture_runs, video_gen_runs
-
-
-@dataclass
-class GrRunData:
-    frames: list
-    prompt: str
-    cams: CamerasBase
-    meshes: Meshes
-    verts_uvs: list
-    faces_uvs: list
-    frame_consistency: float = None
-    prompt_fidelity: float = None
-    uv_mse: float = None
-
-    @classmethod
-    def from_run(cls, run: Run):
-        # get video
-        video = wbu.logged_artifacts(run, "video")[0]
-        video = VideoArtifact.from_wandb_artifact(video)
-        frames = video.read_frames()
-
-        # get prompt
-        prompt = OmegaConf.create(run.config).prompt
-
-        # get anim
-        anim = wbu.used_artifacts(run, "animation")[0]
-        anim = AnimationArtifact.from_wandb_artifact(anim)
-        cams, meshes = anim.load_frames()
-        verts_uvs, faces_uvs = anim.uv_data()
-
-        return cls(frames, prompt, cams, meshes, verts_uvs, faces_uvs)
-
-    def compute_clip_metrics(self, model: CLIPMetrics):
-        self.frame_consistency = model.frame_consistency(self.frames)
-        self.prompt_fidelity = model.prompt_fidelity(self.frames, self.prompt)
-
-    def compute_uv_mse(self):
-        self.uv_mse = mean_uv_mse(
-            self.frames, self.cams, self.meshes, self.verts_uvs, self.faces_uvs
-        )

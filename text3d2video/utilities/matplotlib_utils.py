@@ -1,5 +1,6 @@
 from typing import List
 
+import matplotlib.tri as mtri
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
@@ -175,3 +176,11 @@ def binary_masks_diff(ax: Axes, mask_before: Tensor, mask_after: Tensor):
     diff = mask_after.int() - mask_before.int()
     ax.imshow(diff == 1, cmap="Greens", alpha=0.8)
     ax.imshow(diff == -1, cmap="Reds", alpha=0.8)
+
+
+def mpl_uv_triangulation(verts_uvs: Tensor, faces_uvs: Tensor):
+    return mtri.Triangulation(
+        x=verts_uvs[:, 0].cpu(),
+        y=verts_uvs[:, 1].cpu(),
+        triangles=faces_uvs.cpu(),
+    )
