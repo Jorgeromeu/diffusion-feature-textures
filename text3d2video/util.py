@@ -181,9 +181,22 @@ def map_array(arr: np.ndarray, map_func: Callable, pbar=False) -> np.ndarray:
     if pbar:
         arr_flat = tqdm(arr_flat)
     mapped = [map_func(x) for x in arr_flat]
+
     B_flat = object_array(mapped)
-    B = B_flat.reshape(arr.shape)
+    B = B_flat.reshape(arr_flat.shape)
     return B
+
+
+def map_object_array(arr: np.ndarray, func) -> np.ndarray:
+    # Flatten input array
+    flat = arr.ravel()
+    # Apply func to each element
+    mapped = [func(x) for x in flat]
+    # Check output shape
+    out_shape = mapped[0].shape
+    # Stack and reshape
+    stacked = np.stack(mapped)
+    return stacked.reshape(*arr.shape, *out_shape)
 
 
 def group_into_array(entries: List, key_funs: List[Callable]) -> Dict:

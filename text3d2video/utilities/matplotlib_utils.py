@@ -1,12 +1,14 @@
-from typing import List
+from typing import Dict, List
 
 import matplotlib.tri as mtri
 import numpy as np
+from matplotlib import gridspec, patches
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from tomlkit import key_value
 from torch import Tensor
 
 
@@ -183,4 +185,125 @@ def mpl_uv_triangulation(verts_uvs: Tensor, faces_uvs: Tensor):
         x=verts_uvs[:, 0].cpu(),
         y=verts_uvs[:, 1].cpu(),
         triangles=faces_uvs.cpu(),
+    )
+
+
+def chunk_backwards(lst, chunk_size=2):
+    return [lst[max(0, i - chunk_size) : i] for i in range(len(lst), 0, -chunk_size)][
+        ::-1
+    ]
+
+
+# GRID
+
+
+def _make_grid(shapes: List, depth: int, dim_labels, outer_gs, fig, gap=0.1):
+    shape = shapes[0]
+    n_rows = shape[0]
+    n_cols = shape[1]
+
+    x_dim = depth * 2
+    y_dim = depth * 2 + 1
+    x_labels = dim_labels.get(x_dim, None)
+    y_labels = dim_labels.get(y_dim, None)
+
+    # make Axes
+    if len(shapes) == 1:
+        gs = gridspec.GridSpecFromSubplotSpec(
+            n_rows, n_cols, subplot_spec=outer_gs, wspace=gap, hspace=gap
+        )
+
+        axs = np.empty((n_rows, n_cols), dtype=object)
+        for i in range(n_rows):
+            for j in range(n_cols):
+                ax = fig.add_subplot(gs[i, j])
+                ax.set_xticks([])
+                ax.set_yticks([])
+                axs[i, j] = ax
+
+        if y_labels is not None:
+            for i, ax in enumerate(axs[0, :]):
+                ax.set_title(y_labels[i], fontsize=20)
+
+        if x_labels is not None:
+            for i, ax in enumerate(axs[:, 0]):
+                ax.set_ylabel(x_labels[i], fontsize=20)
+
+        return axs.squeeze()
+
+    # make another gridspec
+    else:
+        gs = gridspec.GridSpecFromSubplotSpec(
+            n_rows, n_cols, subplot_spec=outer_gs, hspace=gap, wspace=gap
+        )
+
+        all_axs = []
+        for i in range(n_rows):
+            row_axs = []
+            for j in range(n_cols):
+                cell = gs[i, j]
+                axs = _make_grid(shapes[1:], depth + 1, dim_labels, cell, fig, gap=gap)
+
+                # compute subgrid bbox
+                bboxes = [ax.get_position(fig.transFigure) for ax in axs.flatten()]
+                bbox = Bbox.union(bboxes)
+
+                if y_labels is not None:
+                    fig.text(
+                        bbox.x0 + bbox.width / 2,
+                        bbox.y1 + 0.01,
+                        y_labels[j],
+                        ha="center",
+                        va="bottom",
+                    )
+
+                if x_labels is not None:
+                    fig.text(
+                        bbox.x0 - 0.01,  # slightly to the left of the bbox
+                        bbox.y0 + bbox.height / 2,  # vertically centered
+                        x_labels[i],
+                        ha="right",
+                        va="center",
+                    )
+
+                row_axs.append(axs)
+            all_axs.append(np.stack(row_axs))
+
+        all_axs = np.stack(all_axs)
+
+        return all_axs.squeeze()
+
+
+def make_grid(shape: List[int], dim_labels: Dict[int, List[str]], scale=1, gap=0.1):
+    grid_shapes = chunk_backwards(shape)
+    if len(grid_shapes[0]) == 1:
+        grid_shapes[0] = [1] + grid_shapes[0]
+        dim_labels = {k + 1: v for k, v in dim_labels.items()}
+
+    shapes_np = np.array(grid_shapes)
+    height = np.prod(shapes_np[:, 0])
+    width = np.prod(shapes_np[:, 1])
+    fig = plt.figure(figsize=(width * scale, height * scale), constrained_layout=False)
+
+    gs = gridspec.GridSpec(1, 1, figure=fig)
+
+    return fig, _make_grid(grid_shapes, 0, dim_labels, gs[0], fig, gap=gap)
+
+
+# Rects
+
+
+def rectangle_from_bbox(bbox, edgecolor="red", facecolor="none", linewidth=2, **kwargs):
+    """Create a Rectangle patch from a Bbox."""
+    x0, y0 = bbox.x0, bbox.y0
+    width = bbox.width
+    height = bbox.height
+    return patches.Rectangle(
+        (x0, y0),
+        width,
+        height,
+        edgecolor=edgecolor,
+        facecolor=facecolor,
+        linewidth=linewidth,
+        **kwargs,
     )

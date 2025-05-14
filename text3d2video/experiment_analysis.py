@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
+import tabulate
 import torch
 import torchvision.transforms.functional as TF
 from attr import dataclass
@@ -8,7 +9,6 @@ from omegaconf import OmegaConf
 from rerun import Image
 
 import wandb_util.wandb_util as wbu
-from scripts.wandb_runs import render_texture_to_anim
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimSequence
 from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
@@ -138,3 +138,13 @@ class MakeTextureTraces:
         data.frames = frames
 
         return data
+
+
+def run_tabulate_row(run: Run):
+    return {
+        "name": run.name,
+    }
+
+
+def print_table(rows: List[Dict[str, str]]):
+    print(tabulate.tabulate(rows, headers="keys"))
