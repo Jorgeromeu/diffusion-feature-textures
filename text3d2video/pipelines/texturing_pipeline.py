@@ -182,45 +182,53 @@ class TexturingLogic:
         return newly_visible_masks
 
     def compute_uv_update_masks(self, seq: AnimSequence, logger=NULL_LOGGER):
-        raster_res = 1000
+        uv_res = 1000
         projections = compute_texel_projections(
             seq.meshes,
             seq.cams,
             seq.verts_uvs,
             seq.faces_uvs,
-            self.uv_res,
-            raster_res=raster_res,
+            uv_res,
         )
 
-        # compute quality maps based on image-space gradients
-        quality_maps = [
-            compute_uv_jacobian_map(c, m, seq.verts_uvs, seq.faces_uvs)
-            for c, m in zip(seq.cams, seq.meshes)
-        ]
-        quality_maps = torch.stack(quality_maps)
+        if self.use_update_masks:
+            # compute quality maps based on image-space gradients
+            quality_maps = [
+                compute_uv_jacobian_map(c, m, seq.verts_uvs, seq.faces_uvs)
+                for c, m in zip(seq.cams, seq.meshes)
+            ]
+            quality_maps = torch.stack(quality_maps)
 
-        for i, q in enumerate(quality_maps):
-            logger.write("quality_map", q, frame_i=i)
+            for i, q in enumerate(quality_maps):
+                logger.write("quality_map", q, frame_i=i)
 
-        # give some extra weight to first view
-        quality_maps[0] /= 2
+            # compute update masks
+            better_quality_masks = compute_autoregressive_update_masks(
+                seq.cams,
+                seq.meshes,
+                projections,
+                quality_maps,
+                uv_res,
+                seq.verts_uvs,
+                seq.faces_uvs,
+                quality_factor=1.5,
+            )
 
-        # compute update masks
-        better_quality_masks = compute_autoregressive_update_masks(
-            seq.cams,
-            seq.meshes,
-            projections,
-            quality_maps,
-            self.uv_res,
-            seq.verts_uvs,
-            seq.faces_uvs,
-            quality_factor=1.5,
-        )
+            # quality_factor 0: always update
+            # quality factor 1.1: update if better quality
+            # quality_factor high = newly visible
+            return better_quality_masks
 
-        # quality_factor 0: always update
-        # quality factor 1.1: update if better quality
-        # quality_factor high = newly visible
-        return better_quality_masks
+        else:
+            return compute_newly_visible_masks(
+                seq.cams,
+                seq.meshes,
+                projections,
+                uv_res,
+                512,
+                seq.verts_uvs,
+                seq.faces_uvs,
+            ).bool()
 
     def precompute_cam_seq(self, seq: AnimSequence, logger=NULL_LOGGER):
         # newly visible masks
@@ -320,14 +328,8 @@ class TexturingLogic:
 
             logger.write("clean_im", clean_im_rgb, t=t, frame_i=i)
 
-            # project texture
-            if self.use_update_masks:
-                update_mask = cam_seq.update_masks[i]
-                project_view_to_texture_masked(
-                    clean_tex, clean_im_rgb, update_mask, proj
-                )
-            else:
-                update_uv_texture(clean_tex, clean_im_rgb, proj)
+            update_mask = cam_seq.update_masks[i]
+            project_view_to_texture_masked(clean_tex, clean_im_rgb, update_mask, proj)
 
             # update next latent
             if i < len(cam_seq.cams) - 1:
@@ -510,7 +512,7 @@ class TexturingPipeline(BaseControlNetPipeline):
         for t in tqdm(timesteps):
             # Stage 1: autoregressively denoise to get denoised texture pred
 
-            if not (conf.use_update_masks and conf.use_prev_clean_tex):
+            if not conf.use_prev_clean_tex:
                 clean_tex = torch.zeros_like(clean_tex)
 
             latents, clean_tex = method.attn_guided_mv_sampling(

@@ -9,7 +9,6 @@ from pytorch3d.structures import Meshes
 from rerun import Tensor
 
 from text3d2video.backprojection import (
-    compute_texel_projection,
     compute_texel_projections,
     project_views_to_video_texture,
 )

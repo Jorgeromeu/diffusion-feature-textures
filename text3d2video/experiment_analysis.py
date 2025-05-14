@@ -1,17 +1,24 @@
+from dataclasses import dataclass
 from typing import List
 
+import torch
+import torchvision.transforms.functional as TF
 from attr import dataclass
 from omegaconf import OmegaConf
 from rerun import Image
 
 import wandb_util.wandb_util as wbu
-from scripts.wandb_runs.run_generative_rendering import RunGenerativeRenderingConfig
+from scripts.wandb_runs import render_texture_to_anim
 from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimSequence
+from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.clip_metrics import CLIPMetrics
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
+from text3d2video.pipelines.texturing_pipeline import TexturingConfig
+from text3d2video.rendering import render_texture
+from text3d2video.util import hwc_to_chw
 from text3d2video.utilities.video_comparison import VideoLabel, add_label_to_clip
 from text3d2video.utilities.video_util import pil_frames_to_clip
 from text3d2video.uv_consistency_metric import mean_uv_mse
@@ -88,3 +95,46 @@ class VideoTraces:
         content = "\n".join(rows).format(d=self)
         label = VideoLabel(content, font_size=30)
         return add_label_to_clip(clip, label, position=("left", "bottom"))
+
+
+@dataclass
+class MakeTextureTraces:
+    prompt: str = None
+    config: TexturingConfig = None
+    texture: torch.Tensor = None
+    texture_pil: Image = None
+    seq: AnimSequence = None
+    config: TexturingConfig = None
+    frames: List[Image] = None
+
+    @classmethod
+    def from_run(cls, run: Run):
+        data = cls()
+
+        # get prompt
+        config = OmegaConf.create(run.config)
+        data.config = config.texgen
+        data.prompt = config.prompt
+
+        # get anim
+        anim = wbu.used_artifacts(run, "animation")[0]
+        anim = AnimationArtifact.from_wandb_artifact(anim)
+        data.seq = anim.read_anim_seq()
+
+        # get texture
+        tex_art = wbu.logged_artifacts(run, "rgb_texture")[0]
+        tex_art = TextureArtifact.from_wandb_artifact(tex_art)
+        data.texture = tex_art.read_texture()
+        data.texture_pil = TF.to_pil_image(hwc_to_chw(data.texture.cpu()))
+
+        frames = render_texture(
+            data.seq.meshes,
+            data.seq.cams,
+            data.texture,
+            data.seq.verts_uvs,
+            data.seq.faces_uvs,
+            return_pil=True,
+        )
+        data.frames = frames
+
+        return data

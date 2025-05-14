@@ -6,12 +6,12 @@ from scripts.wandb_experiments.benchmark import (
 )
 from scripts.wandb_experiments.benchmark import Method as BenchmarkMethod
 from scripts.wandb_experiments.benchmark import Scene as BenchmarkScene
+from scripts.wandb_experiments.static_texture_benchmark import Scene as TexturingScene
 from scripts.wandb_experiments.static_texture_benchmark import (
-    Method,
     TexturingBenchmarkConfig,
+    TexturingMethod,
     texturing_benchmark,
 )
-from scripts.wandb_experiments.static_texture_benchmark import Scene as TexturingScene
 from scripts.wandb_runs.make_texture import MakeTextureConfig, make_texture
 from scripts.wandb_runs.run_generative_rendering import (
     RunGenerativeRenderingConfig,
@@ -63,7 +63,7 @@ def test_texturing_benchmark():
             model=ModelConfig(),
         )
     )
-    methods = [Method("GR", base_config, get_import_path(make_texture))]
+    methods = [TexturingMethod("GR", base_config, get_import_path(make_texture))]
     scenes = [TexturingScene("mv_cat_statue:latest", ["Cat"])]
 
     config = TexturingBenchmarkConfig(scenes=scenes, methods=methods)
