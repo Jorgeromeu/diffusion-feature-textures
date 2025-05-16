@@ -18,7 +18,6 @@ from text3d2video.backprojection import (
     compute_texel_projection,
     compute_texel_projections,
     project_view_to_texture_masked,
-    update_uv_texture,
 )
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (

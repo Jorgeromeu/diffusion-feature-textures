@@ -21,13 +21,17 @@ def load_pipeline(
     device = torch.device("cuda")
     dtype = torch.float16
 
-    controlnet = ControlNetModel.from_pretrained(controlnet_path, torch_dtype=dtype).to(
+    kwargs = {}
+
+    if controlnet_path is not None:
+        controlnet = ControlNetModel.from_pretrained(
+            controlnet_path, torch_dtype=dtype
+        ).to(device)
+        kwargs["controlnet"] = controlnet
+
+    pipe = pipeline_class.from_pretrained(sd_path, torch_dtype=dtype, **kwargs).to(
         device
     )
-
-    pipe = pipeline_class.from_pretrained(
-        sd_path, controlnet=controlnet, torch_dtype=dtype
-    ).to(device)
 
     pipe.scheduler = scheduler_class.from_config(pipe.scheduler.config)
 

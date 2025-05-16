@@ -22,13 +22,6 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
     Base Class for Stable Diffusion + ControlNet Pipelines
     """
 
-    def get_partial_timesteps(self, num_inference_steps: int, noise_level: float):
-        self.scheduler.set_timesteps(num_inference_steps)
-
-        start_index = int((len(self.scheduler.timesteps) - 1) * noise_level)
-        timesteps = self.scheduler.timesteps[start_index:]
-        return timesteps
-
     def __init__(
         self,
         vae: AutoencoderKL,

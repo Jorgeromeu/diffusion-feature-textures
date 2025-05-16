@@ -181,9 +181,8 @@ def map_array(arr: np.ndarray, map_func: Callable, pbar=False) -> np.ndarray:
     if pbar:
         arr_flat = tqdm(arr_flat)
     mapped = [map_func(x) for x in arr_flat]
-
     B_flat = object_array(mapped)
-    B = B_flat.reshape(arr_flat.shape)
+    B = B_flat.reshape(arr.shape)
     return B
 
 
@@ -283,3 +282,17 @@ def rgb_to_luminance(r, g, b):
 
 def interpolate_to_factor(x, alpha, factor):
     return x * (1 - alpha + alpha * factor)
+
+
+def index_list(lst: List, indices: List[int]) -> List:
+    """
+    Index a list with a list of indices
+    """
+
+    if isinstance(indices, slice):
+        return lst[indices]
+    if isinstance(indices, list):
+        return [lst[i] for i in indices]
+
+    else:
+        raise ValueError("indices must be a list or slice")

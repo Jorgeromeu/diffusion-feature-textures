@@ -180,6 +180,35 @@ def shade_meshes(
     return renders
 
 
+def shade_texture(
+    meshes,
+    fragments,
+    uv_map,
+    verts_uvs,
+    faces_uvs,
+    sampling_mode="bilinear",
+    return_pil=False,
+):
+    renders = []
+
+    shader = TextureShader()
+    meshes_copy = meshes.clone()
+    texture = make_repeated_uv_texture(
+        uv_map, faces_uvs, verts_uvs, sampling_mode=sampling_mode
+    )
+    for mesh, frags in zip(meshes_copy, fragments):
+        mesh.textures = texture
+        render = shader(frags, mesh)[0]
+        renders.append(render)
+
+    renders = torch.stack(renders)
+
+    if return_pil:
+        renders = [TF.to_pil_image(r.cpu()) for r in renders]
+
+    return renders
+
+
 def render_texture(
     meshes,
     cameras,
@@ -203,21 +232,6 @@ def render_texture(
         renders = [TF.to_pil_image(r.cpu()) for r in renders]
 
     return renders
-
-
-def shade_mesh(
-    mesh,
-    frags,
-    uv_map,
-    verts_uvs,
-    faces_uvs,
-):
-    shader = TextureShader()
-    texture = make_repeated_uv_texture(uv_map, faces_uvs, verts_uvs, N=1)
-    render_mesh = mesh.clone()
-    render_mesh.textures = texture
-    render = shader(frags, render_mesh)
-    return render[0]
 
 
 def compute_uv_jacobian_map(cam, mesh, verts_uvs, faces_uvs, res=512):

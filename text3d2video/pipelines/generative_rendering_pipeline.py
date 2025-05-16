@@ -30,6 +30,7 @@ from text3d2video.rendering import (
     render_depth_map,
     render_texture,
     shade_meshes,
+    shade_texture,
 )
 from text3d2video.sd_feature_extraction import (
     AttnLayerId,
@@ -51,13 +52,14 @@ from text3d2video.utilities.logging import (
 class GenerativeRenderingConfig:
     do_pre_attn_injection: bool = True
     do_post_attn_injection: bool = True
-    attend_to_self_kv: bool = False
+    attend_to_self_kv: bool = True
     mean_features_weight: float = 0.5
     chunk_size: int = 5
     num_inference_steps: int = 15
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
     num_keyframes: int = 3
+    feature_blend_alpha: float = 0.5
 
 
 @dataclass
@@ -122,7 +124,7 @@ def precompute_rasterization(
     return projections, fragments
 
 
-class GenerativeRenderingLogic:
+class GrLogic:
     def __init__(
         self,
         pipe: BaseControlNetPipeline,
@@ -132,6 +134,7 @@ class GenerativeRenderingLogic:
         do_pre_attn_injection: bool = True,
         do_post_attn_injection: bool = True,
         also_attend_to_self: bool = True,
+        feature_blend_alpha: float = 0.5,
     ):
         self.pipe = pipe
         self.controlnet_conditioning_scale = controlnet_conditioning_scale
@@ -140,6 +143,20 @@ class GenerativeRenderingLogic:
         self.do_pre_attn_injection = do_pre_attn_injection
         self.do_post_attn_injection = do_post_attn_injection
         self.also_attend_to_self = also_attend_to_self
+        self.feature_blend_alpha = feature_blend_alpha
+
+    @classmethod
+    def from_gr_config(cls, pipe, cfg: GenerativeRenderingConfig):
+        return cls(
+            pipe,
+            guidance_scale=cfg.guidance_scale,
+            controlnet_conditioning_scale=cfg.controlnet_conditioning_scale,
+            mean_features_weight=cfg.mean_features_weight,
+            do_pre_attn_injection=cfg.do_pre_attn_injection,
+            do_post_attn_injection=cfg.do_post_attn_injection,
+            also_attend_to_self=cfg.attend_to_self_kv,
+            feature_blend_alpha=cfg.feature_blend_alpha,
+        )
 
     def set_attn_processor(self):
         # get up-SA layers
@@ -151,7 +168,9 @@ class GenerativeRenderingLogic:
         )
 
         # assign feature blend alphas
-        feature_blend_alphas = {layer: 0.5 for layer in self.module_paths}
+        feature_blend_alphas = {
+            layer: self.feature_blend_alpha for layer in self.module_paths
+        }
 
         self.attn_processor = ExtractionInjectionAttn(
             self.pipe.unet,
@@ -279,7 +298,6 @@ class GenerativeRenderingLogic:
         uncond_kv_features: Dict[str, Float[Tensor, "b t d"]],
         cond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
         uncond_rendered_features: Dict[str, Float[Tensor, "b f t d"]],
-        progress: float = 1.0,
     ) -> Tensor:
         latents_duplicated = torch.cat([latents] * 2)
         embeddings = torch.cat([uncond_embeddings, cond_embeddings])
@@ -305,8 +323,6 @@ class GenerativeRenderingLogic:
         self.attn_processor.set_injection_mode(
             pre_attn_features=injected_kvs, post_attn_features=injected_post_attn
         )
-
-        self.set_feature_blend_alpha_weights(progress)
 
         noise_pred = self.model_forward(
             latents_duplicated, embeddings, t, depth_maps_duplicated
@@ -392,12 +408,12 @@ def sample_keyframe_indices(
 
 
 @dataclass
-class GenerativeRenderingOutput:
+class GrOutput:
     images: List[Image.Image]
     extr_images: Optional[List[Image.Image]] = None
 
 
-class GenerativeRenderingPipeline(BaseControlNetPipeline):
+class GrPipeline(BaseControlNetPipeline):
     @torch.no_grad()
     def __call__(
         self,
@@ -416,20 +432,11 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         noise_texture = UVNoiseInitializer(noise_texture_res=120)
 
         # setup GR logic
-        gr = GenerativeRenderingLogic(
-            self,
-            guidance_scale=conf.guidance_scale,
-            controlnet_conditioning_scale=conf.controlnet_conditioning_scale,
-            mean_features_weight=conf.mean_features_weight,
-            do_pre_attn_injection=conf.do_pre_attn_injection,
-            do_post_attn_injection=conf.do_post_attn_injection,
-            also_attend_to_self=conf.attend_to_self_kv,
-        )
+        gr = GrLogic.from_gr_config(self, conf)
         gr.set_attn_processor()
 
-        use_texture = texture is not None
-
         # configure scheduler
+        use_texture = texture is not None
         if use_texture:
             timesteps = self.get_partial_timesteps(
                 conf.num_inference_steps, start_noise_level
@@ -448,7 +455,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
 
         # initialize latents
-        # TODO support taking in the float and the texture and starting denoising from there
         noise_texture.sample_background(generator)
         noise_texture.sample_noise_texture(generator)
 
@@ -591,8 +597,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
             # write feature texture
             write_feature_dict(logger, "feat_tex_cond", textures_cond, t)
 
-            progress = self.denoising_progress(t)
-
             # denoise anim latents
             noise_preds = []
             for chunk_frame_indices in chunks_indices:
@@ -605,15 +609,15 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     chunk_meshes = anim.meshes[chunk_frame_indices]
                     res_idx = layer_resolution_indices[layer]
                     frags = [f[res_idx] for f in chunk_frags]
-                    texture = make_repeated_uv_texture(
+
+                    return shade_texture(
+                        chunk_meshes,
+                        frags,
                         uv_map,
                         anim.faces_uvs,
                         anim.verts_uvs,
                         sampling_mode="nearest",
-                        N=1,
                     )
-                    shader = TextureShader()
-                    return shade_meshes(shader, texture, chunk_meshes, frags)
 
                 renders_uncond = dict_map(textures_uncond, render_chunk)
                 renders_cond = dict_map(textures_cond, render_chunk)
@@ -633,7 +637,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     feats.uncond_kv,
                     renders_cond,
                     renders_uncond,
-                    progress=progress,
                 )
 
                 noise_preds.append(noise_pred)
@@ -650,15 +653,14 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     extr_meshes = src_anim.meshes
                     res_idx = layer_resolution_indices[layer]
                     frags = [f[res_idx] for f in extr_fragments]
-                    texture = make_repeated_uv_texture(
+
+                    return shade_texture(
+                        extr_meshes,
+                        frags,
                         uv_map,
-                        anim.faces_uvs,
-                        anim.verts_uvs,
-                        sampling_mode="nearest",
-                        N=1,
+                        src_anim.faces_uvs,
+                        src_anim.verts_uvs,
                     )
-                    shader = TextureShader()
-                    return shade_meshes(shader, texture, extr_meshes, frags)
 
                 renders_uncond = dict_map(textures_uncond, render_extr_feats)
                 renders_cond = dict_map(textures_cond, render_extr_feats)
@@ -674,7 +676,6 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
                     feats.uncond_kv,
                     renders_cond,
                     renders_uncond,
-                    progress=progress,
                 )
 
                 extr_latents = self.scheduler.step(
@@ -692,4 +693,4 @@ class GenerativeRenderingPipeline(BaseControlNetPipeline):
         else:
             extr_ims = None
 
-        return GenerativeRenderingOutput(images=ims, extr_images=extr_ims)
+        return GrOutput(images=ims, extr_images=extr_ims)

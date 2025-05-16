@@ -54,9 +54,9 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
             do_normalize=False,
         )
 
-    def encode_prompt(self, prompts: List[str]):
+    def encode_prompt(self, prompts: List[str], negative_prompts=None):
         # tokenize prompts
-        text_input = self.tokenizer(
+        cond_input = self.tokenizer(
             prompts,
             padding="max_length",
             max_length=self.tokenizer.model_max_length,
@@ -66,18 +66,35 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
 
         # Get CLIP embedding
         with torch.no_grad():
-            cond_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
+            cond_embs = self.text_encoder(cond_input.input_ids.to(self.device))[0]
 
-        max_length = text_input.input_ids.shape[-1]
-        uncond_input = self.tokenizer(
-            [""] * len(prompts),
-            padding="max_length",
-            max_length=max_length,
-            return_tensors="pt",
-        )
-        uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
+        if negative_prompts is not None:
+            assert len(prompts) == len(
+                negative_prompts
+            ), "prompts and negative prompts must be the same length"
 
-        return cond_embeddings, uncond_embeddings
+            uncond_input = self.tokenizer(
+                negative_prompts,
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+
+        else:
+            # create uncond embedding
+            max_length = cond_input.input_ids.shape[-1]
+            uncond_input = self.tokenizer(
+                [""] * len(prompts),
+                padding="max_length",
+                max_length=max_length,
+                return_tensors="pt",
+            )
+
+        with torch.no_grad():
+            uncond_embs = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
+
+        return cond_embs, uncond_embs
 
     def prepare_latents(self, batch_size: int, generator=None):
         noise_init = RandomNoiseInitializer()
@@ -142,12 +159,21 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
 
         return torch.cat(encoded_chunks, dim=0)
 
+    def get_partial_timesteps(self, num_inference_steps: int, noise_level: float):
+        self.scheduler.set_timesteps(num_inference_steps)
+
+        start_index = int((len(self.scheduler.timesteps) - 1) * noise_level)
+        timesteps = self.scheduler.timesteps[start_index:]
+        return timesteps
+
     @torch.no_grad()
     def __call__(
         self,
         prompts: List[str],
         num_inference_steps=30,
         guidance_scale=7.5,
+        start_latents=None,
+        start_noise_level=0,
         generator=None,
     ):
         # number of images being generated
@@ -161,10 +187,16 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps)
 
         # initialize latents from standard normal
-        latents = self.prepare_latents(batch_size, generator)
+        if start_latents is None:
+            latents = self.prepare_latents(batch_size, generator)
+        else:
+            latents = start_latents.clone()
+
+        timesteps = self.get_partial_timesteps(10, 0.5)
+        print(timesteps[0])
 
         # denoising loop
-        for _, t in enumerate(tqdm(self.scheduler.timesteps)):
+        for _, t in enumerate(tqdm(timesteps)):
             # duplicate latent, to feed to model with CFG
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)

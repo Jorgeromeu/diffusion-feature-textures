@@ -1,0 +1,652 @@
+exp_name: benchmark_big
+function_path: scripts.wandb_experiments.benchmark.benchmark
+config:
+  scenes:
+  - animation_tag: mv_cat_statue_25:latest
+    texturing_tag: cat_statue_mv:latest
+    src_tag: cat_statue_mv:latest
+    prompt: Metalic Cat Statue
+    seed: 0
+  - animation_tag: ymca_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: ymca_src:latest
+    prompt: Stormtrooper
+    seed: 0
+  - animation_tag: ymca_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: ymca_src:latest
+    prompt: Deadpool
+    seed: 0
+  - animation_tag: rumba_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: rumba_src:latest
+    prompt: Stormtrooper
+    seed: 0
+  - animation_tag: catwalk_180_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: catwalk_180_src:latest
+    prompt: Deadpool
+    seed: 0
+  - animation_tag: catwalk_180_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: catwalk_180_src:latest
+    prompt: Deadpool
+    seed: 1
+  - animation_tag: catwalk_180_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: catwalk_180_src:latest
+    prompt: Deadpool
+    seed: 2
+  - animation_tag: mv_helmet_25:latest
+    texturing_tag: mv_helmet:latest
+    src_tag: mv_helmet:latest
+    prompt: Shiny Helmet
+    seed: 0
+  - animation_tag: joyful_jump_20:latest
+    texturing_tag: human_mv:latest
+    src_tag: joyful_jump_src:latest
+    prompt: Stormtrooper
+    seed: 0
+
+
+  methods:
+  - name: GR-0
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: None
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-1
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: None
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-2
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: None
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-3
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: None
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-4
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: None
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-5
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: None
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-6
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-7
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-8
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-9
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-10
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-11
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.0
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-12
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.2
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-13
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.2
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-14
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.2
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-15
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.2
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-16
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.2
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-17
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.2
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-18
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.4
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-19
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.4
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-20
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: None
+      texture_tag: null
+      start_noise_level: 0.4
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-21
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.2
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.4
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-22
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.5
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.4
+      seed: 0
+      kf_seed: null
+      out_artifact: video
+  - name: GR-23
+    fun_path: scripts.wandb_runs.run_generative_rendering.run_generative_rendering
+    base_config:
+      prompt: ''
+      animation_tag: ''
+      generative_rendering:
+        do_pre_attn_injection: true
+        do_post_attn_injection: true
+        attend_to_self_kv: true
+        mean_features_weight: 0.5
+        chunk_size: 5
+        num_inference_steps: 15
+        guidance_scale: 7.5
+        controlnet_conditioning_scale: 1.0
+        num_keyframes: 3
+        feature_blend_alpha: 0.8
+      model:
+        sd_repo: runwayml/stable-diffusion-v1-5
+        controlnet_repo: lllyasviel/control_v11f1p_sd15_depth
+      src_anim_tag: null
+      texture_tag: null
+      start_noise_level: 0.4
+      seed: 0
+      kf_seed: null
+      out_artifact: video

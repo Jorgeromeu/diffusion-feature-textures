@@ -274,7 +274,12 @@ def _make_grid(shapes: List, depth: int, dim_labels, outer_gs, fig, gap=0.1):
         return all_axs.squeeze()
 
 
-def make_grid(shape: List[int], dim_labels: Dict[int, List[str]], scale=1, gap=0.1):
+def make_grid(
+    shape: List[int], dim_labels: Dict[int, List[str]] = None, scale=3, gap=0.1
+):
+    if dim_labels is None:
+        dim_labels = {}
+
     grid_shapes = chunk_backwards(shape)
     if len(grid_shapes[0]) == 1:
         grid_shapes[0] = [1] + grid_shapes[0]

@@ -9,7 +9,7 @@ from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
-    GenerativeRenderingPipeline,
+    GrPipeline,
 )
 from text3d2video.pipelines.pipeline_utils import (
     ModelConfig,
@@ -65,9 +65,7 @@ def run_generative_rendering(
 
     # load pipeline
     device = torch.device("cuda")
-    pipe = load_pipeline(
-        GenerativeRenderingPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo
-    )
+    pipe = load_pipeline(GrPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo)
 
     # set seeds
     generator = torch.Generator(device=device).manual_seed(cfg.seed)

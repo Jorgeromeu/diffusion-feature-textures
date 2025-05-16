@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional
 import matplotlib.patches as mpatches
 import networkx as nx
 from attr import dataclass
+from hydra.utils import get_method
 from matplotlib import cm
 from matplotlib import pyplot as plt
 from moviepy.editor import ImageSequenceClip
@@ -624,3 +625,17 @@ def visualize_spec(spec: List[RunSpec], with_labels=True):
         return node.run_fun.__name__
 
     draw_dag(dag, with_labels=with_labels, label_fun=label_fun, color_fun=color_fun)
+
+
+@dataclass
+class ExperimentConfig:
+    exp_name: str
+    function_path: str
+    config: DictConfig
+
+    def sync_experiment(self, rerun_all=False, interactive=True):
+        # sync experiment
+        name = self.exp_name
+        fun = get_method(self.function_path)
+        cfg = self.config
+        sync_experiment(fun, cfg, name, rerun_all=rerun_all, interactive=interactive)
