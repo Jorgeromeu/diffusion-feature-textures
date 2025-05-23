@@ -26,7 +26,8 @@ def read_obj_with_uvs(obj_path: str, device="cuda", normalize=True):
     faces_uvs = faces.textures_idx.to(device)
 
     mesh = load_objs_as_meshes([obj_path], device=device)
-    mesh = normalize_meshes(mesh)
+    if normalize:
+        mesh = normalize_meshes(mesh)
     return mesh, verts_uvs, faces_uvs
 
 
@@ -296,3 +297,27 @@ def index_list(lst: List, indices: List[int]) -> List:
 
     else:
         raise ValueError("indices must be a list or slice")
+
+
+def cluster_by_threshold(values, threshold):
+    indexed = sorted(enumerate(values), key=lambda x: x[1])
+    clusters = [[indexed[0][0]]]
+
+    for (idx, val), (prev_idx, prev_val) in zip(indexed[1:], indexed):
+        if abs(val - prev_val) <= threshold:
+            clusters[-1].append(idx)
+        else:
+            clusters.append([idx])
+
+    return clusters
+
+
+def cluster_by_key(values, key):
+    clusters = {}
+
+    for val in values:
+        key_val = key(val)
+        if key_val not in clusters:
+            clusters[key_val] = []
+        clusters[key_val].append(val)
+    return clusters

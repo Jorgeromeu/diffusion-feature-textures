@@ -10,7 +10,6 @@ from pytorch3d.structures import Meshes
 from rerun import Tensor
 from tqdm import tqdm
 
-from text3d2video.artifacts.anim_artifact import AnimSequence
 from text3d2video.attn_processors.final_attn_processor import FinalAttnProcessor
 from text3d2video.backprojection import (
     TexelProjection,
@@ -19,10 +18,12 @@ from text3d2video.backprojection import (
     compute_texel_projections,
     project_view_to_texture_masked,
 )
+from text3d2video.mip import render_uv_jacobian_magnitude_map
+from text3d2video.pipelines.base_pipeline import PipelineOutput
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
+    AnimSequence,
     compute_autoregressive_update_masks,
-    compute_uv_jacobian_map,
     downsample_masks,
     make_mesh_rasterizer,
     render_texture,
@@ -193,7 +194,9 @@ class TexturingLogic:
         if self.use_update_masks:
             # compute quality maps based on image-space gradients
             quality_maps = [
-                compute_uv_jacobian_map(c, m, seq.verts_uvs, seq.faces_uvs)
+                render_uv_jacobian_magnitude_map(
+                    m, c, seq.verts_uvs, seq.faces_uvs
+                ).cpu()
                 for c, m in zip(seq.cams, seq.meshes)
             ]
             quality_maps = torch.stack(quality_maps)
@@ -461,6 +464,8 @@ class TexturingPipeline(BaseControlNetPipeline):
     ):
         n_frames = len(seq)
 
+        all_latents = {}
+
         # make texgen logic object
         method = TexturingLogic(
             self,
@@ -541,7 +546,14 @@ class TexturingPipeline(BaseControlNetPipeline):
                 cam_seq,
             )
 
+            all_latents[t.item()] = latents
+
             # denoise latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
-        return self.decode_latents(latents, generator=generator)
+        all_latents[0] = latents
+
+        return PipelineOutput(
+            images=self.decode_latents(latents, generator=generator),
+            latents=all_latents,
+        )

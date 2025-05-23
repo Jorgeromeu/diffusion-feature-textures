@@ -55,7 +55,8 @@ def display_ims_grid(
             if hide_ticks:
                 ax.set_xticks([])
                 ax.set_yticks([])
-                ax.set_frame_on(False)
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
 
             if row_i == 0 and col_titles is not None:
                 ax.set_title(col_titles[col_i])

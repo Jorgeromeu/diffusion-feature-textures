@@ -6,10 +6,10 @@ from scripts.wandb_experiments.benchmark import (
 )
 from scripts.wandb_experiments.benchmark import Method as BenchmarkMethod
 from scripts.wandb_experiments.benchmark import Scene as BenchmarkScene
-from scripts.wandb_experiments.static_texture_benchmark import Scene as TexturingScene
 from scripts.wandb_experiments.static_texture_benchmark import (
     TexturingBenchmarkConfig,
     TexturingMethod,
+    TexturingScene,
     texturing_benchmark,
 )
 from scripts.wandb_runs.make_texture import MakeTextureConfig, make_texture

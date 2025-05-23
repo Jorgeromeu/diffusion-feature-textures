@@ -7,7 +7,7 @@ from pytorch3d.renderer import CamerasBase
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import render_depth_map, render_rgb_uv_map
+from text3d2video.rendering import AnimSequence
 from text3d2video.util import ordered_sample
 from wandb_util.wandb_util import ArtifactWrapper
 
@@ -16,26 +16,6 @@ from wandb_util.wandb_util import ArtifactWrapper
 class AnimationConfig:
     n_frames: int
     artifact_tag: str
-
-
-@dataclass
-class AnimSequence:
-    cams: CamerasBase
-    meshes: Meshes
-    verts_uvs: Tensor
-    faces_uvs: Tensor
-
-    def __len__(self):
-        return len(self.cams)
-
-    def render_depth_maps(self):
-        """
-        Returns a list of depth maps for each frame in the animation sequence.
-        """
-        return render_depth_map(self.meshes, self.cams)
-
-    def render_rgb_uv_maps(self):
-        return render_rgb_uv_map(self.meshes, self.cams, self.verts_uvs, self.faces_uvs)
 
 
 class AnimationArtifact(ArtifactWrapper):

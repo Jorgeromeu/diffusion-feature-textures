@@ -11,7 +11,7 @@ from tqdm import tqdm
 import text3d2video.utilities.rerun_util as ru
 import wandb
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
-from text3d2video.rendering import render_depth_map
+from text3d2video.rendering import AnimSequence, render_depth_map
 from text3d2video.util import ordered_sample
 from text3d2video.utilities.camera_utils import focal_length_to_fov
 from text3d2video.utilities.coord_utils import (
@@ -25,6 +25,95 @@ from text3d2video.utilities.usd_utils import triangulate_usd_mesh, usd_uvs_to_pt
 
 BLENDER_WORLD_CONVENTION = rr.ViewCoordinates.RFU
 BLENDER_CAM_CONVENTION = rr.ViewCoordinates.RUB
+
+
+def create_anim_from_usd(
+    usd_path: str, render_res=100, n_frames: int = 30, device="cuda"
+) -> AnimSequence:
+    # open usd file
+    stage = Usd.Stage.Open(usd_path)
+
+    # find mesh/cam
+    for prim in stage.Traverse():
+        if prim.IsA(UsdGeom.Mesh):
+            mesh = UsdGeom.Mesh(prim)
+
+        if prim.IsA(UsdGeom.Camera):
+            camera = UsdGeom.Camera(prim)
+
+    # read mesh topology
+    face_vert_indices = Tensor(mesh.GetFaceVertexIndicesAttr().Get()).long()
+    face_vertex_counts = Tensor(mesh.GetFaceVertexCountsAttr().Get()).long()
+    triangle_indices = triangulate_usd_mesh(face_vertex_counts, face_vert_indices)
+
+    # read uvs
+    uv = Tensor(mesh.GetPrim().GetProperty("primvars:st").Get())
+    verts_uvs, faces_uvs = usd_uvs_to_pt3d_uvs(uv, len(triangle_indices))
+    verts_uvs = verts_uvs.to(device)
+    faces_uvs = faces_uvs.to(device)
+
+    # iterate over frames
+    start_time = int(stage.GetStartTimeCode())
+    end_time = int(stage.GetEndTimeCode())
+    frame_indices = list(range(start_time, end_time + 1))
+
+    if n_frames is not None:
+        frame_indices = ordered_sample(frame_indices, n_frames)
+
+    cams_pt3d = []
+    meshes_pt3d = []
+
+    for i, frame in enumerate(tqdm(frame_indices)):
+        xform_cache = UsdGeom.XformCache(time=frame)
+
+        # mesh to world transform
+        m2w = xform_cache.GetLocalToWorldTransform(mesh.GetPrim())
+        m2w = Tensor(m2w).T
+
+        # mesh world coords at frame
+        verts = Tensor(mesh.GetPointsAttr().Get(frame)).float()
+        verts_world = apply_transform_homogeneous(verts, m2w)
+
+        # camera extrinsics
+        c2w = xform_cache.GetLocalToWorldTransform(camera.GetPrim())
+        c2w = Tensor(c2w).T
+        cam_t, _, cam_r = decompose_transform_srt(c2w)
+
+        # camera intrinsics
+        focal_length = camera.GetFocalLengthAttr().Get()
+        height = camera.GetVerticalApertureAttr().Get()
+
+        # mesh world coordinates in pt3d space at frame
+        verts_world_pt3d = verts_world @ BLENDER_WORLD_TO_PT3D_WORLD.T
+        mesh_pt3d = Meshes(verts=[verts_world_pt3d], faces=[triangle_indices])
+
+        # c2w in pt3d space
+        cam_r_pt3d = BLENDER_WORLD_TO_PT3D_WORLD @ cam_r @ BLENDER_CAM_TO_PT3D_CAM
+        cam_t_pt3d = BLENDER_WORLD_TO_PT3D_WORLD @ cam_t
+        c2w_pt3d = assemble_transform_srt(cam_t_pt3d, torch.ones(3), cam_r_pt3d)
+
+        # construct pt3d camera
+        w2c_pt3d = c2w_pt3d.inverse()
+        t_w2c, _, r_w2c = decompose_transform_srt(w2c_pt3d)
+
+        fov = focal_length_to_fov(focal_length, height)
+        cam_pt3d = FoVPerspectiveCameras(
+            R=r_w2c.T.unsqueeze(0), T=t_w2c.unsqueeze(0), fov=fov
+        )
+
+        cams_pt3d.append(cam_pt3d)
+        meshes_pt3d.append(mesh_pt3d)
+
+    cams_pt3d = join_cameras_as_batch(cams_pt3d).to(device)
+    meshes_pt3d = join_meshes_as_batch(meshes_pt3d).to(device)
+
+    seq = AnimSequence(
+        cams=cams_pt3d,
+        meshes=meshes_pt3d,
+        verts_uvs=verts_uvs,
+        faces_uvs=faces_uvs,
+    )
+    return seq
 
 
 def create_animation_from_usd(

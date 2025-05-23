@@ -14,7 +14,11 @@ from pytorch3d.renderer.cameras import OrthographicCameras
 from pytorch3d.structures import Meshes
 from torch import Tensor
 
-from text3d2video.rendering import dilate_frags, make_mesh_rasterizer, render_texture
+from text3d2video.rendering import (
+    downsample_frags,
+    make_mesh_rasterizer,
+    render_texture,
+)
 from text3d2video.util import (
     hwc_to_chw,
     sample_feature_map_ndc,
@@ -31,6 +35,7 @@ class TexelProjection:
 
     xys: Tensor  # (N, 2) float pixel coordinates
     uvs: Tensor  # (N, 2) unique UV coordinates
+    uv_resolution: int = 0  # resolution of the UV map
 
 
 def compute_texel_projection_old(
@@ -92,7 +97,24 @@ def compute_texel_projection_old(
     texel_coords, coord_pix_indices = unique_with_indices(uv_pix_coords, dim=0)
     texel_xy_coords = xys[coord_pix_indices, :]
 
-    return TexelProjection(xys=texel_xy_coords, uvs=texel_coords)
+    return TexelProjection(
+        xys=texel_xy_coords, uvs=texel_coords, uv_resolution=texture_res
+    )
+
+
+def rasterize_uv_mesh(verts_uvs, faces_uvs, uv_res=512, blur_radius=0.0):
+    verts_uvs_ndc = verts_uvs * 2 - 1
+    verts_uvs_xyz = torch.cat(
+        [verts_uvs_ndc, torch.zeros_like(verts_uvs[:, :1])], dim=-1
+    )
+    uv_mesh = Meshes(verts=[verts_uvs_xyz], faces=[faces_uvs])
+
+    # rasterize uv mesh
+    R, T = front_facing_extrinsics(zs=1)
+    uv_camera = OrthographicCameras(R=R, T=T, device="cuda")
+    uv_rasterizer = make_mesh_rasterizer(resolution=uv_res, blur_radius=blur_radius)
+
+    return uv_rasterizer(uv_mesh, cameras=uv_camera)
 
 
 def compute_texel_projection(
@@ -102,6 +124,7 @@ def compute_texel_projection(
     faces_uvs: Tensor,
     texture_res: int,
     raster_res=1000,
+    factor=2,
     visible_only=True,
 ) -> TexelProjection:
     """
@@ -115,20 +138,10 @@ def compute_texel_projection(
     :return TexelProjection
     """
 
-    # Construct UV mesh
-    verts_uvs_ndc = verts_uvs * 2 - 1
-    verts_uvs_xyz = torch.cat(
-        [verts_uvs_ndc, torch.zeros_like(verts_uvs[:, :1])], dim=-1
+    uv_frags = rasterize_uv_mesh(
+        verts_uvs, faces_uvs, uv_res=texture_res * factor, blur_radius=1e-5
     )
-    uv_mesh = Meshes(verts=[verts_uvs_xyz], faces=[faces_uvs])
-
-    # rasterize uv mesh
-    R, T = front_facing_extrinsics(zs=1)
-    uv_camera = OrthographicCameras(R=R, T=T, device="cuda")
-    uv_rasterizer = make_mesh_rasterizer(resolution=texture_res, blur_radius=1e-6)
-    uv_frags = uv_rasterizer(uv_mesh, cameras=uv_camera)
-
-    uv_frags = dilate_frags(uv_frags, iterations=1)
+    uv_frags = downsample_frags(uv_frags, factor=factor)
 
     pix_to_face = uv_frags.pix_to_face[0, ..., 0]
     bary_coords = uv_frags.bary_coords[0, :, :, 0, :]
@@ -184,7 +197,7 @@ def compute_texel_projection(
     uvs = uv[valid_mask]
     uvs = uvs[visible_mask]
 
-    return TexelProjection(xys=visible_xys, uvs=uvs)
+    return TexelProjection(xys=visible_xys, uvs=uvs, uv_resolution=texture_res)
 
 
 def compute_texel_projections(
@@ -349,12 +362,23 @@ def project_view_to_texture_masked(
 
 def project_views_to_video_texture(
     feature_maps: Float[Tensor, "n c h w"],
-    uv_resolution: int,
     projections: List[TexelProjection],
 ):
+    assert feature_maps.ndim == 4, "Feature maps must be 4D (T, C, H, W)"
+    assert len(feature_maps) == len(
+        projections
+    ), "Number of feature maps and projections must match"
+
+    uv_resolutions = [projection.uv_resolution for projection in projections]
+    assert (
+        len(set(uv_resolutions)) == 1
+    ), "All projections must have the same resolution"
+    uv_resolution = uv_resolutions[0]
+    d = feature_maps.shape[1]
+
     texture_frames = []
     for i in range(len(feature_maps)):
-        texture = torch.zeros(uv_resolution, uv_resolution, 3).to(feature_maps)
+        texture = torch.zeros(uv_resolution, uv_resolution, d).to(feature_maps)
         view = feature_maps[i]
         update_uv_texture(texture, view, projections[i])
         texture_frames.append(texture)
@@ -370,8 +394,9 @@ def display_projection(
     alpha=0.2,
     uv_image=None,
     xy_image=None,
+    scale=4,
 ):
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    fig, axs = plt.subplots(1, 2, figsize=(2 * scale, 1 * scale))
 
     ax_xy = axs[0]
     ax_uv = axs[1]

@@ -3,6 +3,7 @@ from pytorch3d.renderer import (
     FoVPerspectiveCameras,
     look_at_view_transform,
 )
+from pytorch3d.renderer.camera_utils import join_cameras_as_batch
 from scipy.spatial.transform import Rotation
 
 from text3d2video.utilities.coord_utils import (
@@ -71,3 +72,28 @@ def cam_view_prompt(angle, elev):
         return "back"
     else:
         return "side"
+
+
+def interpolate_fov_cameras(cam_start, cam_end, steps):
+    R_start, T_start = cam_start.R, cam_start.T
+    R_end, T_end = cam_end.R, cam_end.T
+    fov_start = cam_start.fov
+    fov_end = cam_end.fov
+
+    cameras = []
+    for alpha in torch.linspace(0, 1, steps):
+        alpha = alpha.cuda()
+        R = torch.lerp(R_start, R_end, alpha)
+        T = torch.lerp(T_start, T_end, alpha)
+        fov = torch.lerp(fov_start, fov_end, alpha)
+        cam = FoVPerspectiveCameras(
+            R=R,
+            T=T,
+            fov=fov,
+            znear=cam_start.znear,
+            zfar=cam_start.zfar,
+            device=R.device,
+        )
+        cameras.append(cam)
+
+    return join_cameras_as_batch(cameras)

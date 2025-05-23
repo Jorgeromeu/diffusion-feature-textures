@@ -1,8 +1,11 @@
 import faiss
 import numpy as np
+import torch
 import torchvision.transforms.functional as TF
 from einops import rearrange
 from torch import Tensor
+
+from text3d2video.util import hwc_to_chw
 
 
 def reduce_feature_map(feature_map: Tensor, output_type="pil"):
@@ -102,13 +105,19 @@ class RgbPcaUtil:
         reduced = self.apply(features)
         return self.normalize(reduced)
 
-    def feature_map_to_rgb(self, feature_map: Tensor):
+    def feature_map_to_rgb(self, feature_map: Tensor, fg_only=True, hwc=False):
         """
         Convert feature map to normalized RGB
         :param feature_map: D x H x W tensor
         :return rgb: 3 x H x W tensor
         """
         _, H, W = feature_map.shape
+
+        # convert to CHW if needed
+        if hwc:
+            feature_map = hwc_to_chw(feature_map)
+
+        fg_mask = torch.sum(feature_map, dim=0).abs() > 0.0
 
         # reshape to flat
         feature_flat = rearrange(feature_map, "c h w -> (h w) c")
@@ -120,12 +129,18 @@ class RgbPcaUtil:
         reduced = rearrange(reduced_flat, "(h w) c -> c h w", h=H, w=W)
         reduced = Tensor(reduced)
 
+        # apply fg mask
+        if fg_only:
+            reduced = reduced * fg_mask.float().unsqueeze(0)
+
         return reduced
 
-    def feature_map_to_rgb_pil(self, feature_map: Tensor):
+    def feature_map_to_rgb_pil(self, feature_map: Tensor, fg_only=True, hwc=False):
         """
         Convert feature map to normalized RGB PIL image
         :param feature_map: D x H x W tensor
         :return rgb: H x W x 3 tensor
         """
-        return TF.to_pil_image(self.feature_map_to_rgb(feature_map))
+
+        kwargs = {"fg_only": fg_only, "hwc": hwc}
+        return TF.to_pil_image(self.feature_map_to_rgb(feature_map, **kwargs))

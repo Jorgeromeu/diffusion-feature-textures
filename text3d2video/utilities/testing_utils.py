@@ -85,8 +85,8 @@ def test_img(
 def checkerboard_img(
     res=100,
     square_size=10,
-    color1=(0, 0, 0),
-    color2=(255, 255, 255),
+    color1=(250, 250, 250),
+    color2=(200, 200, 200),
     return_type="PIL",
 ):
     color1 = process_color(color1)

@@ -1,7 +1,8 @@
 from itertools import chain
-from typing import List
+from typing import Dict, List
 
 import torch
+from attr import dataclass
 from diffusers import (
     AutoencoderKL,
     DiffusionPipeline,
@@ -10,6 +11,7 @@ from diffusers import (
 )
 from diffusers.image_processor import VaeImageProcessor
 from PIL.Image import Image
+from rerun import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -232,3 +234,9 @@ class BaseStableDiffusionPipeline(DiffusionPipeline):
         timesteps = self.scheduler.timesteps
         index = (timesteps == t).nonzero(as_tuple=True)[0].item()
         return index / (len(timesteps) - 1)
+
+
+@dataclass
+class PipelineOutput:
+    images: list
+    latents: Dict[int, Tensor] = None

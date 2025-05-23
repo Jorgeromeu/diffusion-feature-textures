@@ -8,7 +8,6 @@ from matplotlib.axes import Axes
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from tomlkit import key_value
 from torch import Tensor
 
 
@@ -77,8 +76,39 @@ def add_pixel_marker(
     return ax.add_patch(rect)
 
 
+def copy_data(ax_src: Axes, ax_tgt: Axes):
+    """
+    Copy data from one axes to another
+    :param ax_src: source axes
+    :param ax_tgt: target axes
+    """
+    # copy lines data
+    for line in ax_src.get_lines():
+        ax_tgt.plot(
+            *line.get_data(),
+            color=line.get_color(),
+            linestyle=line.get_linestyle(),
+            linewidth=line.get_linewidth(),
+            alpha=line.get_alpha(),
+        )
+
+    # copy collections data
+    for collection in ax_src.collections:
+        ax_tgt.add_collection(collection)
+
+    # copy images data
+    for im in ax_src.images:
+        ax_tgt.imshow(
+            im.get_array(),
+            extent=im.get_extent(),
+            cmap=im.get_cmap(),
+            norm=im.norm,
+            interpolation=im.get_interpolation(),
+        )
+
+
 def add_zoom_inset(ax: Axes, box: Bbox, width="40%", loc="lower right", color="red"):
-    # make inset
+    # make inset axes
     axins = inset_axes(
         ax,
         width=width,
@@ -88,22 +118,11 @@ def add_zoom_inset(ax: Axes, box: Bbox, width="40%", loc="lower right", color="r
     axins.set_xticks([])
     axins.set_yticks([])
 
-    # Recover image data, and add to new axes
-    img = ax.images[0]
-    data = img.get_array()
-    extent = img.get_extent()
-    cmap = img.get_cmap()
-    norm = img.norm
-    axins.imshow(
-        data,
-        extent=extent,
-        cmap=cmap,
-        norm=norm,
-    )
+    copy_data(ax, axins)
 
-    # zoom
+    # zoom in
     axins.set_xlim(box.x0, box.x1)
-    axins.set_ylim(box.y1, box.y0)
+    axins.set_ylim(box.y0, box.y1)
 
     for spine in axins.spines.values():
         spine.set_edgecolor(color)

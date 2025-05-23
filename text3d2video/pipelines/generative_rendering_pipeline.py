@@ -9,7 +9,6 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments
 from torch import Generator, Tensor
 from tqdm import tqdm
 
-from text3d2video.artifacts.anim_artifact import AnimSequence
 from text3d2video.attn_processors.extraction_injection_attn import (
     ExtractionInjectionAttn,
 )
@@ -19,17 +18,17 @@ from text3d2video.backprojection import (
     aggregate_views_uv_texture_mean,
     compute_texel_projection_old,
 )
+from text3d2video.mip import seq_max_uv_res
 from text3d2video.noise_initialization import (
     UVNoiseInitializer,
 )
+from text3d2video.pipelines.base_pipeline import PipelineOutput
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
-    TextureShader,
+    AnimSequence,
     make_mesh_rasterizer,
-    make_repeated_uv_texture,
     render_depth_map,
     render_texture,
-    shade_meshes,
     shade_texture,
 )
 from text3d2video.sd_feature_extraction import (
@@ -58,7 +57,6 @@ class GenerativeRenderingConfig:
     num_inference_steps: int = 15
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
-    num_keyframes: int = 3
     feature_blend_alpha: float = 0.5
 
 
@@ -407,12 +405,6 @@ def sample_keyframe_indices(
     return randperm[:num_keyframes]
 
 
-@dataclass
-class GrOutput:
-    images: List[Image.Image]
-    extr_images: Optional[List[Image.Image]] = None
-
-
 class GrPipeline(BaseControlNetPipeline):
     @torch.no_grad()
     def __call__(
@@ -420,16 +412,14 @@ class GrPipeline(BaseControlNetPipeline):
         prompt: str,
         anim: AnimSequence,
         conf: GenerativeRenderingConfig,
-        src_anim: Optional[AnimSequence] = None,
         texture: Optional[Tensor] = None,
         start_noise_level: Optional[float] = 0,
+        num_keyframes: Optional[int] = 3,
         kf_generator: Optional[Generator] = None,
         generator: Optional[Generator] = None,
         logger=NULL_LOGGER,
-    ):
+    ) -> PipelineOutput:
         n_frames = len(anim.cams)
-
-        noise_texture = UVNoiseInitializer(noise_texture_res=120)
 
         # setup GR logic
         gr = GrLogic.from_gr_config(self, conf)
@@ -447,14 +437,17 @@ class GrPipeline(BaseControlNetPipeline):
         setup_greenlists(logger, timesteps, n_frames, n_save_frames=10, n_save_times=10)
 
         layer_resolutions, layer_resolution_indices = gr.calculate_layer_resolutions()
-        uv_resolutions = [4 * res for res in layer_resolutions]
-
+        uv_resolutions = [seq_max_uv_res(anim, res) for res in layer_resolutions]
+        print(uv_resolutions)
         precomputed = gr.precompute_seq(anim, layer_resolutions, uv_resolutions)
 
         # Get prompt embeddings
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
 
         # initialize latents
+        noise_texture_res = seq_max_uv_res(anim, 64)
+        print(noise_texture_res)
+        noise_texture = UVNoiseInitializer(noise_texture_res=noise_texture_res)
         noise_texture.sample_background(generator)
         noise_texture.sample_noise_texture(generator)
 
@@ -462,16 +455,13 @@ class GrPipeline(BaseControlNetPipeline):
             anim_renders = render_texture(
                 anim.meshes, anim.cams, texture, anim.verts_uvs, anim.faces_uvs
             )
-
             anim_encoded = self.encode_images(anim_renders)
             anim_noise = noise_texture.initial_noise(
                 anim.meshes, anim.cams, anim.verts_uvs, anim.faces_uvs
             )
-
             for i in range(len(anim_renders)):
                 logger.write("anim_render", anim_renders[i], frame_i=i)
                 logger.write("anim_encoded", anim_encoded[i], frame_i=i)
-
             anim_latents = self.scheduler.add_noise(
                 anim_encoded, anim_noise, timesteps[0]
             )
@@ -490,81 +480,23 @@ class GrPipeline(BaseControlNetPipeline):
         for i in range(len(anim_latents)):
             logger.write("anim_latent", anim_latents[i], frame_i=i)
 
-        # use kfs/or src seq
-        use_keyframes = src_anim is None
-
-        # initialize latents for extraction frames
-        if not use_keyframes:
-            if use_texture:
-                extr_renders = render_texture(
-                    src_anim.meshes,
-                    src_anim.cams,
-                    texture,
-                    src_anim.verts_uvs,
-                    src_anim.faces_uvs,
-                )
-
-                extr_encoded = self.encode_images(extr_renders)
-
-                for i in range(len(extr_renders)):
-                    logger.write("extr_render", extr_renders[i], extr_frame_i=i)
-                    logger.write("extr_encoded", extr_encoded[i], extr_frame_i=i)
-
-                extr_noise = noise_texture.initial_noise(
-                    src_anim.meshes,
-                    src_anim.cams,
-                    src_anim.verts_uvs,
-                    src_anim.faces_uvs,
-                )
-                extr_latents = self.scheduler.add_noise(
-                    extr_encoded, extr_noise, timesteps[0]
-                )
-
-            else:
-                extr_latents = noise_texture.initial_noise(
-                    src_anim.meshes,
-                    src_anim.cams,
-                    src_anim.verts_uvs,
-                    src_anim.faces_uvs,
-                    dtype=self.dtype,
-                    device=self.device,
-                    generator=generator,
-                )
-
-            for i in range(len(extr_latents)):
-                logger.write("extr_latent", extr_latents[i], extr_frame_i=i)
-
-            precomputed_extraction = gr.precompute_seq(
-                src_anim, layer_resolutions, uv_resolutions
-            )
-
-            extr_prompts = [prompt] * len(src_anim.cams)
-            extr_cond_embs, extr_uncond_embs = self.encode_prompt(extr_prompts)
-
-            extr_depth_maps = precomputed_extraction.depth_maps
-            extr_projections = list(precomputed_extraction.projections.values())
-            extr_fragments = list(precomputed_extraction.fragments.values())
-
         # chunk indices to use i regeneration
         chunks_indices = torch.split(torch.arange(0, n_frames), conf.chunk_size)
 
+        all_latents = {}
+
         # denoising loop
         for t in tqdm(timesteps):
-            if use_keyframes:
-                kf_indices = sample_keyframe_indices(
-                    n_frames, conf.num_keyframes, kf_generator
-                )
+            all_latents[t.item()] = anim_latents
 
-                # get extr_latents/embs from anim_latents/embs
-                extr_latents = anim_latents[kf_indices]
-                extr_cond_embs = cond_embeddings[kf_indices]
-                extr_uncond_embs = uncond_embeddings[kf_indices]
-                extr_depth_maps = [
-                    precomputed.depth_maps[i] for i in kf_indices.tolist()
-                ]
-                extr_projections = [
-                    precomputed.projections[i] for i in kf_indices.tolist()
-                ]
+            kf_indices = sample_keyframe_indices(n_frames, num_keyframes, kf_generator)
+
+            # get extr_latents/embs from anim_latents/embs
+            extr_latents = anim_latents[kf_indices]
+            extr_cond_embs = cond_embeddings[kf_indices]
+            extr_uncond_embs = uncond_embeddings[kf_indices]
+            extr_depth_maps = [precomputed.depth_maps[i] for i in kf_indices.tolist()]
+            extr_projections = [precomputed.projections[i] for i in kf_indices.tolist()]
 
             feats = gr.model_forward_extraction(
                 extr_latents,
@@ -614,8 +546,8 @@ class GrPipeline(BaseControlNetPipeline):
                         chunk_meshes,
                         frags,
                         uv_map,
-                        anim.faces_uvs,
                         anim.verts_uvs,
+                        anim.faces_uvs,
                         sampling_mode="nearest",
                     )
 
@@ -646,51 +578,10 @@ class GrPipeline(BaseControlNetPipeline):
                 noise_preds, t, anim_latents, generator=generator
             ).prev_sample
 
-            # denoise extraction latents
-            if not use_keyframes:
-
-                def render_extr_feats(layer, uv_map):
-                    extr_meshes = src_anim.meshes
-                    res_idx = layer_resolution_indices[layer]
-                    frags = [f[res_idx] for f in extr_fragments]
-
-                    return shade_texture(
-                        extr_meshes,
-                        frags,
-                        uv_map,
-                        src_anim.faces_uvs,
-                        src_anim.verts_uvs,
-                    )
-
-                renders_uncond = dict_map(textures_uncond, render_extr_feats)
-                renders_cond = dict_map(textures_cond, render_extr_feats)
-
-                # model forward with pre-and post-attn injection
-                noise_pred = gr.model_forward_injection(
-                    extr_latents,
-                    extr_cond_embs,
-                    extr_uncond_embs,
-                    extr_depth_maps,
-                    t,
-                    feats.cond_kv,
-                    feats.uncond_kv,
-                    renders_cond,
-                    renders_uncond,
-                )
-
-                extr_latents = self.scheduler.step(
-                    noise_pred, t, extr_latents, generator=generator
-                ).prev_sample
+        all_latents[0] = anim_latents
 
         ims = self.decode_latents(
             anim_latents, chunk_size=conf.chunk_size, generator=generator
         )
 
-        if not use_keyframes:
-            extr_ims = self.decode_latents(
-                extr_latents, chunk_size=conf.chunk_size, generator=generator
-            )
-        else:
-            extr_ims = None
-
-        return GrOutput(images=ims, extr_images=extr_ims)
+        return PipelineOutput(images=ims, latents=all_latents)

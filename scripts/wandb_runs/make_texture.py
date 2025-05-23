@@ -7,7 +7,6 @@ import wandb
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.texture_artifact import TextureArtifact
-from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.backprojection import (
     aggregate_views_uv_texture_mean,
     compute_texel_projections,

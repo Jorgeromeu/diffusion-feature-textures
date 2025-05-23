@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 from rerun import Image
 
 import wandb_util.wandb_util as wbu
-from text3d2video.artifacts.anim_artifact import AnimationArtifact, AnimSequence
+from text3d2video.artifacts.anim_artifact import AnimationArtifact
 from text3d2video.artifacts.texture_artifact import TextureArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.clip_metrics import CLIPMetrics
@@ -17,7 +17,7 @@ from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
 from text3d2video.pipelines.texturing_pipeline import TexturingConfig
-from text3d2video.rendering import render_texture
+from text3d2video.rendering import AnimSequence, render_texture
 from text3d2video.util import hwc_to_chw
 from text3d2video.utilities.video_comparison import VideoLabel, add_label_to_clip
 from text3d2video.utilities.video_util import pil_frames_to_clip
