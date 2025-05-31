@@ -12,16 +12,16 @@ from scripts.wandb_experiments.static_texture_benchmark import (
     TexturingScene,
     texturing_benchmark,
 )
-from scripts.wandb_runs.make_texture import MakeTextureConfig, make_texture
 from scripts.wandb_runs.run_generative_rendering import (
     RunGenerativeRenderingConfig,
     run_generative_rendering,
 )
+from scripts.wandb_runs.texgen_extr import TexGenExtrConfig, run_texgen_extr
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
 from text3d2video.pipelines.pipeline_utils import ModelConfig
-from text3d2video.pipelines.texturing_pipeline import TexturingConfig
+from text3d2video.pipelines.texturing_pipeline import TexGenConfig
 from text3d2video.utilities.omegaconf_util import get_import_path
 
 
@@ -56,14 +56,14 @@ def test_benchmark():
 
 def test_texturing_benchmark():
     base_config = OmegaConf.structured(
-        MakeTextureConfig(
+        TexGenExtrConfig(
             prompt="",
             animation_tag="",
-            texgen=TexturingConfig(),
+            texgen=TexGenConfig(),
             model=ModelConfig(),
         )
     )
-    methods = [TexturingMethod("GR", base_config, get_import_path(make_texture))]
+    methods = [TexturingMethod("GR", base_config, get_import_path(run_texgen_extr))]
     scenes = [TexturingScene("mv_cat_statue:latest", ["Cat"])]
 
     config = TexturingBenchmarkConfig(scenes=scenes, methods=methods)

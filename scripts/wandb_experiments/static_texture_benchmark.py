@@ -4,7 +4,7 @@ from attr import dataclass
 from omegaconf import DictConfig, OmegaConf
 
 import wandb_util.wandb_util as wbu
-from scripts.wandb_runs.make_texture import make_texture
+from scripts.wandb_runs.texgen_extr import run_texgen_extr
 from text3d2video.utilities.omegaconf_util import omegaconf_from_dotdict
 
 
@@ -67,7 +67,7 @@ def texturing_benchmark(config: TexturingBenchmarkConfig):
     spec = []
     for method in config.methods:
         base_config = method.base_config
-        run_fun = make_texture
+        run_fun = run_texgen_extr
 
         for scene in config.scenes:
             scene_overrides = omegaconf_from_dotdict(

@@ -124,7 +124,6 @@ def compute_texel_projection(
     faces_uvs: Tensor,
     texture_res: int,
     raster_res=1000,
-    factor=2,
     visible_only=True,
 ) -> TexelProjection:
     """
@@ -137,6 +136,11 @@ def compute_texel_projection(
     :param render_resolution: render resolution
     :return TexelProjection
     """
+
+    factor = int(2000 / texture_res)
+    if factor < 1:
+        factor = 1
+    factor = 1
 
     uv_frags = rasterize_uv_mesh(
         verts_uvs, faces_uvs, uv_res=texture_res * factor, blur_radius=1e-5

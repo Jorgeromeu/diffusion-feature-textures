@@ -70,9 +70,13 @@ def compute_face_uv_grads(
     )
 
 
-def compute_face_uv_jacobians(
+def compute_face_uv_jacobian_magnitudes(
     mesh, cam, verts_uvs, faces_uvs, resolution=512, uv_res=100
 ):
+    """
+    For a given mesh/cam pair compute jacobian magnitude of dUV/dXY
+    """
+
     face_uv_grads = compute_face_uv_grads(mesh, cam, verts_uvs, faces_uvs, resolution)
     return torch.abs(
         face_uv_grads.du_dx * face_uv_grads.dv_dy
@@ -84,6 +88,7 @@ def compute_face_mip_level(mesh, cam, verts_uvs, faces_uvs, resolution=512, uv_r
     face_uv_grads = compute_face_uv_grads(
         mesh, cam, verts_uvs, faces_uvs, resolution, uv_res
     )
+
     return (
         torch.sqrt(
             face_uv_grads.du_dx**2
@@ -117,7 +122,8 @@ def render_uv_jacobian_magnitude_map(
     frags = rasterizer(mesh, cameras=cam)
     pix_to_face = frags.pix_to_face[0, ..., 0]  # (H, W)
 
-    face_jacobians = compute_face_uv_jacobians(
+    # jacobian magnitude of each face
+    face_jacobians = compute_face_uv_jacobian_magnitudes(
         mesh, cam, verts_uvs, faces_uvs, resolution, uv_res
     )
 
@@ -136,26 +142,25 @@ def render_mip_level_map(
     return broadcast_face_attribute(pix_to_face, face_mip_levels)
 
 
-def view_uv_res(cam, mesh, verts_uvs, faces_uvs, resolution, quantile=0.90):
+def view_mip_level(cam, mesh, verts_uvs, faces_uvs, resolution=512, quantile=0.1):
     rho_unitless = render_mip_level_map(
         mesh, cam, verts_uvs, faces_uvs, resolution=resolution, uv_res=1
     )
-
-    rho_summary = torch.quantile(rho_unitless, quantile)
-    good_uv_res = 1 / rho_summary
-    return int(good_uv_res.item())
-
-
-def view_mip_level(cam, mesh, verts_uvs, faces_uvs, quantile=0.90):
-    rho_unitless = render_mip_level_map(
-        mesh, cam, verts_uvs, faces_uvs, resolution=200, uv_res=100
-    )
-
+    rho_unitless = rho_unitless[rho_unitless > 0]
     rho_summary = torch.quantile(rho_unitless, quantile)
     return rho_summary.item()
 
 
-def seq_max_uv_res(seq: AnimSequence, resolution=64, quantile=0.90):
+def view_uv_res(cam, mesh, verts_uvs, faces_uvs, resolution, quantile=0.1):
+    # view_mip_level(cam, mesh, verts_uvs, faces_uvs)
+    rho_summary = view_mip_level(
+        cam, mesh, verts_uvs, faces_uvs, quantile=quantile, resolution=resolution
+    )
+    good_uv_res = 1 / rho_summary
+    return int(good_uv_res)
+
+
+def seq_max_uv_res(seq: AnimSequence, resolution=64, quantile=0.1):
     return max(
         [
             view_uv_res(c, m, seq.verts_uvs, seq.faces_uvs, resolution, quantile)

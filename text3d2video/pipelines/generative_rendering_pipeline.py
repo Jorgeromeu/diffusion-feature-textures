@@ -57,7 +57,7 @@ class GenerativeRenderingConfig:
     num_inference_steps: int = 15
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
-    feature_blend_alpha: float = 0.5
+    feature_blend_alpha: float = 0.7
 
 
 @dataclass
@@ -438,7 +438,6 @@ class GrPipeline(BaseControlNetPipeline):
 
         layer_resolutions, layer_resolution_indices = gr.calculate_layer_resolutions()
         uv_resolutions = [seq_max_uv_res(anim, res) for res in layer_resolutions]
-        print(uv_resolutions)
         precomputed = gr.precompute_seq(anim, layer_resolutions, uv_resolutions)
 
         # Get prompt embeddings
@@ -446,7 +445,6 @@ class GrPipeline(BaseControlNetPipeline):
 
         # initialize latents
         noise_texture_res = seq_max_uv_res(anim, 64)
-        print(noise_texture_res)
         noise_texture = UVNoiseInitializer(noise_texture_res=noise_texture_res)
         noise_texture.sample_background(generator)
         noise_texture.sample_noise_texture(generator)

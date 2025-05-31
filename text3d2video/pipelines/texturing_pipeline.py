@@ -19,7 +19,6 @@ from text3d2video.backprojection import (
     project_view_to_texture_masked,
 )
 from text3d2video.mip import render_uv_jacobian_magnitude_map
-from text3d2video.pipelines.base_pipeline import PipelineOutput
 from text3d2video.pipelines.controlnet_pipeline import BaseControlNetPipeline
 from text3d2video.rendering import (
     AnimSequence,
@@ -50,13 +49,13 @@ class TexturingCamSeq:
 
 
 @dataclass
-class TexGenModelOutput:
+class TexGenModelOut:
     noise_pred: Tensor
     extracted_kvs_uncond: Dict[str, Float[Tensor, "b t d"]]
     extracted_kvs_cond: Dict[str, Float[Tensor, "b t d"]]
 
 
-class TexturingLogic:
+class TexGenLogic:
     def __init__(
         self,
         pipe: BaseControlNetPipeline,
@@ -104,7 +103,7 @@ class TexturingLogic:
         injected_kvs_cond: Dict[str, Float[Tensor, "b t d"]] = None,
         injected_kvs_uncond: Dict[str, Float[Tensor, "b d"]] = None,
         extract_kvs: bool = False,
-    ) -> TexGenModelOutput:
+    ) -> TexGenModelOut:
         latents_duplicated = torch.cat([latents] * 2)
         both_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
         depth_maps_duplicated = depth_maps * 2
@@ -148,7 +147,7 @@ class TexturingLogic:
             extracted_kvs_uncond[key] = kvs[0]
             extracted_kvs_cond[key] = kvs[1]
 
-        return TexGenModelOutput(
+        return TexGenModelOut(
             noise_pred=noise_pred,
             extracted_kvs_uncond=extracted_kvs_uncond,
             extracted_kvs_cond=extracted_kvs_cond,
@@ -439,37 +438,43 @@ class TexturingLogic:
 
 
 @dataclass
-class TexturingConfig:
+class TexGenConfig:
     num_inference_steps: int = 15
     guidance_scale: float = 7.5
     controlnet_conditioning_scale: float = 1.0
-    uv_res: int = 600
     do_text_and_texture_resampling: bool = True
     use_update_masks: bool = True
     use_referecnce_kvs: bool = True
     use_prev_clean_tex: bool = True
 
 
-class TexturingPipeline(BaseControlNetPipeline):
+@dataclass
+class TexGenOutput:
+    images: List[Image.Image]
+    latents: Dict[int, Tensor]
+    texture: Tensor
+
+
+class TexGenPipeline(BaseControlNetPipeline):
     @torch.no_grad()
     def __call__(
         self,
         prompt: str,
         seq: AnimSequence,
-        conf: TexturingConfig,
+        conf: TexGenConfig,
+        uv_res: int = 600,
         texture: Optional[Tensor] = None,
         start_noise: Optional[float] = None,
         generator=None,
         logger=NULL_LOGGER,
     ):
         n_frames = len(seq)
-
         all_latents = {}
 
         # make texgen logic object
-        method = TexturingLogic(
+        method = TexGenLogic(
             self,
-            uv_res=conf.uv_res,
+            uv_res=uv_res,
             guidance_scale=conf.guidance_scale,
             controlnet_conditioning_scale=conf.controlnet_conditioning_scale,
             do_text_and_texture_resampling=conf.do_text_and_texture_resampling,
@@ -503,7 +508,7 @@ class TexturingPipeline(BaseControlNetPipeline):
                 seq.meshes, seq.cams, texture, seq.verts_uvs, seq.faces_uvs
             )
             renders_encoded = self.encode_images(renders, generator=generator)
-            noise = torch.randn_like(renders_encoded)
+            noise = torch.randn_like(renders_encoded, generator=generator)
             latents = self.scheduler.add_noise(renders_encoded, noise, timesteps[0])
 
         else:
@@ -530,6 +535,9 @@ class TexturingPipeline(BaseControlNetPipeline):
                 prev_clean_tex=clean_tex,
             )
 
+            if t == timesteps[-1]:
+                final_tex = clean_tex.clone()
+
             logger.write(
                 "clean_tex",
                 clean_tex,
@@ -553,7 +561,8 @@ class TexturingPipeline(BaseControlNetPipeline):
 
         all_latents[0] = latents
 
-        return PipelineOutput(
+        return TexGenOutput(
             images=self.decode_latents(latents, generator=generator),
             latents=all_latents,
+            texture=final_tex,
         )

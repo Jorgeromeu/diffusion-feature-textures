@@ -14,7 +14,10 @@ from torch import Tensor
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from text3d2video.pipelines.base_pipeline import BaseStableDiffusionPipeline
+from text3d2video.pipelines.base_pipeline import (
+    BaseStableDiffusionPipeline,
+    PipelineOutput,
+)
 
 
 class BaseControlNetPipeline(BaseStableDiffusionPipeline):
@@ -149,9 +152,13 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
         latents = self.prepare_latents(batch_size, generator=generator)
         timesteps = self.scheduler.timesteps
 
+        all_latents = {}
+
         # denoising loop
         for t in tqdm(timesteps):
             latents = self.scheduler.scale_model_input(latents, t)
+
+            all_latents[t.item()] = latents
 
             noise_pred = self.model_forward_cfg(
                 latents,
@@ -166,5 +173,10 @@ class BaseControlNetPipeline(BaseStableDiffusionPipeline):
             # update latents
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
+        all_latents[0] = latents
+
         # decode latents
-        return self.decode_latents(latents)
+        return PipelineOutput(
+            images=self.decode_latents(latents),
+            latents=all_latents,
+        )

@@ -16,7 +16,7 @@ from text3d2video.clip_metrics import CLIPMetrics
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
 )
-from text3d2video.pipelines.texturing_pipeline import TexturingConfig
+from text3d2video.pipelines.texturing_pipeline import TexGenConfig
 from text3d2video.rendering import AnimSequence, render_texture
 from text3d2video.util import hwc_to_chw
 from text3d2video.utilities.video_comparison import VideoLabel, add_label_to_clip
@@ -54,11 +54,11 @@ class VideoTraces:
             data.frames = video.read_frames()
 
         # Read config
-        # run_config: RunGenerativeRenderingConfig = OmegaConf.create(run.config)
-        # data.config = run_config.generative_rendering
+        run_config = OmegaConf.create(run.config)
+        data.config = run_config
 
         # get prompt
-        # data.prompt = run_config.prompt
+        data.prompt = run_config.prompt
 
         if with_anim:
             # read animation
@@ -80,6 +80,7 @@ class VideoTraces:
             self.seq.verts_uvs,
             self.seq.faces_uvs,
         )
+        print(self.uv_mse)
 
     def video_with_metrics(self):
         clip = pil_frames_to_clip(self.frames)
@@ -100,11 +101,11 @@ class VideoTraces:
 @dataclass
 class MakeTextureTraces:
     prompt: str = None
-    config: TexturingConfig = None
+    config: TexGenConfig = None
     texture: torch.Tensor = None
     texture_pil: Image = None
     seq: AnimSequence = None
-    config: TexturingConfig = None
+    config: TexGenConfig = None
     frames: List[Image] = None
 
     @classmethod
@@ -148,3 +149,10 @@ def run_tabulate_row(run: Run):
 
 def print_table(rows: List[Dict[str, str]]):
     print(tabulate.tabulate(rows, headers="keys"))
+
+
+def print_latex_table(rows: List[Dict[str, str]]):
+    latex = tabulate.tabulate(rows, headers="keys", tablefmt="latex", stralign="center")
+    latex = latex.replace("\\textbackslash{}", "\\")
+    latex = latex.replace("\$", "$")
+    print(latex)

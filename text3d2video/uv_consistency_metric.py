@@ -51,7 +51,7 @@ def mean_uv_mse(
     )
 
     # get video texture
-    video_texture = project_views_to_video_texture(frames_pt, uv_res, projections)
+    video_texture = project_views_to_video_texture(frames_pt, projections)
 
     # get average mse
     mses = adjacent_frame_uv_mses(video_texture)

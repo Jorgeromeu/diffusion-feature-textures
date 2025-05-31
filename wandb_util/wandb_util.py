@@ -103,14 +103,13 @@ def api_artifact(artifact_tag: str) -> Artifact:
     return api.artifact(f"romeu/{PROJECT_NAME}/{artifact_tag}")
 
 
-def api_runs(query: Dict):
+def api_run(run_id: str):
     """
     Get runs from the api
     """
     api = wandb.Api()
-    runs = api.runs(PROJECT_NAME, filters=query)
-    runs = list(runs)
-    return runs
+    run = api.run(f"romeu/diffusion-3D-features/{run_id}")
+    return run
 
 
 def resolve_artifact_tag(artifact_tag: str):
@@ -464,7 +463,7 @@ def get_logged_runs(name: str, include_exp_run=False):
     if not include_exp_run:
         query["tags"] = {"$nin": ["exp_run"]}
 
-    return api_runs(query)
+    return api_run(query)
 
 
 def make_spec_dag(specification: List[RunSpec]):
@@ -560,7 +559,7 @@ def get_exp_config(name):
         "group": name,
         "tags": {"$in": ["exp_run"]},
     }
-    exp_run = api_runs(query)[0]
+    exp_run = api_run(query)[0]
     exp_config = OmegaConf.create(exp_run.config)
     return exp_config
 

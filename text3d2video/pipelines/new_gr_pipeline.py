@@ -13,7 +13,8 @@ from text3d2video.backprojection import (
     aggregate_views_uv_texture,
     compute_texel_projection,
 )
-from text3d2video.mip import view_mip_level, view_uv_res
+from text3d2video.mip import seq_max_uv_res, view_mip_level, view_uv_res
+from text3d2video.noise_initialization import UVNoiseInitializer
 from text3d2video.pipelines.base_pipeline import (
     PipelineOutput,
 )
@@ -31,7 +32,12 @@ from text3d2video.rendering import (
     shade_texture,
 )
 from text3d2video.util import cluster_by_threshold, dict_map
-from text3d2video.utilities.logging import NULL_LOGGER, setup_greenlists
+from text3d2video.utilities.logging import (
+    NULL_LOGGER,
+    setup_greenlists,
+    write_feature_dict,
+    write_feature_frame_dict,
+)
 
 
 @dataclass
@@ -69,25 +75,27 @@ def precompute_frags(
     ]
 
     # cluster source frames by mip level
-    src_clusters = cluster_by_threshold(src_mip_levels, threshold=0.05)
+    src_clusters = cluster_by_threshold(src_mip_levels, threshold=0.00015)
 
+    # single cluster
     if not with_multires:
         src_clusters = cluster_by_threshold(src_mip_levels, threshold=100)
 
-    # single frame for each cluster for computign uv resolutions
-    cluster_representatives = [
-        cluster[0] for cluster in src_clusters for _ in range(len(cluster))
+    # compute average mip level for each cluster
+    cluster_mip_levels = [
+        np.mean([src_mip_levels[i] for i in cluster]) for cluster in src_clusters
     ]
-    cluster_mip_levels = np.array([src_mip_levels[i] for i in cluster_representatives])
 
-    # compute UV resolution for each cluster representative
-    uv_resolutions = []  # (frames, render_resolutions)
-    for i in cluster_representatives:
+    # compute UV resolution for each cluster and render res
+    uv_resolutions = []  # (cluster, render_resolutions)
+    for cluster in enumerate(src_clusters):
+        cluster_frame_i = cluster[0]
+
         resolutions = []
         for res in render_resolutions:
             uv_resolution = view_uv_res(
-                src_seq.cams[i],
-                src_seq.meshes[i],
+                src_seq.cams[cluster_frame_i],
+                src_seq.meshes[cluster_frame_i],
                 src_seq.verts_uvs,
                 src_seq.faces_uvs,
                 res,
@@ -113,8 +121,14 @@ def precompute_frags(
             f = rasterizer(mesh, cameras=cam)
             fragments.append(f)
 
+        # find which cluster frame_i is in
+        cluster_index = next(
+            idx for idx, cluster in enumerate(src_clusters) if i in cluster
+        )
+
         # compute projections to all uv_resolutions
-        frame_resolutions = uv_resolutions[i]
+        frame_resolutions = uv_resolutions[cluster_index]
+
         projections = []
         for uv_res in frame_resolutions:
             p = compute_texel_projection(mesh, cam, verts_uvs, faces_uvs, uv_res)
@@ -127,7 +141,7 @@ def precompute_frags(
     # for each target frame compute:
     # 1. rasterization frags at each render resolution
     # 2. depth map
-    # 3. index of cluster frame with closest mip level
+    # 3. index of cluster with closest mip level
     tgt_frags = []
     for i in range(len(tgt_seq)):
         mesh = tgt_seq.meshes[i]
@@ -137,7 +151,7 @@ def precompute_frags(
 
         # get index of source frame with closest mip level
         mip_level = view_mip_level(cam, mesh, verts_uvs, faces_uvs)
-        src_index = np.argmin(np.abs(cluster_mip_levels - mip_level))
+        src_index = np.argmin(np.abs(np.array(cluster_mip_levels) - mip_level))
 
         # compute rasterization frags to render resolutions
         fragments = []
@@ -176,7 +190,8 @@ class GrPipelineNew(BaseControlNetPipeline):
         src_seq: AnimSequence,
         src_latents: Tensor,
         conf: GenerativeRenderingConfig,
-        multi_res_textures=True,
+        uv_initial_noise: bool = True,
+        multires_textures=True,
         initial_texture: Optional[Tensor] = None,
         texture_noise_level: Optional[float] = None,
         generator: Optional[torch.Generator] = None,
@@ -189,7 +204,7 @@ class GrPipelineNew(BaseControlNetPipeline):
         # precompute projections and fragments for all resolutions/frames
         render_resolutions, layer_resolution_indices = gr.calculate_layer_resolutions()
         mip_frags = precompute_frags(
-            src_seq, tgt_seq, render_resolutions, with_multires=multi_res_textures
+            src_seq, tgt_seq, render_resolutions, with_multires=multires_textures
         )
 
         n_frames = len(tgt_seq)
@@ -203,7 +218,14 @@ class GrPipelineNew(BaseControlNetPipeline):
         cond_embeddings, uncond_embeddings = self.encode_prompt([prompt] * n_frames)
 
         # initialize noise
-        latents = self.prepare_latents(len(tgt_seq), generator=generator)
+        if uv_initial_noise:
+            noise_texture_res = seq_max_uv_res(tgt_seq, 64)
+            noise_texture = UVNoiseInitializer(noise_texture_res=noise_texture_res)
+            latents = noise_texture.initial_noise(
+                tgt_seq.meshes, tgt_seq.cams, tgt_seq.verts_uvs, tgt_seq.faces_uvs
+            )
+        else:
+            latents = self.prepare_latents(len(tgt_seq), generator=generator)
 
         self.scheduler.set_timesteps(conf.num_inference_steps)
         timesteps = self.scheduler.timesteps
@@ -253,6 +275,15 @@ class GrPipelineNew(BaseControlNetPipeline):
                 t,
             )
 
+            write_feature_frame_dict(
+                logger,
+                "feats_cond",
+                feats.cond_post_attn,
+                t.item(),
+                torch.arange(0, len(extr_latents)),
+                frame_key="src_frame_i",
+            )
+
             def project_feats(layer, feats):
                 return project_feats_multires(
                     layer, feats, mip_frags, layer_resolution_indices
@@ -277,6 +308,15 @@ class GrPipelineNew(BaseControlNetPipeline):
 
                 renders_cond = dict_map(cond_textures, render_chunk)
                 renders_uncond = dict_map(uncond_textures, render_chunk)
+
+                write_feature_frame_dict(
+                    logger,
+                    "renders_cond",
+                    renders_cond,
+                    t.item(),
+                    chunk_frame_indices,
+                    frame_key="frame_i",
+                )
 
                 depth_maps = [
                     mip_frags.tgt_frags[i].depth for i in chunk_frame_indices.tolist()
@@ -379,7 +419,7 @@ def render_multires_texture(
             tex,
             tgt_seq.verts_uvs,
             tgt_seq.faces_uvs,
-            sampling_mode="nearest",
+            sampling_mode="bilinear",
         )[0]
         renders.append(render)
 

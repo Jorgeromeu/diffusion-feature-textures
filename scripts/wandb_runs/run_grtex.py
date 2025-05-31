@@ -5,12 +5,12 @@ from git import Optional
 
 import wandb_util.wandb_util as wbu
 from text3d2video.artifacts.anim_artifact import AnimationArtifact
-from text3d2video.artifacts.texture_artifact import TextureArtifact
+from text3d2video.artifacts.extr_frames_artifact import ExtrFramesArtifact
 from text3d2video.artifacts.video_artifact import VideoArtifact
 from text3d2video.pipelines.generative_rendering_pipeline import (
     GenerativeRenderingConfig,
-    GrPipeline,
 )
+from text3d2video.pipelines.new_gr_pipeline import GrPipelineNew
 from text3d2video.pipelines.pipeline_utils import (
     ModelConfig,
     load_pipeline,
@@ -19,23 +19,21 @@ from text3d2video.utilities.video_util import pil_frames_to_clip
 
 
 @dataclass
-class RunGenerativeRenderingConfig:
+class RunGrTexConfig:
     prompt: str
     animation_tag: str
+    extr_tag: str
     generative_rendering: GenerativeRenderingConfig
     model: ModelConfig
-    num_keyframes: int = 3
-    texture_tag: Optional[str] = None
+    multires_textures: bool = True
     start_noise_level: Optional[float] = None
+    do_texture_noise_init: bool = True
     seed: int = 0
-    kf_seed: Optional[int] = None  # if none use main seed
     out_artifact: str = "video"
 
 
-@wbu.wandb_run("run_generative_rendering")
-def run_generative_rendering(
-    cfg: RunGenerativeRenderingConfig, run_config: wbu.RunConfig
-):
+@wbu.wandb_run("run_grtex")
+def run_gr_tex(cfg: RunGrTexConfig, run_config: wbu.RunConfig):
     # disable gradients
     torch.set_grad_enabled(False)
 
@@ -43,39 +41,41 @@ def run_generative_rendering(
     animation = AnimationArtifact.from_wandb_artifact_tag(
         cfg.animation_tag, download=True
     )
-    anim = animation.read_anim_seq()
+    tgt_seq = animation.read_anim_seq()
 
-    # read texture
-    use_texture = cfg.texture_tag is not None and cfg.start_noise_level is not None
-    if use_texture:
-        texture = TextureArtifact.from_wandb_artifact_tag(
-            cfg.texture_tag, download=True
-        )
-        texture = texture.read_texture()
-    else:
-        texture = None
+    # read extr_frames
+    extr_frames = ExtrFramesArtifact.from_wandb_artifact_tag(
+        cfg.extr_tag, download=True
+    )
+
+    # get src_seq
+    extr_run = extr_frames.logged_by()
+    anim_src = wbu.used_artifacts(extr_run, type="animation")[0]
+    anim_src = AnimationArtifact.from_wandb_artifact(anim_src, download=True)
+    src_seq = anim_src.read_anim_seq()
 
     # load pipeline
     device = torch.device("cuda")
-    pipe: GrPipeline = load_pipeline(
-        GrPipeline, cfg.model.sd_repo, cfg.model.controlnet_repo
+    pipe: GrPipelineNew = load_pipeline(
+        GrPipelineNew, cfg.model.sd_repo, cfg.model.controlnet_repo
     )
 
-    # set seeds
+    # set seed
     generator = torch.Generator(device=device).manual_seed(cfg.seed)
-    kf_seed = cfg.kf_seed if cfg.kf_seed is not None else cfg.seed
-    kf_generator = torch.Generator(device=device).manual_seed(kf_seed)
 
     # inference
     video_frames = pipe(
         cfg.prompt,
-        anim,
+        tgt_seq,
+        src_seq,
+        extr_frames.read_latents(),
+        multires_textures=cfg.multires_textures,
         conf=cfg.generative_rendering,
-        num_keyframes=cfg.num_keyframes,
-        texture=texture,
-        start_noise_level=cfg.start_noise_level,
+        initial_texture=extr_frames.read_texture()
+        if cfg.do_texture_noise_init
+        else None,
+        texture_noise_level=cfg.start_noise_level,
         generator=generator,
-        kf_generator=kf_generator,
     ).images
 
     # log video to run

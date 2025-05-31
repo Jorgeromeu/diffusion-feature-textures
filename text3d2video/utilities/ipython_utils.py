@@ -24,6 +24,7 @@ def display_ims_grid(
     vmin=None,
     vmax=None,
     hide_ticks=True,
+    cmap=None,
 ):
     images = images.copy()
 
@@ -50,6 +51,7 @@ def display_ims_grid(
                 vmin=vmin,
                 vmax=vmax,
                 interpolation="nearest",
+                cmap=cmap,
             )
 
             if hide_ticks:
@@ -85,6 +87,7 @@ def display_ims(
     vmin=None,
     vmax=None,
     hide_ticks=True,
+    cmap=None,
 ):
     result = display_ims_grid(
         [images],
@@ -96,6 +99,7 @@ def display_ims(
         vmin=vmin,
         vmax=vmax,
         hide_ticks=hide_ticks,
+        cmap=cmap,
     )
 
     if not show:
